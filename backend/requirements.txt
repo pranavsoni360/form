@@ -1,0 +1,35 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database & Storage
+supabase
+psycopg2-binary
+
+# Security & Authentication
+bcrypt
+PyJWT
+python-jose[cryptography]
+passlib[bcrypt]
+
+# HTTP client
+httpx
+
+# Environment variables
+python-dotenv
+
+# Data validation
+pydantic
+pydantic-settings
+email-validator
+
+# Date/Time
+python-dateutil
+
+# Utilities
+phonenumbers
+
+# Development
+pytest
+pytest-asyncio

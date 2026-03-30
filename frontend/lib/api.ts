@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://virtualvaani.vgipl.com:8200';
 
 export async function adminLogin(email: string, password: string) {
   const res = await fetch(`${API_URL}/api/admin/login`, {

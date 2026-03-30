@@ -1,4 +1,5 @@
 ﻿'use client';
+import { ShieldCheck, Lock } from 'lucide-react';
 
 import { useState } from 'react';
 import FileUpload from './FileUpload';
@@ -148,7 +149,7 @@ export default function FormStep3({ data, token, onChange, onNext, onPrevious }:
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                {verifying === 'pan' ? 'Verifying...' : verified.pan ? '✓ Verified' : 'Verify'}
+                {verifying === 'pan' ? 'Verifying...' : verified.pan ? 'Verified' : 'Verify'}
               </button>
             </div>
             {errors.pan_number && (
@@ -156,7 +157,7 @@ export default function FormStep3({ data, token, onChange, onNext, onPrevious }:
             )}
             {verified.pan && (
               <p className="text-sm text-green-600 mt-1 flex items-center gap-1">
-                ✓ PAN verified successfully
+                PAN verified successfully
               </p>
             )}
           </div>
@@ -212,7 +213,7 @@ export default function FormStep3({ data, token, onChange, onNext, onPrevious }:
                     : 'bg-orange-600 text-white hover:bg-orange-700'
                 }`}
               >
-                {verifying === 'aadhaar' ? 'Verifying...' : verified.aadhaar ? '✓ Verified' : 'Verify'}
+                {verifying === 'aadhaar' ? 'Verifying...' : verified.aadhaar ? 'Verified' : 'Verify'}
               </button>
             </div>
             {errors.aadhaar_number && (
@@ -220,11 +221,11 @@ export default function FormStep3({ data, token, onChange, onNext, onPrevious }:
             )}
             {verified.aadhaar && (
               <p className="text-sm text-green-600 mt-1 flex items-center gap-1">
-                ✓ Aadhaar verified successfully (Last 4 digits: {data.aadhaar_last4})
+                Aadhaar verified successfully (Last 4 digits: {data.aadhaar_last4})
               </p>
             )}
             <p className="text-xs text-gray-500 mt-1">
-              🔒 Only last 4 digits will be stored as per UIDAI guidelines
+              Only last 4 digits will be stored as per UIDAI guidelines
             </p>
           </div>
 

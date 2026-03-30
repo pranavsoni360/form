@@ -1,9 +1,11 @@
 'use client';
+import { Building2, Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://virtualvaani.vgipl.com:8200';
 const INACTIVITY_LIMIT = 4 * 60 * 1000; // 4 min warning, 5 min logout
 
 export default function LoanApplication() {
@@ -13,6 +15,49 @@ export default function LoanApplication() {
   const [appData, setAppData] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
   const [currentStep, setCurrentStep] = useState(1);
+  const [highestStep, setHighestStep] = useState(1);
+  const [panVerifying, setPanVerifying] = useState(false);
+  const [aadhaarVerifying, setAadhaarVerifying] = useState(false);
+
+  const handleVerifyPAN = async () => {
+    const pan = formData.pan_number || '';
+    if (!pan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+      setErrors((p: any) => ({ ...p, pan_number: 'Invalid PAN format (e.g. ABCDE1234F)' }));
+      return;
+    }
+    setPanVerifying(true);
+    try {
+      const session = sessionStorage.getItem('loan_session');
+      const res = await fetch(`${API_URL}/api/verify-pan-session?session_token=${session}&pan_number=${pan}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Verification failed');
+      onChange('pan_verified', true);
+      onChange('pan_verification_timestamp', new Date().toISOString());
+      setErrors((p: any) => ({ ...p, pan_number: '' }));
+    } catch (err: any) {
+      setErrors((p: any) => ({ ...p, pan_number: err.message || 'PAN verification failed' }));
+    } finally { setPanVerifying(false); }
+  };
+
+  const handleVerifyAadhaar = async () => {
+    const aadhaar = formData.aadhaar_number || '';
+    if (!aadhaar || !/^\d{12}$/.test(aadhaar)) {
+      setErrors((p: any) => ({ ...p, aadhaar_number: 'Enter valid 12-digit Aadhaar number' }));
+      return;
+    }
+    setAadhaarVerifying(true);
+    try {
+      const session = sessionStorage.getItem('loan_session');
+      const res = await fetch(`${API_URL}/api/verify-aadhaar-session?session_token=${session}&aadhaar_number=${aadhaar}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Verification failed');
+      const data = await res.json();
+      onChange('aadhaar_verified', true);
+      onChange('aadhaar_last4', data.last4);
+      onChange('aadhaar_verification_timestamp', new Date().toISOString());
+      setErrors((p: any) => ({ ...p, aadhaar_number: '' }));
+    } catch (err: any) {
+      setErrors((p: any) => ({ ...p, aadhaar_number: err.message || 'Aadhaar verification failed' }));
+    } finally { setAadhaarVerifying(false); }
+  };
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -68,7 +113,7 @@ export default function LoanApplication() {
       if (data.status === 'success') {
         setAppData(data.data);
         setFormData(data.data);
-        setCurrentStep(data.data.current_step || 1);
+        const savedStep = data.data.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, data.data.highest_step || 1));
       }
     } catch { logout(); }
     finally { setLoading(false); }
@@ -91,7 +136,8 @@ export default function LoanApplication() {
         gender: formData.gender,
         marital_status: formData.marital_status,
         current_address: formData.current_address,
-        permanent_address: formData.permanent_address,
+        permanent_address: formData.same_as_current ? formData.current_address : formData.permanent_address,
+        same_as_current: formData.same_as_current,
         pan_number: formData.pan_number,
         aadhaar_last4: formData.aadhaar_number ? String(formData.aadhaar_number).slice(-4) : undefined,
         aadhaar_number_encrypted: formData.aadhaar_number,
@@ -120,7 +166,7 @@ export default function LoanApplication() {
       const res = await fetch(`${API_URL}/api/autosave-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_token: session, step: currentStep, data: filtered }),
+        body: JSON.stringify({ session_token: session, step: currentStep, data: { ...filtered, highest_step: highestStep } }),
       });
       if (res.status === 401) { logout(); return; }
       setLastSaved(new Date().toLocaleTimeString());
@@ -156,7 +202,9 @@ export default function LoanApplication() {
 
   if (valid) {
     autoSave();
-    setCurrentStep(prev => prev + 1); // ✅ FIXED
+    setCurrentStep(prev => { const next = prev + 1; setHighestStep(h => Math.max(h, next)); return next; });
+    setErrors({});
+    window.scrollTo(0,0);
     setErrors({});
     window.scrollTo(0, 0);
   }
@@ -179,21 +227,21 @@ export default function LoanApplication() {
   };
 
   if (sessionExpired) return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
-        <div className="text-6xl mb-4">⏱️</div>
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-xl dark:shadow-gray-900/50 p-8 max-w-md w-full text-center">
+        <div className="mb-4"><AlertTriangle className="w-16 h-16 text-orange-500 mx-auto" /></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Session Expired</h2>
         <p className="text-gray-600 mb-6">Your session has expired due to inactivity. Please verify again to continue.</p>
         <button onClick={() => router.push('/loan-form')} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition">
           Re-verify with OTP →
         </button>
-        <p className="text-xs text-gray-500 mt-4">Your progress has been saved automatically</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-4">Your progress has been saved automatically</p>
       </div>
     </div>
   );
 
   if (loading) return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center">
       <div className="text-center">
         <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
         <p className="mt-4 text-gray-600">Loading your application...</p>
@@ -204,54 +252,106 @@ export default function LoanApplication() {
   const steps = ['KYC & Personal', 'Occupation', 'Loan & Financial', 'Documents', 'Review'];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-6 px-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 py-6 px-4 transition-colors">
       {inactivityWarning && (
-        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-orange-500 text-white px-6 py-3 rounded-xl shadow-lg">
-          ⚠️ Session will expire in 1 minute due to inactivity
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-8 pointer-events-none">
+          <div className="pointer-events-auto bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border border-orange-200 dark:border-orange-800 shadow-2xl rounded-2xl px-8 py-5 max-w-md w-full mx-4 animate-[slideDown_0.3s_ease-out]">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-orange-500" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Session Expiring Soon</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Your session will expire in 1 minute due to inactivity. Interact with the form to stay active.</p>
+              </div>
+            </div>
+            <div className="mt-3 h-1 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div className="h-full bg-orange-400 rounded-full animate-[shrink_60s_linear_forwards]" />
+            </div>
+          </div>
         </div>
       )}
 
       <div className="max-w-2xl mx-auto">
-        <div className="bg-white rounded-2xl shadow-lg p-5 mb-4">
+        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-lg dark:shadow-gray-900/50 p-5 mb-4 transition-colors">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">🏦 Loan Application</h1>
-              <p className="text-sm text-gray-500">
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2"><Building2 className="w-5 h-5 text-blue-600" />Loan Application</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 {appData?.customer_name} · ID: {appData?.loan_id}
               </p>
             </div>
             <div className="text-xs text-right">
-              {saving ? <span className="text-blue-500">● Saving...</span> : lastSaved ? <span className="text-green-500">✓ Saved {lastSaved}</span> : null}
+              <div className="flex items-center gap-3">
+              {saving ? <span className="text-blue-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Saving...</span> : lastSaved ? <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Saved {lastSaved}</span> : null}
+              <ThemeToggle />
+            </div>
             </div>
           </div>
-          <div className="flex items-center gap-1">
-            {steps.map((s, i) => (
-              <div key={i} className="flex items-center flex-1">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${currentStep > i+1 ? 'bg-green-500 text-white' : currentStep === i+1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
-                  {currentStep > i+1 ? '✓' : i+1}
-                </div>
-                {i < steps.length-1 && <div className={`flex-1 h-1 mx-1 rounded ${currentStep > i+1 ? 'bg-green-400' : 'bg-gray-200'}`}></div>}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-between mt-1">
-            {steps.map((s, i) => <span key={i} className={`text-xs ${currentStep === i+1 ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>{s}</span>)}
+          <div className="relative">
+            <div className="absolute top-4 left-6 right-6 h-0.5 bg-gray-200 dark:bg-gray-700"></div>
+            <div className="absolute top-4 left-6 h-0.5 bg-green-400 transition-all duration-300" style={{width: `${Math.max(0, (Math.max(highestStep, currentStep) - 1)) / (steps.length - 1) * (100 - 8)}%`}}></div>
+            <div className="relative flex justify-between">
+              {steps.map((s, i) => {
+                const stepNum = i + 1;
+                const isViewing = currentStep === stepNum;
+                const isCompleted = highestStep > stepNum && !isViewing;
+                const isActiveFrontier = highestStep === stepNum && !isViewing;
+                const isReachable = stepNum <= highestStep;
+                return (
+                  <div key={i} className="flex flex-col items-center" style={{width: `${100/steps.length}%`}}>
+                    <div
+                      onClick={() => { if (isReachable) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0,0); } }}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold z-10 transition-all duration-200 ${
+                        isViewing
+                          ? 'bg-blue-600 text-white cursor-pointer ring-4 ring-blue-200 hover:bg-blue-700 hover:scale-110'
+                          : isActiveFrontier
+                          ? 'bg-white text-blue-600 border-[3px] border-blue-500 cursor-pointer hover:bg-blue-50 hover:scale-110'
+                          : isCompleted
+                          ? 'bg-green-500 text-white cursor-pointer hover:bg-green-600 hover:scale-110'
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                      }`}
+                    >
+                      {isCompleted ? '✓' : stepNum}
+                    </div>
+                    <span className={`text-[11px] mt-2 text-center leading-tight ${
+                      isViewing ? 'text-blue-600 font-semibold'
+                        : isActiveFrontier ? 'text-blue-500 font-medium'
+                        : isCompleted ? 'text-green-600 font-medium'
+                        : 'text-gray-400'
+                    }`}>{s}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg p-6">
+        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-lg dark:shadow-gray-900/50 p-6 transition-colors">
 
           {currentStep === 1 && (
             <div className="space-y-5">
-              <h2 className="text-xl font-bold text-gray-900">KYC & Personal Details</h2>
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-blue-800">Identity Verification</p>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">KYC & Personal Details</h2>
+              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+                <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Identity Verification</p>
                 <F label="PAN Number" required error={errors.pan_number}>
-                  <input type="text" value={formData.pan_number || ''} onChange={e => onChange('pan_number', e.target.value.toUpperCase())} className={inp(errors.pan_number)} placeholder="ABCDE1234F" maxLength={10} />
+                  <div className="flex gap-2">
+                    <input type="text" value={formData.pan_number || ''} onChange={e => onChange('pan_number', e.target.value.toUpperCase())} disabled={formData.pan_verified} className={`flex-1 ${formData.pan_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${inp(errors.pan_number)}`} placeholder="ABCDE1234F" maxLength={10} />
+                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${formData.pan_verified ? 'bg-green-500 text-white cursor-default' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                      {panVerifying ? 'Verifying...' : formData.pan_verified ? 'Verified' : 'Verify'}
+                    </button>
+                  </div>
+                  {formData.pan_verified && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3" />PAN verified{formData.pan_verification_timestamp ? ` on ${new Date(formData.pan_verification_timestamp).toLocaleString()}` : ''}</p>}
                 </F>
                 <F label="Aadhaar Number" required error={errors.aadhaar_number}>
-                  <input type="text" value={formData.aadhaar_number || formData.aadhaar_number_encrypted || ''} onChange={e => onChange('aadhaar_number', e.target.value.replace(/\D/g,'').slice(0,12))} className={inp(errors.aadhaar_number)} placeholder="12-digit Aadhaar" maxLength={12} />
-                  <p className="text-xs text-gray-500 mt-1">🔒 Only last 4 digits stored</p>
+                  <div className="flex gap-2">
+                    <input type="text" value={formData.aadhaar_number || formData.aadhaar_number_encrypted || ''} onChange={e => onChange('aadhaar_number', e.target.value.replace(/\D/g,'').slice(0,12))} disabled={formData.aadhaar_verified} className={`flex-1 ${formData.aadhaar_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${inp(errors.aadhaar_number)}`} placeholder="12-digit Aadhaar" maxLength={12} />
+                    <button type="button" onClick={handleVerifyAadhaar} disabled={formData.aadhaar_verified || aadhaarVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${formData.aadhaar_verified ? 'bg-green-500 text-white cursor-default' : 'bg-orange-600 text-white hover:bg-orange-700'}`}>
+                      {aadhaarVerifying ? 'Verifying...' : formData.aadhaar_verified ? 'Verified' : 'Verify'}
+                    </button>
+                  </div>
+                  {formData.aadhaar_verified && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3" />Aadhaar verified (last 4: {formData.aadhaar_last4}){formData.aadhaar_verification_timestamp ? ` on ${new Date(formData.aadhaar_verification_timestamp).toLocaleString()}` : ''}</p>}
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1"><Lock className="w-3 h-3" />Only last 4 digits stored</p>
                 </F>
               </div>
               <div className="grid grid-cols-4 gap-3">
@@ -295,10 +395,10 @@ export default function LoanApplication() {
                 <textarea rows={3} value={formData.current_address || ''} onChange={e => onChange('current_address', e.target.value)} className={inp(errors.current_address)} placeholder="Full current address" />
               </F>
               <F label="Permanent Address">
-                <textarea rows={2} value={formData.permanent_address || ''} onChange={e => onChange('permanent_address', e.target.value)} className={inp('')} placeholder="If different from current" />
+                <textarea rows={2} value={formData.same_as_current ? formData.current_address : (formData.permanent_address || '')} onChange={e => onChange('permanent_address', e.target.value)} disabled={formData.same_as_current} className={`${formData.same_as_current ? 'bg-gray-100 text-gray-500' : ''} ${inp('')}`} placeholder="If different from current address" />
                 <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                  <input type="checkbox" onChange={e => { if(e.target.checked) onChange('permanent_address', formData.current_address); }} className="w-4 h-4" />
-                  <span className="text-sm text-gray-600">Same as current address</span>
+                  <input type="checkbox" checked={formData.same_as_current || false} onChange={e => { onChange('same_as_current', e.target.checked); if(e.target.checked) onChange('permanent_address', formData.current_address); }} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
+                  <span className="text-sm text-gray-600 dark:text-gray-400">Same as current address</span>
                 </label>
               </F>
               <Nav onNext={handleNext} />
@@ -307,7 +407,7 @@ export default function LoanApplication() {
 
           {currentStep === 2 && (
             <div className="space-y-5">
-              <h2 className="text-xl font-bold text-gray-900">Occupation Details</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Occupation Details</h2>
               <div className="grid grid-cols-2 gap-3">
                 <F label="Qualification" required error={errors.qualification}>
                   <select value={formData.qualification || ''} onChange={e => onChange('qualification', e.target.value)} className={inp(errors.qualification)}>
@@ -367,9 +467,9 @@ export default function LoanApplication() {
 
           {currentStep === 3 && (
             <div className="space-y-5">
-              <h2 className="text-xl font-bold text-gray-900">Loan & Financial Details</h2>
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-blue-800">Loan Details</p>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Loan & Financial Details</h2>
+              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+                <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Loan Details</p>
                 <div className="grid grid-cols-2 gap-3">
                   <F label="Loan Amount (₹)" required error={errors.loan_amount_requested}>
                     <input type="number" value={formData.loan_amount_requested || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
@@ -389,8 +489,8 @@ export default function LoanApplication() {
                 </F>
                 <F label="Scheme"><input type="text" value={formData.scheme || ''} onChange={e => onChange('scheme', e.target.value)} className={inp('')} placeholder="Optional" /></F>
               </div>
-              <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-green-800">Financial Details</p>
+              <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+                <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Financial Details</p>
                 <div className="grid grid-cols-2 gap-3">
                   <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income}>
                     <input type="number" value={formData.monthly_gross_income || ''} onChange={e => onChange('monthly_gross_income', e.target.value)} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
@@ -408,10 +508,10 @@ export default function LoanApplication() {
                   </F>
                 </div>
               </div>
-              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+              <div className="bg-yellow-50 dark:bg-dark-section border border-yellow-200 dark:border-gray-700/50 rounded-xl p-4">
                 <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5" />
-                  <span className="text-sm text-gray-700">I have pending criminal cases or criminal records</span>
+                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5 dark:bg-gray-700 dark:border-gray-600" />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">I have pending criminal cases or criminal records</span>
                 </label>
               </div>
               <Nav onPrev={() => setCurrentStep(2)} onNext={handleNext} />
@@ -420,8 +520,8 @@ export default function LoanApplication() {
 
           {currentStep === 4 && (
             <div className="space-y-5">
-              <h2 className="text-xl font-bold text-gray-900">Document Upload</h2>
-              <p className="text-sm text-gray-500">Max 5MB each. PDF/JPG/PNG accepted.</p>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Document Upload</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Max 5MB each. PDF/JPG/PNG accepted.</p>
               <div className="space-y-3">
                 {[
                   { key: 'pan_card_url', label: 'PAN Card', required: true },
@@ -434,10 +534,15 @@ export default function LoanApplication() {
                   { key: 'proof_of_identification_url', label: 'Proof of Identification', required: false },
                   { key: 'proof_of_residence_url', label: 'Proof of Residence', required: false },
                 ].map(doc => (
-                  <div key={doc.key} className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div key={doc.key} className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section' : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
                     <div>
-                      <p className="text-sm font-medium text-gray-800">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
-                      {formData[doc.key] && <p className="text-xs text-green-600 mt-1">✓ Uploaded</p>}
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
+                      {formData[doc.key] && (
+                      <div className="flex items-center gap-2 mt-1">
+                        <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Uploaded</p>
+                        <a href={`https://virtualvaani.vgipl.com:8200${formData[doc.key]}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4 " /></a>
+                      </div>
+                    )}
                     </div>
                     <label className="cursor-pointer">
                       <input type="file" accept="image/*,application/pdf" className="hidden"
@@ -446,11 +551,11 @@ export default function LoanApplication() {
                           if (!file) return;
                           if (file.size > 5 * 1024 * 1024) { alert('File too large. Max 5MB'); return; }
                           const fd = new FormData();
-                          fd.append('token', getSession() || '');
+                          fd.append('session_token', getSession() || '');
                           fd.append('document_type', doc.key.replace('_url', ''));
                           fd.append('file', file);
                           try {
-                            const res = await fetch(`${API_URL}/api/upload-document`, { method: 'POST', body: fd });
+                            const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
                             const data = await res.json();
                             if (data.url) onChange(doc.key, data.url);
                             else alert('Upload failed. Storage may not be configured.');
@@ -470,7 +575,7 @@ export default function LoanApplication() {
 
           {currentStep === 5 && (
             <div className="space-y-5">
-              <h2 className="text-xl font-bold text-gray-900">Review & Submit</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Review & Submit</h2>
               <RS title="Identity & KYC">
                 <RR label="PAN" value={formData.pan_number ? formData.pan_number.slice(0,2)+'***'+formData.pan_number.slice(-2) : ''} />
                 <RR label="Aadhaar" value={formData.aadhaar_number ? 'XXXX XXXX '+String(formData.aadhaar_number).slice(-4) : formData.aadhaar_last4 ? `XXXX XXXX ${formData.aadhaar_last4}` : ''} />
@@ -494,20 +599,20 @@ export default function LoanApplication() {
                 <RR label="Purpose" value={formData.purpose_of_loan} />
                 <RR label="Net Income" value={formData.monthly_net_income ? `₹${parseFloat(formData.monthly_net_income).toLocaleString('en-IN')}` : ''} />
               </RS>
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 text-blue-600 rounded" />
-                  <span className="text-sm text-gray-700">I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
                 </label>
               </div>
-              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                <p className="text-xs text-yellow-800">⚠️ Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
+              <div className="bg-yellow-50 dark:bg-dark-section border border-yellow-200 dark:border-gray-700/50 rounded-xl p-3">
+                <p className="text-xs text-yellow-800 dark:text-gray-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
               </div>
               <div className="flex gap-4">
-                <button onClick={() => setCurrentStep(4)} className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-300 transition">← Previous</button>
+                <button onClick={() => { autoSave(); setCurrentStep(4); window.scrollTo(0,0); }} className="flex-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-4 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition">← Previous</button>
                 <button onClick={handleSubmit} disabled={submitting || !agreed}
                   className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-4 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition disabled:opacity-50">
-                  {submitting ? 'Submitting...' : 'Submit Application ✓'}
+                  {submitting ? 'Submitting...' : 'Submit Application'}
                 </button>
               </div>
             </div>
@@ -521,7 +626,7 @@ export default function LoanApplication() {
 function F({ label, required, error, children }: any) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label} {required && <span className="text-red-500">*</span>}</label>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label} {required && <span className="text-red-500">*</span>}</label>
       {children}
       {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
     </div>
@@ -530,17 +635,17 @@ function F({ label, required, error, children }: any) {
 function Nav({ onPrev, onNext }: any) {
   return (
     <div className="flex gap-4 pt-2">
-      {onPrev && <button onClick={onPrev} className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-300 transition">← Previous</button>}
+      {onPrev && <button onClick={onPrev} className="flex-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-4 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition">← Previous</button>}
       {onNext && <button onClick={onNext} className={`${onPrev ? 'flex-1' : 'w-full'} bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition`}>Continue →</button>}
     </div>
   );
 }
 function RS({ title, children }: any) {
-  return <div className="bg-gray-50 rounded-xl p-4"><h3 className="font-semibold text-gray-900 mb-3">{title}</h3><div className="space-y-2">{children}</div></div>;
+  return <div className="bg-gray-50 dark:bg-dark-section rounded-xl p-4"><h3 className="font-semibold text-gray-900 dark:text-white mb-3">{title}</h3><div className="space-y-2">{children}</div></div>;
 }
 function RR({ label, value }: any) {
-  return <div className="flex justify-between text-sm"><span className="text-gray-500">{label}:</span><span className="font-medium text-gray-900 text-right max-w-xs">{value || '—'}</span></div>;
+  return <div className="flex justify-between text-sm"><span className="text-gray-500 dark:text-gray-400">{label}:</span><span className="font-medium text-gray-900 dark:text-gray-100 text-right max-w-xs">{value || '—'}</span></div>;
 }
 function inp(error: string) {
-  return `w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${error ? 'border-red-300 bg-red-50' : 'border-gray-300'}`;
+  return `w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${error ? 'border-red-300 bg-red-50' : 'border-gray-300 dark:border-gray-600 dark:bg-dark-card/80 dark:text-gray-100'}`;
 }

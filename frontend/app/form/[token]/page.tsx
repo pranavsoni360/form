@@ -1,9 +1,11 @@
 'use client';
 
+import { Building2, Lock, ShieldCheck, Check, AlertTriangle, Paperclip, Loader2, Save, CheckCircle2, XCircle, Upload, FileText } from 'lucide-react';
+
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://virtualvaani.vgipl.com:8200';
 
 export default function LoanFormPage() {
   const params = useParams();
@@ -14,6 +16,7 @@ export default function LoanFormPage() {
   const [error, setError] = useState('');
   const [customerData, setCustomerData] = useState<any>(null);
   const [currentStep, setCurrentStep] = useState(1);
+  const [highestStep, setHighestStep] = useState(1);
   const [formData, setFormData] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState('');
@@ -36,6 +39,46 @@ export default function LoanFormPage() {
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [otpTimer, setOtpTimer] = useState(0);
+  const [panVerifying, setPanVerifying] = useState(false);
+  const [aadhaarVerifying, setAadhaarVerifying] = useState(false);
+
+  const handleVerifyPAN = async () => {
+    const pan = formData.pan_number || '';
+    if (!pan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+      setErrors((p: any) => ({ ...p, pan_number: 'Invalid PAN format (e.g. ABCDE1234F)' }));
+      return;
+    }
+    setPanVerifying(true);
+    try {
+      const res = await fetch(`${API_URL}/api/verify-pan?token=${token}&pan_number=${pan}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Verification failed');
+      onChange('pan_verified', true);
+      onChange('pan_verification_timestamp', new Date().toISOString());
+      setErrors((p: any) => ({ ...p, pan_number: '' }));
+    } catch (err: any) {
+      setErrors((p: any) => ({ ...p, pan_number: err.message || 'PAN verification failed' }));
+    } finally { setPanVerifying(false); }
+  };
+
+  const handleVerifyAadhaar = async () => {
+    const aadhaar = formData.aadhaar_number || '';
+    if (!aadhaar || !/^\d{12}$/.test(aadhaar)) {
+      setErrors((p: any) => ({ ...p, aadhaar_number: 'Enter valid 12-digit Aadhaar number' }));
+      return;
+    }
+    setAadhaarVerifying(true);
+    try {
+      const res = await fetch(`${API_URL}/api/verify-aadhaar?token=${token}&aadhaar_number=${aadhaar}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Verification failed');
+      const data = await res.json();
+      onChange('aadhaar_verified', true);
+      onChange('aadhaar_last4', data.last4);
+      onChange('aadhaar_verification_timestamp', new Date().toISOString());
+      setErrors((p: any) => ({ ...p, aadhaar_number: '' }));
+    } catch (err: any) {
+      setErrors((p: any) => ({ ...p, aadhaar_number: err.message || 'Aadhaar verification failed' }));
+    } finally { setAadhaarVerifying(false); }
+  };
 
   const validateToken = async () => {
     try {
@@ -44,6 +87,7 @@ export default function LoanFormPage() {
       if (data.status === 'valid') {
         setCustomerData(data.data);
         setFormData(data.data);
+        if (data.current_step && data.current_step > 1) { setCurrentStep(data.current_step); } setHighestStep(Math.max(data.current_step || 1, data.data?.highest_step || 1));
         setOtpStep('verified');
       } else if (data.status === 'otp_required') {
         setOtpStep('phone');
@@ -130,7 +174,8 @@ export default function LoanFormPage() {
         gender: formData.gender,
         marital_status: formData.marital_status,
         current_address: formData.current_address,
-        permanent_address: formData.permanent_address,
+        permanent_address: formData.same_as_current ? formData.current_address : formData.permanent_address,
+        same_as_current: formData.same_as_current,
         pan_number: formData.pan_number,
         aadhaar_last4: formData.aadhaar_number ? String(formData.aadhaar_number).slice(-4) : null,
         aadhaar_number_encrypted: formData.aadhaar_number,
@@ -161,7 +206,7 @@ export default function LoanFormPage() {
       await fetch(`${API_URL}/api/autosave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, step: currentStep, data: filtered }),
+        body: JSON.stringify({ token, step: currentStep, data: { ...filtered, highest_step: highestStep } }),
       });
       setLastSaved(new Date().toLocaleTimeString());
     } catch {}
@@ -216,7 +261,7 @@ export default function LoanFormPage() {
     else if (currentStep === 2) valid = step2Valid();
     else if (currentStep === 3) valid = step3Valid();
     else valid = true;
-    if (valid) { autoSave(); setCurrentStep(s => s + 1); setErrors({}); window.scrollTo(0,0); }
+    if (valid) { autoSave(); setCurrentStep(s => { const next = s + 1; setHighestStep(h => Math.max(h, next)); return next; }); setErrors({}); window.scrollTo(0,0); }
   };
 
   const handleSubmit = async () => {
@@ -247,7 +292,7 @@ export default function LoanFormPage() {
   if (error) return (
     <div className="min-h-screen bg-red-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
-        <div className="text-6xl mb-4">⚠️</div>
+        <div className="mb-4"><AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto" /></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Link Error</h2>
         <p className="text-gray-600">{error}</p>
       </div>
@@ -295,7 +340,7 @@ export default function LoanFormPage() {
             </button>
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <p className="text-xs text-blue-800">🔒 OTP will be sent to your WhatsApp number registered with the bank</p>
+              <p className="text-xs text-blue-800 flex items-center gap-1"><Lock className="w-3 h-3" />OTP will be sent to your WhatsApp number registered with the bank</p>
             </div>
           </div>
         )}
@@ -303,7 +348,7 @@ export default function LoanFormPage() {
         {otpStep === 'otp' && (
           <div className="space-y-4">
             <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-              <p className="text-sm text-green-800">✓ OTP sent to WhatsApp for +91 {phoneInput}</p>
+              <p className="text-sm text-green-800 flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />OTP sent to WhatsApp for +91 {phoneInput}</p>
             </div>
 
             <div>
@@ -327,7 +372,7 @@ export default function LoanFormPage() {
               disabled={otpVerifying || otpInput.length !== 6}
               className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition disabled:opacity-50"
             >
-              {otpVerifying ? 'Verifying...' : 'Verify OTP ✓'}
+              {otpVerifying ? 'Verifying...' : 'Verify OTP'}
             </button>
 
             <div className="text-center">
@@ -356,25 +401,52 @@ export default function LoanFormPage() {
         <div className="bg-white rounded-2xl shadow-lg p-5 mb-4">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">🏦 Loan Application</h1>
+              <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><Building2 className="w-5 h-5 text-blue-600" />Loan Application</h1>
               <p className="text-sm text-gray-500">ID: {customerData?.loan_id} · ₹{parseFloat(customerData?.loan_amount || 0).toLocaleString('en-IN')}</p>
             </div>
             <div className="text-xs text-right">
-              {saving ? <span className="text-blue-500">● Saving...</span> : lastSaved ? <span className="text-green-500">✓ Saved {lastSaved}</span> : null}
+              {saving ? <span className="text-blue-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Saving...</span> : lastSaved ? <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Saved {lastSaved}</span> : null}
             </div>
           </div>
-          <div className="flex items-center gap-1">
-            {steps.map((s, i) => (
-              <div key={i} className="flex items-center flex-1">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${currentStep > i+1 ? 'bg-green-500 text-white' : currentStep === i+1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
-                  {currentStep > i+1 ? '✓' : i+1}
-                </div>
-                {i < steps.length-1 && <div className={`flex-1 h-1 mx-1 rounded ${currentStep > i+1 ? 'bg-green-400' : 'bg-gray-200'}`}></div>}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-between mt-1">
-            {steps.map((s, i) => <span key={i} className={`text-xs ${currentStep === i+1 ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>{s}</span>)}
+          <div className="relative">
+            {/* Connector line background */}
+            <div className="absolute top-4 left-6 right-6 h-0.5 bg-gray-200"></div>
+            {/* Connector line progress */}
+            <div className="absolute top-4 left-6 h-0.5 bg-green-400 transition-all duration-300" style={{width: `${Math.max(0, (Math.max(highestStep, currentStep) - 1)) / (steps.length - 1) * (100 - 8)}%`}}></div>
+            {/* Steps */}
+            <div className="relative flex justify-between">
+              {steps.map((s, i) => {
+                const stepNum = i + 1;
+                const isViewing = currentStep === stepNum;
+                const isCompleted = highestStep > stepNum && !isViewing;
+                const isActiveFrontier = highestStep === stepNum && !isViewing;
+                const isReachable = stepNum <= highestStep;
+                return (
+                  <div key={i} className="flex flex-col items-center" style={{width: `${100/steps.length}%`}}>
+                    <div
+                      onClick={() => { if (isReachable) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0,0); } }}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold z-10 transition-all duration-200 ${
+                        isViewing
+                          ? 'bg-blue-600 text-white cursor-pointer ring-4 ring-blue-200 hover:bg-blue-700 hover:scale-110'
+                          : isActiveFrontier
+                          ? 'bg-white text-blue-600 border-[3px] border-blue-500 cursor-pointer hover:bg-blue-50 hover:scale-110'
+                          : isCompleted
+                          ? 'bg-green-500 text-white cursor-pointer hover:bg-green-600 hover:scale-110'
+                          : 'bg-gray-200 text-gray-500'
+                      }`}
+                    >
+                      {isCompleted ? '✓' : stepNum}
+                    </div>
+                    <span className={`text-[11px] mt-2 text-center leading-tight ${
+                      isViewing ? 'text-blue-600 font-semibold'
+                        : isActiveFrontier ? 'text-blue-500 font-medium'
+                        : isCompleted ? 'text-green-600 font-medium'
+                        : 'text-gray-400'
+                    }`}>{s}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -388,11 +460,23 @@ export default function LoanFormPage() {
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-blue-800">Identity Verification</p>
                 <F label="PAN Number" required error={errors.pan_number}>
-                  <input type="text" value={formData.pan_number || ''} onChange={e => onChange('pan_number', e.target.value.toUpperCase())} className={inp(errors.pan_number)} placeholder="ABCDE1234F" maxLength={10} />
+                  <div className="flex gap-2">
+                    <input type="text" value={formData.pan_number || ''} onChange={e => onChange('pan_number', e.target.value.toUpperCase())} disabled={formData.pan_verified} className={`flex-1 ${formData.pan_verified ? 'bg-green-50 border-green-300' : ''} ${inp(errors.pan_number)}`} placeholder="ABCDE1234F" maxLength={10} />
+                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${formData.pan_verified ? 'bg-green-500 text-white cursor-default' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                      {panVerifying ? 'Verifying...' : formData.pan_verified ? 'Verified' : 'Verify'}
+                    </button>
+                  </div>
+                  {formData.pan_verified && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3" />PAN verified{formData.pan_verification_timestamp ? ` on ${new Date(formData.pan_verification_timestamp).toLocaleString()}` : ''}</p>}
                 </F>
                 <F label="Aadhaar Number" required error={errors.aadhaar_number}>
-                  <input type="text" value={formData.aadhaar_number || ''} onChange={e => onChange('aadhaar_number', e.target.value.replace(/\D/g,'').slice(0,12))} className={inp(errors.aadhaar_number)} placeholder="12-digit Aadhaar" maxLength={12} />
-                  <p className="text-xs text-gray-500 mt-1">🔒 Only last 4 digits stored</p>
+                  <div className="flex gap-2">
+                    <input type="text" value={formData.aadhaar_number || ''} onChange={e => onChange('aadhaar_number', e.target.value.replace(/\D/g,'').slice(0,12))} disabled={formData.aadhaar_verified} className={`flex-1 ${formData.aadhaar_verified ? 'bg-green-50 border-green-300' : ''} ${inp(errors.aadhaar_number)}`} placeholder="12-digit Aadhaar" maxLength={12} />
+                    <button type="button" onClick={handleVerifyAadhaar} disabled={formData.aadhaar_verified || aadhaarVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${formData.aadhaar_verified ? 'bg-green-500 text-white cursor-default' : 'bg-orange-600 text-white hover:bg-orange-700'}`}>
+                      {aadhaarVerifying ? 'Verifying...' : formData.aadhaar_verified ? 'Verified' : 'Verify'}
+                    </button>
+                  </div>
+                  {formData.aadhaar_verified && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3" />Aadhaar verified (last 4: {formData.aadhaar_last4}){formData.aadhaar_verification_timestamp ? ` on ${new Date(formData.aadhaar_verification_timestamp).toLocaleString()}` : ''}</p>}
+                  {!formData.aadhaar_verified && <p className="text-xs text-gray-500 mt-1">Only last 4 digits will be stored</p>}
                 </F>
               </div>
 
@@ -448,9 +532,9 @@ export default function LoanFormPage() {
               </F>
 
               <F label="Permanent Address">
-                <textarea rows={2} value={formData.permanent_address || ''} onChange={e => onChange('permanent_address', e.target.value)} className={inp('')} placeholder="If different from current address" />
+                <textarea rows={2} value={formData.same_as_current ? formData.current_address : (formData.permanent_address || '')} onChange={e => onChange('permanent_address', e.target.value)} disabled={formData.same_as_current} className={`${formData.same_as_current ? 'bg-gray-100 text-gray-500' : ''} ${inp('')}`} placeholder="If different from current address" />
                 <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                  <input type="checkbox" onChange={e => { if(e.target.checked) onChange('permanent_address', formData.current_address); }} className="w-4 h-4" />
+                  <input type="checkbox" checked={formData.same_as_current || false} onChange={e => { onChange('same_as_current', e.target.checked); if(e.target.checked) onChange('permanent_address', formData.current_address); }} className="w-4 h-4" />
                   <span className="text-sm text-gray-600">Same as current address</span>
                 </label>
               </F>
@@ -531,7 +615,7 @@ export default function LoanFormPage() {
                 <textarea rows={2} value={formData.employer_address || ''} onChange={e => onChange('employer_address', e.target.value)} className={inp(errors.employer_address)} placeholder="Full employer / business address" />
               </F>
 
-              <Nav onPrev={() => setCurrentStep(1)} onNext={handleNext} />
+              <Nav onPrev={() => { autoSave(); setCurrentStep(1); window.scrollTo(0,0); }} onNext={handleNext} />
             </div>
           )}
 
@@ -592,7 +676,7 @@ export default function LoanFormPage() {
                 <p className="text-xs text-gray-500 mt-2">Leave unchecked if you have no criminal records (default)</p>
               </div>
 
-              <Nav onPrev={() => setCurrentStep(2)} onNext={handleNext} />
+              <Nav onPrev={() => { autoSave(); setCurrentStep(2); window.scrollTo(0,0); }} onNext={handleNext} />
             </div>
           )}
 
@@ -619,7 +703,7 @@ export default function LoanFormPage() {
                       <p className="text-sm font-medium text-gray-800">
                         {doc.label} {doc.required && <span className="text-red-500">*</span>}
                       </p>
-                      {formData[doc.key] && <p className="text-xs text-green-600 mt-1">✓ Uploaded</p>}
+                      {formData[doc.key] && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Uploaded</p>}
                     </div>
                     <label className="cursor-pointer">
                       <input type="file" accept="image/*,application/pdf" className="hidden"
@@ -648,10 +732,10 @@ export default function LoanFormPage() {
               </div>
 
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                <p className="text-xs text-yellow-800">📎 If Supabase Storage is not yet configured, document upload will show an error. You can skip and submit — documents can be collected separately.</p>
+                <p className="text-xs text-yellow-800 flex items-center gap-1"><Paperclip className="w-3 h-3" />If storage is not yet configured, document upload will show an error. You can skip and submit — documents can be collected separately.</p>
               </div>
 
-              <Nav onPrev={() => setCurrentStep(3)} onNext={handleNext} />
+              <Nav onPrev={() => { autoSave(); setCurrentStep(3); window.scrollTo(0,0); }} onNext={handleNext} />
             </div>
           )}
 
@@ -705,7 +789,7 @@ export default function LoanFormPage() {
                   <div key={key} className="flex justify-between text-sm">
                     <span className="text-gray-500">{label}:</span>
                     <span className={formData[key] ? 'text-green-600 font-medium' : 'text-gray-400'}>
-                      {formData[key] ? '✓ Uploaded' : '— Not uploaded'}
+                      {formData[key] ? 'Uploaded' : '— Not uploaded'}
                     </span>
                   </div>
                 ))}
@@ -719,14 +803,14 @@ export default function LoanFormPage() {
               </div>
 
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
-                <p className="text-xs text-yellow-800">⚠️ Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
+                <p className="text-xs text-yellow-800 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
               </div>
 
               <div className="flex gap-4">
-                <button onClick={() => setCurrentStep(4)} className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-300 transition">← Previous</button>
+                <button onClick={() => { autoSave(); setCurrentStep(4); window.scrollTo(0,0); }} className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-300 transition">← Previous</button>
                 <button onClick={handleSubmit} disabled={submitting || !agreed}
                   className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-4 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition disabled:opacity-50">
-                  {submitting ? 'Submitting...' : 'Submit Application ✓'}
+                  {submitting ? 'Submitting...' : 'Submit Application'}
                 </button>
               </div>
             </div>

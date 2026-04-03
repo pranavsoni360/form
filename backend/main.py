@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import httpx
 import jwt
 import hashlib
+import json
 
 load_dotenv()
 
@@ -23,9 +24,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
+APP_URL = os.getenv("APP_URL", "http://localhost:3000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://yourdomain.com"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://virtualvaani.vgipl.com",
+        "https://virtualvaani.vgipl.com:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,6 +50,25 @@ WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 AISENSY_API_KEY = os.getenv("AISENSY_API_KEY")
 AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_CAMPAIGN_NAME", "Call")
 AISENSY_USERNAME = os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA")
+
+# VG Doc Verify API config
+VG_API_BASE = os.getenv("VG_API_BASE", "http://10.200.10.43/VGDocverify/VGKVerify.asmx")
+VG_USER_ID = os.getenv("PAN_API_USER_ID", "33")
+VG_KEY = os.getenv("PAN_API_KEY", "CONV27032026")
+VG_BANK_CODE = os.getenv("BANK_SHORT_CODE", "VGIL")
+VG_BANK_NAME = os.getenv("BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
+
+def vg_base_obj(api_code: str) -> dict:
+    """Base object for all VG API calls"""
+    return {
+        "UserId": VG_USER_ID,
+        "VerificationKey": VG_KEY,
+        "Longitude": "", "Latitude": "", "Accuracy": "",
+        "App_Mode": "", "Request From": "", "Device_Id": "",
+        "Bank_short_code": VG_BANK_CODE,
+        "Bank_Name": VG_BANK_NAME,
+        "APICode": api_code
+    }
 
 security = HTTPBearer()
 
@@ -98,6 +124,95 @@ def verify_otp(plain_otp: str, hashed_otp: str) -> bool:
 def generate_otp() -> str:
     return str(secrets.randbelow(900000) + 100000)
 
+def clean_phone(phone: str) -> str:
+    """Normalize phone to 12-digit Indian format (91XXXXXXXXXX)"""
+    digits = phone.replace('+', '').replace(' ', '').replace('-', '')
+    if digits.startswith('91') and len(digits) == 12:
+        return digits
+    if len(digits) == 10:
+        return f"91{digits}"
+    return digits
+
+def parse_vg_response(raw: str) -> dict:
+    """Parse VG API response, handling double-JSON issue"""
+    raw = raw.strip()
+    if '}{' in raw:
+        raw = raw.split('}{')[0] + '}'
+    return json.loads(raw)
+
+async def get_token_and_app_id(token: str):
+    """Resolve token to (token_row, application_id). Works for both form_tokens and loan_sessions."""
+    session_result = supabase.table("loan_sessions").select("*").eq("session_token", token).execute()
+    token_result = supabase.table("form_tokens").select("*").eq("token", token).execute()
+
+    if not session_result.data and not token_result.data:
+        raise HTTPException(status_code=404, detail="Invalid token or session")
+
+    application_id = None
+    token_row = None
+
+    if session_result.data:
+        application_id = session_result.data[0]["application_id"]
+        token_row = session_result.data[0]
+    elif token_result.data:
+        token_row = token_result.data[0]
+        app_result = supabase.table("loan_applications").select("id").eq("token_id", token_row["id"]).execute()
+        if app_result.data:
+            application_id = app_result.data[0]["id"]
+
+    return token_row, application_id
+
+
+async def send_otp_via_aisensy(phone: str, customer_name: str, otp: str):
+    """Send OTP via AiSensy otp_verification campaign"""
+    if not AISENSY_API_KEY:
+        print(f"[AiSensy] Not configured. OTP for {phone}: {otp}")
+        return {"status": "simulated"}
+
+    phone_formatted = clean_phone(phone)
+
+    payload = {
+        "apiKey": AISENSY_API_KEY,
+        "campaignName": "otp_verification",
+        "destination": phone_formatted,
+        "userName": AISENSY_USERNAME,
+        "templateParams": [otp],
+        "source": "loan-form-otp",
+        "media": {},
+        "buttons": [
+            {
+                "type": "button",
+                "sub_type": "url",
+                "index": 0,
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": otp
+                    }
+                ]
+            }
+        ],
+        "carouselCards": [],
+        "location": {},
+        "attributes": {},
+        "paramsFallbackValue": {
+            "FirstName": "user"
+        }
+    }
+
+    async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        try:
+            response = await client.post(
+                "https://backend.aisensy.com/campaign/t1/api/v2",
+                json=payload
+            )
+            print(f"[AiSensy OTP] {phone_formatted} -> {response.status_code} | {response.text}")
+            return response.json() if response.text else {"status": "sent"}
+        except Exception as e:
+            print(f"[AiSensy OTP] Error: {e}")
+            return {"status": "failed", "error": str(e)}
+
+
 async def send_whatsapp_message(phone: str, message: str, token_id: str = None):
     if not WHATSAPP_API_TOKEN or not WHATSAPP_PHONE_ID:
         print(f"WhatsApp not configured. Would send to {phone}: {message}")
@@ -121,18 +236,13 @@ async def send_whatsapp_message(phone: str, message: str, token_id: str = None):
     async with httpx.AsyncClient(verify=False) as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
-
             print(f"WhatsApp API Status: {response.status_code}")
             print(f"WhatsApp API Raw Response: {response.text}")
-            print(f"WhatsApp URL: {url}")
-            print(f"WhatsApp Phone formatted: {phone_formatted}")
 
             try:
                 response_data = response.json()
             except Exception:
                 response_data = {"error": response.text}
-
-            print("Parsed WhatsApp Response:", response_data)
 
             message_id = None
             if isinstance(response_data, dict) and "messages" in response_data:
@@ -156,29 +266,31 @@ async def send_whatsapp_message(phone: str, message: str, token_id: str = None):
             return {"status": "failed", "error": str(e)}
 
 
-async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params: list = None):
+async def send_whatsapp_aisensy(phone: str, customer_name: str):
     """Send WhatsApp message via AiSensy campaign API"""
     if not AISENSY_API_KEY:
         print(f"AiSensy not configured. Would send to {phone}")
         return {"status": "simulated"}
 
-    phone_formatted = phone.replace('+', '').replace(' ', '')
+    phone_formatted = clean_phone(phone)
+    first_name = customer_name.split()[0]
 
     payload = {
         "apiKey": AISENSY_API_KEY,
         "campaignName": AISENSY_CAMPAIGN_NAME,
         "destination": phone_formatted,
         "userName": AISENSY_USERNAME,
-        "templateParams": template_params or [customer_name],
+        "templateParams": [first_name, first_name],
         "source": "loan-form-system",
-        "media": {},
+        "media": {
+            "url": "https://d3jt6ku4g6z5l8.cloudfront.net/IMAGE/6353da2e153a147b991dd812/4958901_highanglekidcheatingschooltestmin.jpg",
+            "filename": "sample_media"
+        },
         "buttons": [],
         "carouselCards": [],
         "location": {},
         "attributes": {},
-        "paramsFallbackValue": {
-            "FirstName": customer_name
-        }
+        "paramsFallbackValue": {"FirstName": "user"}
     }
 
     async with httpx.AsyncClient(verify=False) as client:
@@ -194,6 +306,7 @@ async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params:
             print(f"AiSensy error: {str(e)}")
             return {"status": "failed", "error": str(e)}
 
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -205,6 +318,7 @@ async def root():
         "service": "Bank Loan Form API",
         "version": "1.0.0"
     }
+
 
 @app.post("/api/generate-form-links")
 async def generate_form_links(customers: List[CustomerData], request: Request):
@@ -229,15 +343,13 @@ async def generate_form_links(customers: List[CustomerData], request: Request):
             }).execute()
 
             token_id = token_data.data[0]["id"]
-            form_url = f"http://localhost:3000/form/{token}"
+            form_url = f"{APP_URL}/loan-form"
 
             message = (
                 f"Dear {customer.customer_name},\n\n"
-                f"Complete your loan application for {customer.loan_type}.\n\n"
-                f"Loan ID: {customer.loan_id}\n"
-                f"Amount: Rs.{customer.loan_amount:,.2f}\n\n"
+                f"Complete your loan application.\n\n"
+                f"Loan ID: {customer.loan_id}\n\n"
                 f"Click to fill the form:\n{form_url}\n\n"
-                f"Valid for 7 days. Do not share this link.\n\n"
                 f"- Your Bank Name"
             )
 
@@ -320,8 +432,6 @@ async def send_otp(token: str, request: Request):
     if token_data["otp_verified"]:
         raise HTTPException(status_code=400, detail="OTP already verified")
 
-    print(f"Sending OTP to registered number: {token_data['phone']}")
-
     otp = generate_otp()
     otp_hash = hash_otp(otp)
     expires_at = now_utc() + timedelta(minutes=10)
@@ -335,16 +445,13 @@ async def send_otp(token: str, request: Request):
         "user_agent": request.headers.get("user-agent")
     }).execute()
 
-    message = (
-        f"Your loan application OTP: {otp}\n\n"
-        f"Valid for 10 minutes.\n"
-        f"Do not share this OTP.\n\n"
-        f"- Your Bank"
+    print(f"[OTP] Sending to {token_data['phone']} via AiSensy")
+
+    await send_otp_via_aisensy(
+        phone=token_data["phone"],
+        customer_name=token_data["customer_name"],
+        otp=otp
     )
-
-    print(f"DEBUG OTP for {token_data['phone']}: {otp}")
-
-    await send_whatsapp_message(token_data["phone"], message)
 
     return {
         "status": "otp_sent",
@@ -448,50 +555,347 @@ async def autosave_form(payload: FormStepData, request: Request):
     }
 
 
-@app.post("/api/verify-pan")
-async def verify_pan(token: str, pan_number: str, request: Request):
-    token_result = supabase.table("form_tokens").select("*").eq("token", token).execute()
+# ============================================
+# PAN VERIFICATION
+# ============================================
 
-    if not token_result.data:
-        raise HTTPException(status_code=404, detail="Invalid token")
+@app.post("/api/verify-pan")
+async def verify_pan(request: Request):
+    data = await request.json()
+    token = data.get('token')
+    pan_number = data.get('pan_number')
+
+    if not token or not pan_number:
+        raise HTTPException(status_code=400, detail="Token and PAN number required")
 
     if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
-        raise HTTPException(status_code=400, detail="Invalid PAN format")
+        raise HTTPException(status_code=400, detail="Invalid PAN format. Must be like ABCDE1234F")
 
-    supabase.table("loan_applications").update({
-        "pan_number": pan_number,
-        "pan_verified": True,
-        "pan_verification_timestamp": now_utc().isoformat()
-    }).eq("token_id", token_result.data[0]["id"]).execute()
+    token_row, application_id = await get_token_and_app_id(token)
 
-    return {"status": "verified", "message": "PAN verified successfully"}
-
-
-@app.post("/api/verify-aadhaar")
-async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
-    token_result = supabase.table("form_tokens").select("*").eq("token", token).execute()
-
-    if not token_result.data:
-        raise HTTPException(status_code=404, detail="Invalid token")
-
-    if not re.match(r'^\d{12}$', aadhaar_number):
-        raise HTTPException(status_code=400, detail="Invalid Aadhaar format")
-
-    last4 = aadhaar_number[-4:]
-
-    supabase.table("loan_applications").update({
-        "aadhaar_last4": last4,
-        "aadhaar_number_encrypted": aadhaar_number,
-        "aadhaar_verified": True,
-        "aadhaar_verification_timestamp": now_utc().isoformat()
-    }).eq("token_id", token_result.data[0]["id"]).execute()
-
-    return {
-        "status": "verified",
-        "message": "Aadhaar verified successfully",
-        "last4": last4
+    pan_payload = {
+        "obj": [{
+            **vg_base_obj("pancard"),
+            "PanNo": pan_number
+        }]
     }
 
+    try:
+        # Mock mode for testing outside office network
+        if pan_number.startswith("ABCDE"):
+            print("MOCK MODE: Simulating PAN verification")
+            api_data = {"status-code": "101", "result": {"name": "TEST USER NAME", "pan": pan_number}}
+        else:
+            async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
+                response = await client.post(
+                    os.getenv("PAN_API_URL", f"{VG_API_BASE}/Pan"),
+                    json=pan_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+            print("RAW PAN RESPONSE:", response.text)
+            api_data = parse_vg_response(response.text)
+
+        print("PAN API Response:", api_data)
+        status_code = str(api_data.get("status-code"))
+
+        if status_code != "101":
+            raise HTTPException(status_code=400, detail=f"PAN verification failed. Code: {status_code}")
+
+        pan_name = api_data.get("result", {}).get("name", "")
+
+        # Save to DB
+        try:
+            pan_update = {
+                "pan_number": pan_number,
+                "pan_verified": True,
+                "pan_name": pan_name,
+                "full_name": pan_name,
+                "pan_verification_timestamp": now_utc().isoformat()
+            }
+            if application_id:
+                supabase.table("loan_applications").update(pan_update).eq("id", application_id).execute()
+            else:
+                pan_update["token_id"] = token_row["id"]
+                supabase.table("loan_applications").insert(pan_update).execute()
+        except Exception as e:
+            print(f"Warning: DB save failed for PAN: {e}")
+
+        return {
+            "status": "verified",
+            "pan_name": pan_name,
+            "message": "PAN verified successfully"
+        }
+
+    except HTTPException:
+        raise
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="PAN API unreachable (Internal Network only)")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="PAN API request timed out")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"PAN API Error: {str(e)}")
+
+
+# ============================================
+# AADHAAR VERIFICATION (DigiLocker - 3 steps)
+# ============================================
+
+@app.post("/api/aadhaar-link")
+async def generate_aadhaar_link(request: Request):
+    """
+    Step 1 - Generate DigiLocker auth link.
+    Customer clicks this link, logs in with Aadhaar OTP on DigiLocker, then returns.
+    """
+    data = await request.json()
+    token = data.get('token')
+    aadhaar_number = data.get('aadhaar_number', '')
+
+    if not token:
+        raise HTTPException(status_code=400, detail="Token required")
+
+    token_row, application_id = await get_token_and_app_id(token)
+
+    payload = {
+        "obj": [{
+            **vg_base_obj("digilocker_link"),
+            "redirectUrl": f"{APP_URL}/aadhaar-success",
+            "oAuthState": "123",
+            "aadhaarFlowRequired": "true",
+            "pinlessAuth": "true",
+            "customDocList": "ADHAR",
+            "aadhaar_number": aadhaar_number,
+            "aadhaarNumber": aadhaar_number,
+            "uid": aadhaar_number,
+            "UID": aadhaar_number,
+        }]
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            response = await client.post(
+                f"{VG_API_BASE}/Digilockerlink",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+        print("AADHAAR LINK RAW:", response.text)
+        api_data = parse_vg_response(response.text)
+        print("AADHAAR LINK PARSED:", api_data)
+
+        if str(api_data.get("statusCode")) != "101":
+            raise HTTPException(status_code=400, detail=f"Aadhaar link generation failed: {api_data.get('message', '')}")
+
+        request_id = api_data.get("requestId")
+        link = api_data.get("result", {}).get("link")
+
+        if not link:
+            raise HTTPException(status_code=400, detail="No DigiLocker link returned from API")
+
+        return {
+            "status": "success",
+            "request_id": request_id,
+            "link": link
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Aadhaar Link Error: {repr(e)}")
+
+
+@app.post("/api/aadhaar-documents")
+async def fetch_aadhaar_documents(request: Request):
+    """
+    Step 2 - After customer completes DigiLocker auth, fetch available documents.
+    Returns the Aadhaar document URI needed for Step 3.
+    """
+    data = await request.json()
+    token = data.get('token')
+    request_id = data.get('request_id')
+
+    if not token or not request_id:
+        raise HTTPException(status_code=400, detail="Token and request_id required")
+
+    token_row, _ = await get_token_and_app_id(token)
+
+    payload = {
+        "obj": [{
+            **vg_base_obj("digilocker_doc"),
+            "AccessRequestId": request_id
+        }]
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            response = await client.post(
+                f"{VG_API_BASE}/Digilockerdocuments",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+        print("AADHAAR DOCS RAW:", response.text)
+        api_data = parse_vg_response(response.text)
+        print("AADHAAR DOCS PARSED:", api_data)
+
+        if str(api_data.get("statusCode")) != "101":
+            raise HTTPException(status_code=400, detail="Failed to fetch Aadhaar documents")
+
+        raw_results = api_data.get("result", [])
+        results = raw_results if isinstance(raw_results, list) else [raw_results]
+
+        uri = None
+        for doc in results:
+            if isinstance(doc, dict) and doc.get("doctype") == "ADHAR":
+                uri = doc.get("uri")
+                break
+
+        if not uri:
+            raise HTTPException(status_code=400, detail="Aadhaar document not found in DigiLocker")
+
+        return {
+            "status": "success",
+            "request_id": request_id,
+            "uri": uri
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Aadhaar Documents Error: {repr(e)}")
+
+
+@app.post("/api/aadhaar-download")
+async def download_aadhaar(request: Request):
+    """
+    Step 3 - Download and parse Aadhaar XML.
+    Returns name, dob, gender, address, last4 — all saved to loan_applications.
+    """
+    data = await request.json()
+    token = data.get('token')
+    request_id = data.get('request_id')
+    uri = data.get('uri')
+
+    if not token or not request_id or not uri:
+        raise HTTPException(status_code=400, detail="token, request_id and uri are all required")
+
+    token_row, application_id = await get_token_and_app_id(token)
+
+    payload = {
+        "obj": [{
+            **vg_base_obj("digilocker_download"),
+            "AccessRequestId": request_id,
+            "uri": uri,
+            "pdfB64": "true",
+            "parsed": "true",
+            "xml": "true",
+            "json": "true"
+        }]
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=40.0) as client:
+            response = await client.post(
+                f"{VG_API_BASE}/Digilockerdownload",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+        print("AADHAAR DOWNLOAD RAW:", response.text)
+        api_data = parse_vg_response(response.text)
+        print("AADHAAR DOWNLOAD PARSED:", api_data)
+
+        if str(api_data.get("statusCode")) != "101":
+            raise HTTPException(status_code=400, detail="Aadhaar download failed")
+
+        raw_result_list = api_data.get("result", [])
+        result_list = raw_result_list if isinstance(raw_result_list, list) else [raw_result_list]
+
+        if not result_list:
+            raise HTTPException(status_code=400, detail="No Aadhaar data in response")
+
+        parsed = result_list[0].get("parsedFile", {}).get("data", {}).get("issuedTo", {})
+        additional = result_list[0].get("parsedFile", {}).get("data", {}).get("additionalData", {})
+
+        # Extract fields
+        name = parsed.get("name", "")
+        uid = parsed.get("uid", "")
+        dob = additional.get("dob", parsed.get("dob", ""))
+
+        # Gender normalization
+        raw_gender = additional.get("gender", parsed.get("gender", ""))
+        gender = ""
+        if raw_gender:
+            g = raw_gender.strip().lower()
+            if g in ["m", "male"]:
+                gender = "Male"
+            elif g in ["f", "female"]:
+                gender = "Female"
+            else:
+                gender = raw_gender
+
+        # Address — handles dict or string from API
+        address_raw = parsed.get("address", "")
+        if isinstance(address_raw, dict):
+            address = ", ".join([str(v).strip() for v in address_raw.values() if v and str(v).strip()])
+        elif isinstance(address_raw, str) and address_raw:
+            address = address_raw
+        else:
+            parts = [
+                parsed.get("house", ""), parsed.get("street", ""),
+                parsed.get("landmark", ""), parsed.get("loc", ""),
+                parsed.get("vtc", ""), parsed.get("dist", ""),
+                parsed.get("state", ""), parsed.get("pc", "")
+            ]
+            address = ", ".join([p.strip() for p in parts if p and p.strip()])
+
+        last4 = uid[-4:] if uid else ""
+
+        # Save all Aadhaar fields to DB
+        try:
+            aadhaar_update = {
+                "aadhaar_verified": True,
+                "aadhaar_last4": last4,
+                "aadhaar_name": name,
+                "aadhaar_dob": dob,
+                "aadhaar_gender": gender,
+                "aadhaar_address": address,
+                "aadhaar_verification_timestamp": now_utc().isoformat()
+            }
+            if application_id:
+                supabase.table("loan_applications").update(aadhaar_update).eq("id", application_id).execute()
+            else:
+                aadhaar_update["token_id"] = token_row["id"]
+                supabase.table("loan_applications").insert(aadhaar_update).execute()
+        except Exception as e:
+            print(f"Warning: DB save failed for Aadhaar: {e}")
+
+        return {
+            "status": "verified",
+            "name": name,
+            "last4": last4,
+            "dob": dob,
+            "gender": gender,
+            "address": address,
+            "message": "Aadhaar verified successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Aadhaar Download Error: {repr(e)}")
+
+
+# ============================================
+# DOCUMENT UPLOAD
+# ============================================
 
 @app.post("/api/upload-document")
 async def upload_document(
@@ -557,6 +961,10 @@ async def upload_document(
     }
 
 
+# ============================================
+# FORM SUBMIT
+# ============================================
+
 @app.post("/api/submit-form")
 async def submit_form(token: str, request: Request):
     token_result = supabase.table("form_tokens").select("*").eq("token", token).execute()
@@ -595,8 +1003,7 @@ async def submit_form(token: str, request: Request):
     message = (
         f"Dear {token_data['customer_name']},\n\n"
         f"Your loan application has been submitted successfully!\n\n"
-        f"Loan ID: {token_data['loan_id']}\n"
-        f"Amount: Rs.{token_data['loan_amount']:,.2f}\n\n"
+        f"Loan ID: {token_data['loan_id']}\n\n"
         f"Our team will review within 24-48 hours.\n\n"
         f"- Your Bank Name"
     )
@@ -610,6 +1017,10 @@ async def submit_form(token: str, request: Request):
         "application_id": app_data["id"]
     }
 
+
+# ============================================
+# ADMIN
+# ============================================
 
 @app.post("/api/admin/login")
 async def admin_login(payload: AdminLogin):
@@ -730,31 +1141,25 @@ async def review_application(
 
 @app.post("/api/send-campaign")
 async def send_campaign(request: Request):
-    """Send WhatsApp message via AiSensy campaign to one or multiple customers"""
     data = await request.json()
     phone = data.get('phone')
     customer_name = data.get('customer_name', 'Customer')
-    template_params = data.get('template_params', [customer_name])
 
     if not phone:
         raise HTTPException(status_code=400, detail="Phone number required")
 
-    result = await send_whatsapp_aisensy(phone, customer_name, template_params)
-
-    return {
-        "status": "sent",
-        "phone": phone,
-        "aisensy_response": result
-    }
+    result = await send_whatsapp_aisensy(phone, customer_name)
+    return {"status": "sent", "phone": phone, "aisensy_response": result}
 
 
 @app.post("/api/send-campaign-bulk")
 async def send_campaign_bulk(request: Request):
-    """Send AiSensy campaign to all customers with pending applications"""
     data = await request.json()
-    loan_ids = data.get('loan_ids', [])  # Optional: filter by loan IDs
+    loan_ids = data.get('loan_ids', [])
 
-    query = supabase.table("loan_applications").select("customer_name, phone, loan_id").eq("status", "draft")
+    query = supabase.table("loan_applications") \
+        .select("customer_name, phone, loan_id") \
+        .eq("status", "draft")
 
     if loan_ids:
         query = query.in_("loan_id", loan_ids)
@@ -766,11 +1171,7 @@ async def send_campaign_bulk(request: Request):
 
     results = []
     for app in app_result.data:
-        result = await send_whatsapp_aisensy(
-            phone=app["phone"],
-            customer_name=app["customer_name"],
-            template_params=[app["customer_name"]]
-        )
+        result = await send_whatsapp_aisensy(phone=app["phone"], customer_name=app["customer_name"])
         results.append({
             "phone": app["phone"],
             "customer_name": app["customer_name"],
@@ -779,11 +1180,7 @@ async def send_campaign_bulk(request: Request):
             "response": result
         })
 
-    return {
-        "status": "completed",
-        "total_sent": len(results),
-        "results": results
-    }
+    return {"status": "completed", "total_sent": len(results), "results": results}
 
 
 # ============================================
@@ -819,7 +1216,6 @@ async def request_otp(request: Request):
     session_id = secrets.token_urlsafe(32)
     expires_at = now_utc() + timedelta(minutes=10)
 
-    # Clean up old sessions for this phone
     supabase.table("loan_sessions").delete().eq("phone", phone).execute()
 
     supabase.table("loan_sessions").insert({
@@ -832,21 +1228,13 @@ async def request_otp(request: Request):
         "otp_verified": False
     }).execute()
 
-    print(f"\n{'='*50}")
-    print(f"OTP for {phone}: {otp}")
-    print(f"Customer: {application['customer_name']}")
-    print(f"Loan ID: {application['loan_id']}")
-    print(f"Valid for 10 minutes")
-    print(f"{'='*50}\n")
+    print(f"[OTP] Sending to {phone} via AiSensy | Customer: {application['customer_name']}")
 
-    if WHATSAPP_API_TOKEN and WHATSAPP_PHONE_ID:
-        message = (
-            f"Your loan application OTP: *{otp}*\n\n"
-            f"Valid for 10 minutes.\n"
-            f"Do not share this OTP.\n\n"
-            f"- Your Bank"
-        )
-        await send_whatsapp_message(phone, message)
+    await send_otp_via_aisensy(
+        phone=phone,
+        customer_name=application["customer_name"],
+        otp=otp
+    )
 
     return {
         "status": "otp_sent",

@@ -8,3 +8,12 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.log
+uploads/
+# Reference code (intern submissions, not part of main codebase)
+reference/
+agent/.env
+agent/.env.local
+agent/venv/
+# Generated docs
+*.pdf
+incident_report*

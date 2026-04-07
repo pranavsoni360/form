@@ -5,7 +5,7 @@ import { Building2, Lock, ShieldCheck, Check, AlertTriangle, Paperclip, Loader2,
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-const API_URL = 'https://virtualvaani.vgipl.com:8200';
+import { API_URL } from '@/lib/api';
 
 export default function LoanFormPage() {
   const params = useParams();

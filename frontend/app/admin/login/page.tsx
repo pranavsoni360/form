@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
+import { setAccessToken, setCurrentUser } from '@/lib/auth';
+import { Shield, Loader2 } from 'lucide-react';
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -20,8 +22,8 @@ export default function AdminLoginPage() {
       const response = await adminLogin(email, password);
       
       // Store token
-      localStorage.setItem('admin_token', response.token);
-      localStorage.setItem('admin_user', JSON.stringify(response.user));
+      setAccessToken('admin', response.token);
+      setCurrentUser('admin', response.user);
       
       // Redirect to dashboard
       router.push('/admin/dashboard');
@@ -36,7 +38,7 @@ export default function AdminLoginPage() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-700 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-4">🔐</div>
+          <div className="mb-4"><Shield className="w-14 h-14 text-blue-600 mx-auto" /></div>
           <h1 className="text-3xl font-bold text-gray-900">Admin Login</h1>
           <p className="text-gray-600 mt-2">
             Bank Loan Application System

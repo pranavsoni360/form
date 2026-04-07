@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { API_URL } from '@/lib/api';
 import { Building2, Lock, CheckCircle2, Loader2, Phone } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
-const API_URL = 'https://virtualvaani.vgipl.com:8200';
 
 export default function Home() {
   const router = useRouter();

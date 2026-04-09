@@ -318,7 +318,8 @@ class LoanEnquirySession:
                     async with http.post(
                         f"{BACKEND_URL}/api/agent/transcript",
                         json=payload,
-                        timeout=aiohttp.ClientTimeout(total=15)
+                        timeout=aiohttp.ClientTimeout(total=15),
+                        ssl=False,
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -357,7 +358,8 @@ async def send_form_link(context: RunContext, loan_type: str, estimated_amount: 
             async with http.post(
                 f"{BACKEND_URL}/api/agent/send-whatsapp-form",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=10)
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=False,
             ) as resp:
                 backend_ok = resp.status == 200
 

@@ -863,12 +863,16 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
         <label className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">{label} {required && <span className="text-red-500 text-xs">*</span>}</label>
         {src && !src.modified && (
           <div className="relative group flex-shrink-0">
-            <span className="px-1.5 sm:px-2 py-0.5 text-[8px] sm:text-[9px] font-medium rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 cursor-help inline-flex items-center gap-0.5">
-              {src.source === 'pan' ? 'PAN' : 'Aadhaar'}
+            <span className={`px-1.5 sm:px-2 py-0.5 text-[8px] sm:text-[9px] font-medium rounded cursor-help inline-flex items-center gap-0.5 ${
+              src.source === 'agent_call'
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+            }`}>
+              {src.source === 'pan' ? 'PAN' : src.source === 'agent_call' ? 'Voice Call' : 'Aadhaar'}
             </span>
             <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
               <div className="bg-gray-900 dark:bg-gray-700 text-white text-[10px] px-2 py-1.5 rounded-lg shadow-lg whitespace-nowrap max-w-[250px]">
-                <p>Fetched from {src.source.toUpperCase()}</p>
+                <p>{src.source === 'agent_call' ? 'Collected during voice call' : `Fetched from ${src.source.toUpperCase()}`}</p>
                 <p className="text-gray-300 mt-0.5 truncate">{src.original}</p>
               </div>
             </div>
@@ -881,7 +885,7 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
             </span>
             <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
               <div className="bg-gray-900 dark:bg-gray-700 text-white text-[10px] px-2 py-1.5 rounded-lg shadow-lg whitespace-nowrap max-w-[250px]">
-                <p>Original from {src.source.toUpperCase()}: <span className="text-gray-300">{src.original}</span></p>
+                <p>Original from {src.source === 'agent_call' ? 'VOICE CALL' : src.source.toUpperCase()}: <span className="text-gray-300">{src.original}</span></p>
                 <p className="text-orange-300 mt-0.5">Modified by applicant</p>
               </div>
             </div>

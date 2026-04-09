@@ -156,7 +156,8 @@ export default function AdminDashboardPage() {
           {recentApps.length > 0 ? (
             <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
               {recentApps.map((app: any) => (
-                <div key={app.id} className="flex items-center justify-between p-4">
+                <div key={app.id} onClick={() => router.push(`/admin/applications/${app.id}`)}
+                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition">
                   <div>
                     <p className="text-sm font-medium text-gray-900 dark:text-white">{app.customer_name}</p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">{app.loan_id} · {app.loan_type} · {formatDate(app.created_at)}</p>

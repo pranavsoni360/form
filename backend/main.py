@@ -1234,6 +1234,30 @@ async def admin_get_applications(
     rows = await db_pool.fetch(query, *params)
     return {"applications": _rows_to_list(rows)}
 
+@app.get("/api/admin/applications/{app_id}")
+async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Admin: full application detail (read-only, any bank)."""
+    try:
+        jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", uuid.UUID(app_id))
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app_dict = _row_to_dict(app_row)
+    if app_dict.get("aadhaar_number_encrypted"):
+        app_dict["aadhaar_number"] = app_dict["aadhaar_number_encrypted"]
+    transitions = await db_pool.fetch(
+        "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC", uuid.UUID(app_id)
+    )
+    app_dict["status_history"] = _rows_to_list(transitions)
+    if app_row.get("bank_id"):
+        bank = await db_pool.fetchrow("SELECT name, code FROM banks WHERE id = $1", app_row["bank_id"])
+        if bank:
+            app_dict["bank_name"] = bank["name"]
+            app_dict["bank_code"] = bank["code"]
+    return {"application": app_dict, "timeline": _rows_to_list(transitions)}
+
 # ============================================
 # BANK OFFICER ENDPOINTS
 # ============================================

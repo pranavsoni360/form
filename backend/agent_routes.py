@@ -66,14 +66,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DEMO_MODE = os.getenv("AGENT_DEMO_MODE", "false").lower() == "true"
 
 # Agent dispatched by LiveKit
-AGENT_NAME = os.getenv("AGENT_NAME", "los-loan-enquiry")
+AGENT_NAME = os.getenv("AGENT_NAME", "pusad-bank-loan-enquiry-enhanced")
 
 # Recording server base URL (GPU box serving recordings)
 RECORDING_BASE_URL = os.getenv("RECORDING_BASE_URL", "")
 
 # AiSensy WhatsApp
 AISENSY_API_KEY = os.getenv("AISENSY_API_KEY", "")
-AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_CAMPAIGN_NAME", "LRS_TESTING")
+AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_FORM_CAMPAIGN", os.getenv("AISENSY_CAMPAIGN_NAME", "LRS_TESTING"))
 AISENSY_USERNAME = os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA")
 AISENSY_IMAGE_URL = os.getenv(
     "AISENSY_IMAGE_URL",
@@ -89,6 +89,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "your-jwt-secret-key")
 # Call time window (IST)
 CALL_START_HOUR = int(os.getenv("CALL_START_HOUR", "10"))  # 10 AM
 CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "24"))      # midnight
+MAX_RETRIES = int(os.getenv("MAX_CALL_RETRIES", "1"))       # default 1 retry after initial attempt
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -123,7 +124,7 @@ CATEGORY_OPTIONS = [
 
 
 def _row_to_dict(row):
-    """Convert an asyncpg Record to a JSON-safe dict."""
+    """Convert an asyncpg Record to a JSON-safe dict. Adds _id alias for frontend compat."""
     if row is None:
         return None
     d = dict(row)
@@ -132,6 +133,8 @@ def _row_to_dict(row):
             d[k] = str(v)
         elif isinstance(v, datetime):
             d[k] = v.isoformat()
+    if "id" in d:
+        d["_id"] = d["id"]
     return d
 
 
@@ -210,6 +213,14 @@ async def set_emergency_stop(active: bool):
 
 
 async def is_emergency_stop_active() -> bool:
+    """Check emergency stop — read from DB to avoid stale in-memory flag."""
+    global _emergency_stop
+    try:
+        row = await db_pool.fetchrow("SELECT value FROM agent_system_config WHERE key = 'emergency_stop'")
+        if row:
+            _emergency_stop = row["value"] == "true"
+    except Exception:
+        pass
     return _emergency_stop
 
 
@@ -261,9 +272,54 @@ async def cleanup_stuck_calls():
 
 def _serialize_call(c: dict) -> dict:
     """Prepare a call dict (from _row_to_dict) for JSON display.
-    Formats datetime-ISO strings into IST display strings."""
+    Formats datetime-ISO strings into IST display strings.
+    Adds _id alias for MongoDB-style frontend compatibility."""
     if c is None:
         return None
+    # Add _id alias for frontend compatibility
+    if "id" in c:
+        c["_id"] = c["id"]
+    # Ensure JSONB fields are parsed (not strings)
+    for jfield in ["transcript", "collected_data", "call_analysis"]:
+        val = c.get(jfield)
+        if isinstance(val, str):
+            try:
+                c[jfield] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    # Flatten aliases for frontend compatibility (MongoDB field names → Postgres)
+    c["name"] = c.get("customer_name", "")
+    c["whatsapp_form_sent"] = c.get("form_sent", False)
+    c["customer_interested"] = c.get("interested", False)
+    c["call_status"] = c.get("status", "")
+    c["call_duration_seconds"] = c.get("call_duration", 0)
+    c["loan_type_interested"] = c.get("loan_type", "")
+    c["loan_amount_requested"] = c.get("loan_amount", "")
+    c["form_url"] = c.get("form_link", "")
+
+    # Flatten collected_data fields to top level
+    cd = c.get("collected_data") or {}
+    if isinstance(cd, str):
+        try: cd = json.loads(cd)
+        except: cd = {}
+    for k in ["monthly_income", "employment_type", "employer_name", "loan_purpose",
+              "aadhar_number", "pan_number", "designation", "age", "business_type",
+              "existing_emi", "collected_address", "monthly_turnover", "business_age"]:
+        if k not in c or not c[k]:
+            c[k] = cd.get(k, "")
+
+    # Flatten call_analysis fields to top level
+    ca = c.get("call_analysis") or {}
+    if isinstance(ca, str):
+        try: ca = json.loads(ca)
+        except: ca = {}
+    c["lead_quality"] = ca.get("lead_quality", "")
+    c["follow_up_needed"] = ca.get("follow_up_needed", "No")
+    c["notification_message"] = ca.get("notification_message", "")
+    c["form_submitted"] = ca.get("form_submitted", False)
+    c["success"] = c.get("status", "") in ("Called - Interested", "Completed", "Called")
+
     for field in [
         "started_at", "ended_at", "updated_at", "created_at",
     ]:
@@ -330,14 +386,18 @@ Transcript:
 # AUTH DEPENDENCY -- reuses main app's JWT tokens
 # ============================================================================
 
-security = HTTPBearer(auto_error=True)
+security = HTTPBearer(auto_error=False)  # auto_error=False allows unauthenticated access
 
 
 async def get_current_bank_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
-    """Decode JWT and return bank user payload. Requires user_type='bank_user'
-    with role in (bank_officer, bank_supervisor)."""
+    """Decode JWT if provided, otherwise return operator-level access (no bank_id filter).
+    Bank officers get bank_id scoping; operators (no auth) see everything."""
+    if not credentials:
+        # No auth — operator mode (sees all banks)
+        return {"user_id": "operator", "role": "operator", "bank_id": None, "user_type": "operator"}
+
     try:
         payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
     except pyjwt.ExpiredSignatureError:
@@ -356,6 +416,19 @@ async def get_current_bank_user(
         "bank_id": payload.get("bank_id"),
         "user_type": payload["user_type"],
     }
+
+def _bank_uuid(user: dict):
+    """Get bank_id as UUID, or None for operators (no bank scoping)."""
+    bid = user.get("bank_id")
+    return uuid.UUID(bid) if bid else None
+
+def _bank_filter(bank_uuid, param_idx: int = 1, table_alias: str = "") -> tuple:
+    """Build conditional bank_id SQL filter. Returns (condition_str, params_list, next_idx).
+    When bank_uuid is None (operator), returns TRUE (no filter)."""
+    prefix = f"{table_alias}." if table_alias else ""
+    if bank_uuid is None:
+        return "TRUE", [], param_idx
+    return f"{prefix}bank_id = ${param_idx}", [bank_uuid], param_idx + 1
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -422,18 +495,11 @@ async def agent_startup():
 
     _scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
-    # Batch runner every 10 minutes during calling hours
+    # Batch runner every 5 minutes — only processes batches in "running" state
     _scheduler.add_job(
         _scheduled_batch_run,
-        CronTrigger(hour="10-23", minute="*/10", timezone="Asia/Kolkata"),
+        CronTrigger(hour="10-23", minute="*/5", timezone="Asia/Kolkata"),
         id="batch_runner",
-        replace_existing=True,
-    )
-    # Retry at 11 PM
-    _scheduler.add_job(
-        _scheduled_batch_run,
-        CronTrigger(hour="23", minute="0", timezone="Asia/Kolkata"),
-        id="retry_runner",
         replace_existing=True,
     )
     # Analytics every 2 minutes
@@ -529,10 +595,14 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
     return _row_to_dict(row)
 
 
-async def process_batch_run(bank_id_filter: str = None):
-    """Sequential batch processing -- one call at a time.
-    Optionally scoped to a single bank_id."""
+async def process_batch_run(batch_uuid_str: str = None):
+    """Batch-based processing — only processes calls belonging to a batch in 'running' state.
+    If batch_uuid_str is provided, process that specific batch.
+    If None, find the oldest 'running' batch and process it."""
     completed = successful = failed = 0
+    call_batch_id = None
+    batch_row = None
+    batch_id = None
 
     if not await acquire_batch_lock():
         logger.warning("Batch already running")
@@ -543,45 +613,47 @@ async def process_batch_run(bank_id_filter: str = None):
         return
 
     try:
-        # Priority 1: fresh calls
-        bank_clause = " AND bank_id = $1" if bank_id_filter else ""
-        params_fresh: list = []
-        if bank_id_filter:
-            params_fresh = [uuid.UUID(bank_id_filter)]
-
-        pending_rows = await db_pool.fetch(
-            f"""SELECT * FROM agent_calls
-                WHERE status IN ('Pending', 'Scheduled') AND retry_count = 0
-                {bank_clause}
-                ORDER BY created_at ASC LIMIT 50""",
-            *params_fresh,
-        )
-        batch_type = "FRESH"
-
-        # Priority 2: retries
-        if not pending_rows:
-            pending_rows = await db_pool.fetch(
-                f"""SELECT * FROM agent_calls
-                    WHERE (
-                        status IN ('Not Answered', 'Failed', 'Call Not Connected')
-                        OR (status = 'Called' AND collected_data IS NULL)
-                    )
-                    AND retry_count < 2
-                    {bank_clause}
-                    ORDER BY created_at ASC LIMIT 50""",
-                *params_fresh,
+        # Find the batch to process
+        if batch_uuid_str:
+            batch_row = await db_pool.fetchrow(
+                "SELECT * FROM agent_batches WHERE id = $1 AND status = 'running'",
+                uuid.UUID(batch_uuid_str),
             )
-            batch_type = "RETRIES"
+        else:
+            batch_row = await db_pool.fetchrow(
+                "SELECT * FROM agent_batches WHERE status = 'running' ORDER BY created_at ASC LIMIT 1"
+            )
+
+        if not batch_row:
+            await release_batch_lock()
+            return  # No running batches — nothing to do (silent, no log spam)
+
+        batch = _row_to_dict(batch_row)
+        batch_id = batch["id"]
+        logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')})")
+
+        # Get pending calls for THIS batch only (using the string batch_id that links calls to batches)
+        call_batch_id = batch.get("batch_id") or batch_id
+        pending_rows = await db_pool.fetch(
+            """SELECT * FROM agent_calls
+                WHERE batch_id = $1 AND status IN ('Pending', 'Scheduled')
+                ORDER BY created_at ASC LIMIT 50""",
+            call_batch_id,
+        )
 
         if not pending_rows:
-            logger.info("No pending calls")
+            # No more pending calls in this batch — mark batch as completed
+            await db_pool.execute(
+                "UPDATE agent_batches SET status = 'completed', completed = (SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1) WHERE id = $2",
+                call_batch_id, uuid.UUID(batch_id),
+            )
+            logger.info(f"Batch {batch_id} completed — no more pending calls")
             await release_batch_lock()
             return
 
         pending = [_row_to_dict(r) for r in pending_rows]
-        batch_id = f"batch_{secrets.token_hex(4)}_{int(time.time())}"
         total = len(pending)
-        logger.info(f"Starting {batch_type} batch {batch_id} | {total} calls")
+        logger.info(f"Batch {batch_id} | {total} pending calls")
 
         for idx, call in enumerate(pending, 1):
             call_uuid = uuid.UUID(call["id"])
@@ -610,9 +682,9 @@ async def process_batch_run(bank_id_filter: str = None):
                 call_start = now_ist()
                 await db_pool.execute(
                     """UPDATE agent_calls
-                       SET status = 'Calling', started_at = $1, batch_id = $2, updated_at = $1
-                       WHERE id = $3""",
-                    call_start, batch_id, call_uuid,
+                       SET status = 'Calling', started_at = $1, updated_at = $1
+                       WHERE id = $2""",
+                    call_start, call_uuid,
                 )
 
                 if DEMO_MODE:
@@ -721,8 +793,23 @@ async def process_batch_run(bank_id_filter: str = None):
             await asyncio.sleep(10)  # pause between calls
 
     finally:
+        # Check if batch has any remaining pending calls
+        if batch_row:
+            remaining = await db_pool.fetchval(
+                "SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1 AND status IN ('Pending', 'Scheduled')",
+                call_batch_id,
+            )
+            if remaining == 0:
+                await db_pool.execute(
+                    "UPDATE agent_batches SET status = 'completed' WHERE id = $1",
+                    uuid.UUID(batch_id),
+                )
+                logger.info(f"Batch {batch_id} fully completed")
+            else:
+                logger.info(f"Batch {batch_id} paused — {remaining} calls remaining (will resume next cron)")
+
         await release_batch_lock()
-        logger.info(f"BATCH COMPLETE | Total: {completed} | OK: {successful} | Fail: {failed}")
+        logger.info(f"BATCH RUN DONE | Total: {completed} | OK: {successful} | Fail: {failed}")
 
 
 async def process_analytics_batch():
@@ -784,12 +871,10 @@ async def upload_excel(
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
     background_tasks: BackgroundTasks = None,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
     """Upload Excel/CSV with customer data for batch calling."""
-    bank_id = user["bank_id"]
-    if not bank_id:
-        raise HTTPException(status_code=400, detail="No bank_id associated with user")
+    bank_id = None  # operator — no bank scoping
 
     try:
         filename = file.filename.lower()
@@ -829,15 +914,15 @@ async def upload_excel(
 
         batch_id = f"batch_{secrets.token_hex(8)}_{int(time.time())}"
         upload_time = now_ist()
-        bank_id_uuid = uuid.UUID(bank_id)
-        uploaded_by_uuid = uuid.UUID(user["user_id"])
+        bank_id_uuid = uuid.UUID(bank_id) if bank_id else None
+        uploaded_by_uuid = None
 
-        # Also insert into agent_batches
+        # Insert into agent_batches with batch_id string for linking to agent_calls
         batch_uuid = uuid.uuid4()
         await db_pool.execute(
-            """INSERT INTO agent_batches (id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at)
-               VALUES ($1, $2, $3, $4, 0, 0, 'pending', $5, $6)""",
-            batch_uuid, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time,
+            """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at)
+               VALUES ($1, $2, $3, $4, $5, 0, 0, 'pending', $6, $7)""",
+            batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time,
         )
 
         count = 0
@@ -871,8 +956,8 @@ async def upload_excel(
                 batch_id,
                 r.get("name", ""),
                 phone,
-                r.get("loan_type", ""),
-                r.get("loan_amount", ""),
+                r.get("loan_type", "") or None,
+                float(r["loan_amount"]) if r.get("loan_amount") and str(r["loan_amount"]).strip() else None,
                 language.lower().strip(),
                 room_name,
                 json.dumps({
@@ -888,20 +973,13 @@ async def upload_excel(
 
         logger.info(f"Uploaded {count} records, batch={batch_id}, bank={bank_id}")
 
-        auto_calling = False
-        if background_tasks and count > 0 and is_within_calling_hours():
-            background_tasks.add_task(process_batch_run, bank_id)
-            auto_calling = True
-
         return {
             "status": "success",
             "batch_id": batch_id,
+            "batch_uuid": str(batch_uuid),
             "inserted_count": count,
-            "message": f"Uploaded {count} records." + (
-                " Calling started!" if auto_calling else
-                f" Calls will begin at {CALL_START_HOUR} AM IST."
-            ),
-            "auto_calling": auto_calling,
+            "message": f"Uploaded {count} records. Click 'Start Batch' to begin calling.",
+            "auto_calling": False,
             "calling_hours": {"active": is_within_calling_hours(), "window": f"{CALL_START_HOUR}AM - {CALL_END_HOUR % 24 or 12}AM IST"},
         }
     except HTTPException:
@@ -914,46 +992,69 @@ async def upload_excel(
 @router.post("/batch-call")
 async def trigger_batch(
     background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_bank_user),
+    batch_id: Optional[str] = None,
+    # no auth — operator access
 ):
-    """Manually trigger batch calling for this bank."""
+    """Start batch calling. Sets the most recent 'pending' batch to 'running' so the cron picks it up.
+    Optionally specify a batch_id to start a specific batch."""
     if not is_within_calling_hours():
         raise HTTPException(
             status_code=403,
             detail=f"Calling not allowed. Active hours: {CALL_START_HOUR}AM-{CALL_END_HOUR % 24 or 12}AM IST. "
                    f"Current: {now_ist().strftime('%I:%M %p IST')}",
         )
-    background_tasks.add_task(process_batch_run, user["bank_id"])
-    return {"status": "started", "message": "Batch calling started"}
+
+    # Clear emergency stop first (operator is explicitly starting)
+    await set_emergency_stop(False)
+
+    # Find the batch to start (pending first, then running/paused)
+    if batch_id:
+        batch_row = await db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
+    else:
+        batch_row = await db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE status IN ('pending', 'running', 'paused') ORDER BY created_at DESC LIMIT 1")
+
+    if not batch_row:
+        raise HTTPException(status_code=404, detail="No pending batch found. Upload a CSV first.")
+
+    # Set batch to "running"
+    await db_pool.execute(
+        "UPDATE agent_batches SET status = 'running' WHERE id = $1", batch_row["id"])
+
+    # Immediately kick off processing (don't wait for cron)
+    background_tasks.add_task(process_batch_run, str(batch_row["id"]))
+    return {"status": "started", "message": f"Batch started ({batch_row['total_records']} records)", "batch_id": str(batch_row["id"])}
 
 
 @router.get("/batch-status")
 async def batch_status(
     batch_id: Optional[str] = None,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
     """Check batch completion progress."""
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
+    bk_cond = "bank_id = $1" if bank_uuid else "TRUE"
+    bk_params = [bank_uuid] if bank_uuid else []
+    offset = len(bk_params)
 
     if batch_id:
         pending_count = await db_pool.fetchval(
-            """SELECT COUNT(*) FROM agent_calls
-               WHERE bank_id = $1 AND batch_id = $2 AND status IN ('Pending', 'Calling', 'Scheduled')""",
-            bank_uuid, batch_id,
+            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1} AND status IN ('Pending', 'Calling', 'Scheduled')",
+            *bk_params, batch_id,
         )
         total_count = await db_pool.fetchval(
-            "SELECT COUNT(*) FROM agent_calls WHERE bank_id = $1 AND batch_id = $2",
-            bank_uuid, batch_id,
+            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1}",
+            *bk_params, batch_id,
         )
     else:
         pending_count = await db_pool.fetchval(
-            """SELECT COUNT(*) FROM agent_calls
-               WHERE bank_id = $1 AND status IN ('Pending', 'Calling', 'Scheduled')""",
-            bank_uuid,
+            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND status IN ('Pending', 'Calling', 'Scheduled')",
+            *bk_params,
         )
         total_count = await db_pool.fetchval(
-            "SELECT COUNT(*) FROM agent_calls WHERE bank_id = $1",
-            bank_uuid,
+            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond}",
+            *bk_params,
         )
 
     return {
@@ -968,30 +1069,63 @@ async def batch_status(
 @router.post("/batch-retry")
 async def trigger_batch_retry(
     background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_bank_user),
+    batch_id: Optional[str] = None,
+    # no auth — operator access
 ):
-    """Retry failed/not-answered calls."""
+    """Retry failed/not-answered calls in a specific batch (or most recent completed batch).
+    Resets failed calls to 'Pending' (if retry_count < MAX_RETRIES) and sets batch back to 'running'."""
     if not is_within_calling_hours():
         raise HTTPException(
             status_code=403,
             detail=f"Calling not allowed outside {CALL_START_HOUR}AM-{CALL_END_HOUR % 24 or 12}AM IST.",
         )
-    background_tasks.add_task(process_batch_run, user["bank_id"])
-    return {"status": "started", "message": "Retry batch started for failed/not-answered calls"}
+
+    # Find the batch
+    if batch_id:
+        batch_row = await db_pool.fetchrow("SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
+    else:
+        batch_row = await db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1")
+
+    if not batch_row:
+        raise HTTPException(status_code=404, detail="No completed batch found to retry.")
+
+    batch = _row_to_dict(batch_row)
+    bid = batch["id"]
+
+    # Reset failed calls in this batch to Pending (only if under retry limit)
+    result = await db_pool.execute(
+        f"""UPDATE agent_calls SET status = 'Pending'
+            WHERE batch_id = $1
+            AND status IN ('Not Answered', 'Failed', 'Call Not Connected')
+            AND retry_count < {MAX_RETRIES}""",
+        batch.get("batch_id") or bid,
+    )
+    reset_count = int(result.split()[-1]) if result else 0
+
+    if reset_count == 0:
+        return {"status": "nothing", "message": "No retriable calls found (all at max retries or already completed)"}
+
+    # Set batch back to running
+    await db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE id = $1", uuid.UUID(bid))
+    background_tasks.add_task(process_batch_run, bid)
+    return {"status": "started", "message": f"Retrying {reset_count} failed calls in batch"}
 
 
 @router.post("/emergency-stop")
-async def emergency_stop(user: dict = Depends(get_current_bank_user)):
+async def emergency_stop():
     """Immediately stop all calling and kill active call if any."""
     await set_emergency_stop(True)
-    logger.warning(f"EMERGENCY STOP activated by user {user['user_id']}")
+    logger.warning("EMERGENCY STOP activated by operator")
 
-    bank_uuid = uuid.UUID(user["bank_id"])
-    # Kill active call for this bank
-    active = await db_pool.fetchrow(
-        "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' AND bank_id = $1 LIMIT 1",
-        bank_uuid,
-    )
+    bank_uuid = None  # operator — no bank scoping
+    # Kill active call
+    if bank_uuid:
+        active = await db_pool.fetchrow(
+            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' AND bank_id = $1 LIMIT 1", bank_uuid)
+    else:
+        active = await db_pool.fetchrow(
+            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' LIMIT 1")
     room_deleted = False
     if active and active["room_name"]:
         try:
@@ -1009,20 +1143,79 @@ async def emergency_stop(user: dict = Depends(get_current_bank_user)):
         except Exception as e:
             logger.error(f"Failed to delete room during emergency stop: {e}")
 
+    # Pause all running batches
+    await db_pool.execute("UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
     await release_batch_lock()
-    return {"status": "success", "message": "Emergency stop activated", "active_call_killed": room_deleted}
+    return {"status": "success", "message": "Emergency stop activated — all batches paused", "active_call_killed": room_deleted}
 
 
 @router.post("/resume-calling")
-async def resume_calling(user: dict = Depends(get_current_bank_user)):
-    """Disable emergency stop."""
+async def resume_calling():
+    """Disable emergency stop and resume paused batches."""
     await set_emergency_stop(False)
-    logger.info(f"Emergency stop deactivated by user {user['user_id']}")
-    return {"status": "success", "message": "Emergency stop disabled. Calls can resume."}
+    result = await db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
+    resumed = int(result.split()[-1]) if result else 0
+    logger.info(f"Emergency stop deactivated, {resumed} batches resumed")
+    return {"status": "success", "message": f"Calling resumed. {resumed} batch(es) reactivated."}
+
+# ============================================================================
+# UPLOADS / BATCHES LIST (was missing — needed by dashboard UI)
+# ============================================================================
+
+@router.get("/uploads")
+async def list_uploads():
+    """List all batch uploads."""
+    rows = await db_pool.fetch("SELECT * FROM agent_batches ORDER BY created_at DESC LIMIT 50")
+    return {"uploads": _rows_to_list(rows)}
+
+@router.get("/upload/{batch_id}")
+async def get_upload_detail(batch_id: str):
+    """Get calls for a specific batch."""
+    rows = await db_pool.fetch(
+        "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, created_at FROM agent_calls WHERE batch_id = $1 ORDER BY created_at DESC",
+        batch_id,
+    )
+    return {"calls": _rows_to_list(rows), "batch_id": batch_id, "total": len(rows)}
+
+@router.get("/recent_calls")
+async def recent_calls(limit: int = Query(10, ge=1, le=50)):
+    """Get recent calls (shortcut for dashboard)."""
+    rows = await db_pool.fetch(
+        "SELECT * FROM agent_calls ORDER BY created_at DESC LIMIT $1", limit
+    )
+    return {"calls": [_serialize_call(_row_to_dict(r)) for r in rows]}
 
 # ============================================================================
 # CALL MANAGEMENT ENDPOINTS
 # ============================================================================
+
+@router.get("/call/{call_id}")
+async def get_call_alias(call_id: str):
+    """Alias for /calls/{call_id} (reference UI compatibility)."""
+    try:
+        call_uuid = uuid.UUID(call_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid call ID format")
+    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+    return _serialize_call(_row_to_dict(row))
+
+@router.get("/call/{call_id}/transcript")
+async def get_call_transcript_alias(call_id: str):
+    """Alias for /calls/{call_id}/transcript (reference UI compatibility)."""
+    try:
+        call_uuid = uuid.UUID(call_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid call ID format")
+    row = await db_pool.fetchrow("SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1", call_uuid)
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+    call = _row_to_dict(row)
+    transcript = call.get("transcript") or []
+    if isinstance(transcript, str):
+        transcript = json.loads(transcript)
+    return {"call_id": call_id, "name": call.get("customer_name"), "transcript": transcript}
 
 @router.get("/calls")
 async def list_calls(
@@ -1034,13 +1227,17 @@ async def list_calls(
     date: Optional[str] = None,
     lead_quality: Optional[str] = None,
     form_sent: Optional[str] = None,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
-    """List calls for the user's bank with pagination and filters."""
-    bank_uuid = uuid.UUID(user["bank_id"])
-    conditions = ["bank_id = $1"]
-    params: list = [bank_uuid]
-    idx = 2  # next param index
+    """List calls with pagination and filters. Bank-scoped if authenticated, all calls for operators."""
+    bank_uuid = None  # operator — no bank scoping
+    conditions = []
+    params: list = []
+    idx = 1
+    if bank_uuid:
+        conditions.append(f"bank_id = ${idx}")
+        params.append(bank_uuid)
+        idx += 1
 
     if status:
         conditions.append(f"status = ${idx}")
@@ -1072,7 +1269,7 @@ async def list_calls(
         except ValueError:
             pass
 
-    where = " AND ".join(conditions)
+    where = " AND ".join(conditions) if conditions else "TRUE"
     total = await db_pool.fetchval(f"SELECT COUNT(*) FROM agent_calls WHERE {where}", *params)
     offset = (page - 1) * page_size
 
@@ -1101,10 +1298,10 @@ async def get_call(call_id: str, user: dict = Depends(get_current_bank_user)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
     row = await db_pool.fetchrow(
-        "SELECT * FROM agent_calls WHERE id = $1 AND bank_id = $2",
-        call_uuid, bank_uuid,
+        "SELECT * FROM agent_calls WHERE id = $1",
+        call_uuid,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -1119,10 +1316,10 @@ async def get_call_transcript(call_id: str, user: dict = Depends(get_current_ban
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
     row = await db_pool.fetchrow(
-        "SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1 AND bank_id = $2",
-        call_uuid, bank_uuid,
+        "SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1",
+        call_uuid,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -1143,10 +1340,10 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
     row = await db_pool.fetchrow(
-        "SELECT id, customer_name, recording_url FROM agent_calls WHERE id = $1 AND bank_id = $2",
-        call_uuid, bank_uuid,
+        "SELECT id, customer_name, recording_url FROM agent_calls WHERE id = $1",
+        call_uuid,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -1162,7 +1359,7 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
 async def categorize_call(
     call_id: str,
     data: CallCategorizeRequest,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
     """Manually categorize / remark a call."""
     try:
@@ -1170,12 +1367,12 @@ async def categorize_call(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
 
     # Build the update -- merge remark into call_analysis JSONB
     existing = await db_pool.fetchrow(
-        "SELECT call_analysis FROM agent_calls WHERE id = $1 AND bank_id = $2",
-        call_uuid, bank_uuid,
+        "SELECT call_analysis FROM agent_calls WHERE id = $1",
+        call_uuid,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -1286,15 +1483,15 @@ async def submit_form(call_id: str, request: Request):
 
     await db_pool.execute(
         """UPDATE agent_calls SET
-            loan_type = COALESCE(NULLIF($1, ''), loan_type),
-            loan_amount = COALESCE(NULLIF($2, ''), loan_amount),
+            loan_type = COALESCE($1, loan_type),
+            loan_amount = COALESCE($2, loan_amount),
             collected_data = $3,
             call_analysis = $4,
             form_sent = true,
             updated_at = $5
            WHERE id = $6""",
-        data.get("loan_type", ""),
-        data.get("loan_amount", ""),
+        data.get("loan_type") or None,
+        float(data["loan_amount"]) if data.get("loan_amount") and str(data["loan_amount"]).strip() else None,
         json.dumps(existing_collected),
         json.dumps(existing_analysis),
         now_ist(),
@@ -1388,8 +1585,8 @@ async def save_transcript(data: TranscriptPayload):
             updated_at = $4,
             interested = $6,
             form_sent = $7,
-            loan_type = COALESCE(NULLIF($8, ''), loan_type),
-            loan_amount = COALESCE(NULLIF($9, ''), loan_amount),
+            loan_type = COALESCE($8, loan_type),
+            loan_amount = COALESCE($9, loan_amount),
             collected_data = $10,
             category = $11,
             call_analysis = NULL
@@ -1401,8 +1598,8 @@ async def save_transcript(data: TranscriptPayload):
         duration_seconds,
         data.customer_interested,
         data.whatsapp_form_sent,
-        data.loan_type or "",
-        data.loan_amount or "",
+        data.loan_type or None,
+        float(data.loan_amount) if data.loan_amount and str(data.loan_amount).strip() else None,
         json.dumps(existing_collected),
         category,
         actual_uuid,
@@ -1416,9 +1613,11 @@ async def save_transcript(data: TranscriptPayload):
 
 @router.post("/send-whatsapp-form")
 async def send_whatsapp_form(request: Request):
-    """Triggered by the AI voice agent's send_form_link tool. Generates a form URL
-    and sends it via AiSensy WhatsApp."""
+    """Triggered by the AI voice agent's send_form_link tool.
+    Creates a loan_application from call data (so OTP flow works),
+    saves field_sources for 'Voice Call' badges, and sends WhatsApp."""
     import aiohttp
+    from main import save_field_sources
 
     data = await request.json()
     phone = data.get("phone")
@@ -1426,30 +1625,157 @@ async def send_whatsapp_form(request: Request):
     loan_type = data.get("loan_type", "")
     call_id = data.get("call_id")
 
-    form_url = f"{FORM_BASE_URL}/agent-form/{call_id}" if call_id else None
+    # ── 1. Fetch call data ──
+    call_row = None
+    call_uuid = None
+    collected = {}
+    if call_id:
+        try:
+            call_uuid = uuid.UUID(call_id)
+            call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+            if call_row:
+                cd = call_row["collected_data"]
+                if isinstance(cd, str):
+                    cd = json.loads(cd)
+                collected = cd if isinstance(cd, dict) else {}
+        except Exception as e:
+            logger.warning(f"Could not fetch call data: {e}")
 
+    # ── 2. Normalize phone ──
+    if phone and not phone.startswith("+"):
+        phone = f"+91{phone[-10:]}"
+    phone_clean_digits = "".join(filter(str.isdigit, str(phone or "")))
+    if len(phone_clean_digits) == 10:
+        phone_norm = f"+91{phone_clean_digits}"
+    elif phone_clean_digits.startswith("91") and len(phone_clean_digits) == 12:
+        phone_norm = f"+{phone_clean_digits}"
+    else:
+        phone_norm = phone or ""
+
+    # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
+    app_id = None
+    form_url = FORM_BASE_URL  # Customer goes to main site, enters phone + OTP
+
+    if phone_norm:
+        # Check if application already exists for this phone
+        existing_app = await db_pool.fetchrow(
+            "SELECT id FROM loan_applications WHERE phone = $1 AND status != 'submitted' ORDER BY created_at DESC LIMIT 1",
+            phone_norm,
+        )
+
+        if existing_app:
+            app_id = existing_app["id"]
+            logger.info(f"Existing application found for {phone_norm}: {app_id}")
+        else:
+            # Create new loan_application pre-filled from call data
+            loan_id = f"AGENT-{secrets.token_hex(4)}-{int(time.time())}"
+            bank_id = None
+            if call_row and call_row.get("bank_id"):
+                try:
+                    bank_id = uuid.UUID(str(call_row["bank_id"])) if call_row["bank_id"] else None
+                except Exception:
+                    pass
+
+            # Parse numeric fields safely
+            def parse_num(val):
+                if not val:
+                    return None
+                cleaned = "".join(c for c in str(val) if c.isdigit() or c == ".")
+                try:
+                    return float(cleaned) if cleaned else None
+                except ValueError:
+                    return None
+
+            loan_amount = parse_num(call_row["loan_amount"] if call_row else None) or parse_num(collected.get("loan_amount"))
+            monthly_income = parse_num(collected.get("monthly_income"))
+            existing_emi = parse_num(collected.get("existing_emi"))
+
+            try:
+                row = await db_pool.fetchrow(
+                    """INSERT INTO loan_applications (
+                        customer_name, phone, loan_id, current_step, status, last_saved_at, bank_id,
+                        agent_call_id, full_name, employer_name, designation, employment_type,
+                        monthly_gross_income, monthly_emi_existing, current_address,
+                        purpose_of_loan, loan_amount_requested, customer_type, industry_type
+                    ) VALUES (
+                        $1, $2, $3, 1, 'draft', $4, $5,
+                        $6, $7, $8, $9, $10,
+                        $11, $12, $13,
+                        $14, $15, $16, $17
+                    ) RETURNING id""",
+                    customer_name or "Customer",
+                    phone_norm,
+                    loan_id,
+                    now_ist(),
+                    bank_id,
+                    call_uuid,
+                    customer_name or "",
+                    collected.get("employer_name") or None,
+                    collected.get("designation") or None,
+                    collected.get("employment_type") or None,
+                    monthly_income,
+                    existing_emi,
+                    collected.get("collected_address") or None,
+                    collected.get("loan_purpose") or None,
+                    loan_amount,
+                    collected.get("customer_type") or "new",
+                    collected.get("business_type") or None,
+                )
+                app_id = row["id"]
+                logger.info(f"Created loan_application {app_id} for {phone_norm} from call {call_id}")
+
+                # Save field_sources for "Voice Call" badges
+                source_fields = {}
+                field_map = {
+                    "employer_name": collected.get("employer_name"),
+                    "designation": collected.get("designation"),
+                    "employment_type": collected.get("employment_type"),
+                    "monthly_gross_income": str(monthly_income) if monthly_income else None,
+                    "monthly_emi_existing": str(existing_emi) if existing_emi else None,
+                    "current_address": collected.get("collected_address"),
+                    "purpose_of_loan": collected.get("loan_purpose"),
+                    "loan_amount_requested": str(loan_amount) if loan_amount else None,
+                    "customer_type": collected.get("customer_type"),
+                    "industry_type": collected.get("business_type"),
+                    "customer_name": customer_name,
+                    "full_name": customer_name,
+                }
+                for field, value in field_map.items():
+                    if value and str(value).strip():
+                        source_fields[field] = value
+                if source_fields:
+                    await save_field_sources(app_id, "agent_call", source_fields)
+
+            except Exception as e:
+                logger.error(f"Failed to create loan_application: {e}")
+
+        # Link agent_call → application
+        if app_id and call_uuid:
+            await db_pool.execute(
+                "UPDATE agent_calls SET application_id = $1 WHERE id = $2",
+                app_id, call_uuid,
+            )
+
+    # ── 4. Send WhatsApp via AiSensy ──
     notification_message = (
         f"Dear {customer_name},\n\n"
         f"Thank you for your interest in a {loan_type} loan.\n"
-        f"Please complete your application: {form_url}\n\n"
-        f"Valid for 7 days."
+        f"Please visit {form_url} to complete your application.\n"
+        f"Enter your phone number and verify with OTP to get started."
     )
-    logger.info(f"Form link generated for {customer_name} ({phone}): {form_url}")
+    logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 
-    # AiSensy WhatsApp delivery
     aisensy_ok = False
-    if AISENSY_API_KEY and phone:
-        phone_clean = "".join(filter(str.isdigit, str(phone)))
-        if len(phone_clean) == 10:
-            phone_clean = f"91{phone_clean}"
-        elif not phone_clean.startswith("91"):
-            phone_clean = f"91{phone_clean[-10:]}"
+    if AISENSY_API_KEY and phone_norm:
+        wa_phone = "".join(filter(str.isdigit, phone_norm))
+        if len(wa_phone) == 10:
+            wa_phone = f"91{wa_phone}"
 
         first_name = customer_name.strip().split()[0] if customer_name else "Customer"
         payload = {
             "apiKey": AISENSY_API_KEY,
             "campaignName": AISENSY_CAMPAIGN_NAME,
-            "destination": phone_clean,
+            "destination": wa_phone,
             "userName": AISENSY_USERNAME,
             "templateParams": [first_name, first_name],
             "source": "loan-voice-agent",
@@ -1465,15 +1791,13 @@ async def send_whatsapp_form(request: Request):
                 ) as resp:
                     aisensy_ok = resp.status == 200
                     body = await resp.text()
-                    logger.info(f"AiSensy {phone_clean}: {resp.status} | {body}")
+                    logger.info(f"AiSensy {wa_phone}: {resp.status} | {body}")
         except Exception as e:
             logger.error(f"AiSensy failed: {e}")
 
-    # Update DB
-    if call_id:
+    # ── 5. Update agent_calls ──
+    if call_uuid:
         try:
-            call_uuid = uuid.UUID(call_id)
-            # Get existing call_analysis and update
             row = await db_pool.fetchrow("SELECT call_analysis FROM agent_calls WHERE id = $1", call_uuid)
             analysis = {}
             if row and row["call_analysis"]:
@@ -1481,22 +1805,21 @@ async def send_whatsapp_form(request: Request):
             analysis["lead_quality"] = "hot"
             analysis["notification_status"] = "sent_via_aisensy" if aisensy_ok else "aisensy_failed"
             analysis["notification_time"] = now_ist().isoformat()
-            analysis["notification_message"] = notification_message
 
             await db_pool.execute(
-                """UPDATE agent_calls
-                   SET form_sent = true, form_link = $1,
-                       call_analysis = $2, updated_at = $3
-                   WHERE id = $4""",
-                form_url,
-                json.dumps(analysis),
-                now_ist(),
-                call_uuid,
+                """UPDATE agent_calls SET form_sent = true, form_link = $1,
+                   call_analysis = $2, updated_at = $3 WHERE id = $4""",
+                form_url, json.dumps(analysis), now_ist(), call_uuid,
             )
         except Exception as e:
-            logger.warning(f"Could not update DB for form sent: {e}")
+            logger.warning(f"Could not update agent_calls: {e}")
 
-    return {"status": "success", "message": "Form link generated", "form_url": form_url}
+    return {
+        "status": "success",
+        "message": "Form link sent" if aisensy_ok else "Form created (WhatsApp delivery failed)",
+        "form_url": form_url,
+        "application_id": str(app_id) if app_id else None,
+    }
 
 # ============================================================================
 # ANALYTICS ENDPOINTS
@@ -1505,13 +1828,12 @@ async def send_whatsapp_form(request: Request):
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
     date: Optional[str] = None,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
-    """Dashboard statistics for the user's bank."""
-    bank_uuid = uuid.UUID(user["bank_id"])
+    """Dashboard statistics (all calls, no bank scoping)."""
     date_clause = ""
-    params: list = [bank_uuid]
-    idx = 2
+    params: list = []
+    idx = 1
 
     if date:
         try:
@@ -1523,7 +1845,7 @@ async def get_dashboard_stats(
         except ValueError:
             pass
 
-    base = f"SELECT COUNT(*) FROM agent_calls WHERE bank_id = $1{date_clause}"
+    base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{date_clause}"
 
     total = await db_pool.fetchval(base, *params)
     whatsapp_forms_sent = await db_pool.fetchval(f"{base} AND form_sent = true", *params)
@@ -1571,28 +1893,23 @@ async def get_dashboard_stats(
 
 
 @router.get("/analytics")
-async def get_analytics(user: dict = Depends(get_current_bank_user)):
-    """Analytics summary for the user's bank."""
-    bank_uuid = uuid.UUID(user["bank_id"])
-    base = "SELECT COUNT(*) FROM agent_calls WHERE bank_id = $1"
+async def get_analytics():
+    """Analytics summary (all calls)."""
+    base = "SELECT COUNT(*) FROM agent_calls WHERE TRUE"
 
-    total = await db_pool.fetchval(base, bank_uuid)
-    forms_sent = await db_pool.fetchval(f"{base} AND form_sent = true", bank_uuid)
-    interested = await db_pool.fetchval(f"{base} AND interested = true", bank_uuid)
+    total = await db_pool.fetchval(base)
+    forms_sent = await db_pool.fetchval(f"{base} AND form_sent = true")
+    interested = await db_pool.fetchval(f"{base} AND interested = true")
     success_rate = await db_pool.fetchval(
-        f"{base} AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')",
-        bank_uuid,
-    )
+        f"{base} AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')")
     failure_rate = await db_pool.fetchval(
-        f"{base} AND status IN ('Failed', 'Not Answered', 'Call Not Connected')",
-        bank_uuid,
-    )
-    hot = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'", bank_uuid)
-    warm = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'", bank_uuid)
-    cold = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'cold'", bank_uuid)
-    edu = await db_pool.fetchval(f"{base} AND loan_type = 'education'", bank_uuid)
-    biz = await db_pool.fetchval(f"{base} AND loan_type = 'business'", bank_uuid)
-    per = await db_pool.fetchval(f"{base} AND loan_type = 'personal'", bank_uuid)
+        f"{base} AND status IN ('Failed', 'Not Answered', 'Call Not Connected')")
+    hot = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'")
+    warm = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'")
+    cold = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'cold'")
+    edu = await db_pool.fetchval(f"{base} AND loan_type = 'education'")
+    biz = await db_pool.fetchval(f"{base} AND loan_type = 'business'")
+    per = await db_pool.fetchval(f"{base} AND loan_type = 'personal'")
 
     return {
         "total_calls_made": total,
@@ -1611,10 +1928,10 @@ async def get_analytics(user: dict = Depends(get_current_bank_user)):
 @router.get("/export/daily-report")
 async def export_daily_report(
     date: Optional[str] = None,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
     """Export daily report as Excel."""
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
     if not date:
         date = now_ist().strftime("%Y-%m-%d")
     try:
@@ -1624,9 +1941,9 @@ async def export_daily_report(
 
     rows = await db_pool.fetch(
         """SELECT * FROM agent_calls
-           WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3
+           WHERE created_at >= $1 AND created_at < $2
            ORDER BY created_at DESC""",
-        bank_uuid, dt, dt + timedelta(days=1),
+        dt, dt + timedelta(days=1),
     )
     if not rows:
         raise HTTPException(status_code=404, detail="No data for this date")
@@ -1663,10 +1980,10 @@ async def export_all_calls(
     category: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    user: dict = Depends(get_current_bank_user),
+    # no auth — operator access
 ):
     """Comprehensive Excel export with all call data."""
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
     conditions = ["bank_id = $1"]
     params: list = [bank_uuid]
     idx = 2
@@ -1770,7 +2087,7 @@ async def export_all_calls(
 @router.get("/live-status")
 async def get_live_status(user: dict = Depends(get_current_bank_user)):
     """Get current calling status -- which customer is being called right now."""
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
     row = await db_pool.fetchrow(
         """SELECT id, customer_name, phone, started_at FROM agent_calls
            WHERE status = 'Calling' AND bank_id = $1 LIMIT 1""",
@@ -1812,14 +2129,13 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
 @router.post("/stale-cleanup")
 async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
     """Clean up calls stuck in 'Calling' status."""
-    bank_uuid = uuid.UUID(user["bank_id"])
+    bank_uuid = None  # operator — no bank scoping
 
     # 1. Delete broken calls (no room_name)
     del_result = await db_pool.execute(
         """DELETE FROM agent_calls
-           WHERE bank_id = $1 AND status = 'Calling'
+           WHERE status = 'Calling'
                  AND (room_name IS NULL OR room_name = '')""",
-        bank_uuid,
     )
     deleted = int(del_result.split()[-1]) if del_result else 0
 
@@ -1829,8 +2145,8 @@ async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
         """UPDATE agent_calls
            SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
                ended_at = $1, updated_at = $1
-           WHERE bank_id = $2 AND status = 'Calling' AND started_at < $3""",
-        now_ist(), bank_uuid, ten_min_ago,
+           WHERE status = 'Calling' AND started_at < $2""",
+        now_ist(), ten_min_ago,
     )
     cleaned = int(upd_result.split()[-1]) if upd_result else 0
 

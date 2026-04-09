@@ -164,6 +164,10 @@ export async function getApplicationDetail(token: string, appId: string) {
   return apiFetch(`/api/bank/applications/${appId}`, { headers: authHeaders(token) });
 }
 
+export async function adminGetApplicationDetail(token: string, appId: string) {
+  return apiFetch(`/api/admin/applications/${appId}`, { headers: authHeaders(token) });
+}
+
 export async function officerApprove(token: string, appId: string, notes?: string) {
   return apiFetch(`/api/bank/applications/${appId}/officer-approve`, {
     method: 'POST',

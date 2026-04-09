@@ -1,0 +1,1824 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LOS Agent - Loan Enquiry System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0d9488;       /* Teal */
+            --primary-dark: #0f766e;
+            --primary-light: #14b8a6;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --gradient: linear-gradient(135deg, #0d9488 0%, #0369a1 50%, #1e40af 100%); /* Teal-Blue */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--gradient);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .logo-text {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: var(--gradient);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .api-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg);
+            border-radius: 8px;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--danger);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Navigation */
+        .nav {
+            display: flex;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 0 2rem;
+        }
+
+        .nav-item {
+            padding: 1rem 1.5rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .nav-item:hover {
+            color: var(--text);
+        }
+
+        .nav-item.active {
+            color: var(--primary-light);
+            border-bottom-color: var(--primary);
+        }
+
+        /* Main Content */
+        .main {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .stat-value.success {
+            color: var(--success);
+        }
+
+        .stat-value.warning {
+            color: var(--warning);
+        }
+
+        .stat-value.danger {
+            color: var(--danger);
+        }
+
+        .stat-value.primary {
+            color: var(--primary-light);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-size: 0.875rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--gradient);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--bg-hover);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .upload-zone:hover,
+        .upload-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .upload-text {
+            color: var(--text-muted);
+        }
+
+        .upload-text strong {
+            color: var(--primary-light);
+        }
+
+        /* Table */
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-weight: 600;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        tr:hover {
+            background: var(--bg-hover);
+        }
+
+        /* Status Badge */
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .badge-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .badge-primary {
+            background: rgba(99, 102, 241, 0.2);
+            color: var(--primary-light);
+        }
+
+        .badge-muted {
+            background: rgba(148, 163, 184, 0.2);
+            color: var(--text-muted);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            max-width: 800px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+        }
+
+        .modal-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        /* Transcript */
+        .transcript-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .transcript-msg {
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.75rem;
+            border-radius: 8px;
+        }
+
+        .transcript-msg.agent {
+            background: var(--primary);
+            margin-right: 20%;
+        }
+
+        .transcript-msg.user {
+            background: var(--bg-hover);
+            margin-left: 20%;
+        }
+
+        .transcript-role {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        /* Form */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .form-input,
+        .form-select {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+        }
+
+        .form-input:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        /* Toast */
+        .toast-container {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            z-index: 2000;
+        }
+
+        .toast {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-top: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .toast.success {
+            border-left: 3px solid var(--success);
+        }
+
+        .toast.error {
+            border-left: 3px solid var(--danger);
+        }
+
+        .toast.info {
+            border-left: 3px solid var(--primary);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Loading */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Action buttons in table */
+        .action-btns {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .action-btn {
+            padding: 0.5rem;
+            border-radius: 6px;
+            background: var(--bg);
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* API Config */
+        .config-bar {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .config-input {
+            flex: 1;
+            padding: 0.5rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+        }
+
+        /* Filters */
+        .filters {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        /* Analytics Charts placeholder */
+        .chart-placeholder {
+            height: 200px;
+            background: var(--bg);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+        }
+
+        /* Progress bar */
+        .progress-bar {
+            height: 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--gradient);
+            transition: width 0.3s;
+        }
+
+        /* No data */
+        .no-data {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+
+        .no-data-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">🏦</div>
+            <span class="logo-text">LOS Agent</span>
+        </div>
+        <div class="header-actions">
+            <div class="api-status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Checking API...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-item active" data-section="dashboard">📊 Dashboard</div>
+        <div class="nav-item" data-section="upload">📤 Upload Excel</div>
+        <div class="nav-item" data-section="calls">📞 Calls</div>
+        <div class="nav-item" data-section="analytics">📈 Analytics</div>
+        <div class="nav-item" data-section="exports">📁 Exports</div>
+        <div class="nav-item" data-section="settings">⚙️ Settings</div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- API Config Bar -->
+        <div class="config-bar">
+            <input type="text" class="config-input" id="apiBaseUrl" placeholder="Backend URL"
+                value="http://localhost:8200">
+            <button class="btn btn-primary" onclick="testConnection()">🔌 Test Connection</button>
+            <button class="btn btn-secondary" onclick="refreshAll()">🔄 Refresh All</button>
+        </div>
+
+        <!-- Dashboard Section -->
+        <section class="section active" id="dashboard">
+            <!-- Live Status Banner -->
+            <div id="liveStatusBanner" class="card"
+                style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-left: 4px solid var(--primary); display: none;">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <div class="loading" style="border-top-color: var(--success);"></div>
+                    <div>
+                        <div style="font-weight: 600;">🔴 Live Call in Progress</div>
+                        <div id="liveCallInfo" style="color: var(--text-muted);"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Calls</div>
+                    <div class="stat-value primary" id="totalCalls">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">WhatsApp Forms Sent</div>
+                    <div class="stat-value success" id="whatsappFormsSent">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Hot Leads</div>
+                    <div class="stat-value danger" id="hotLeads">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Warm Leads</div>
+                    <div class="stat-value warning" id="warmLeads">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Pending Calls</div>
+                    <div class="stat-value warning" id="pendingCalls">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Not Answered / Failed</div>
+                    <div class="stat-value danger" id="failedCalls">-</div>
+                </div>
+                <div class="stat-card" style="grid-column: span 2;">
+                    <div class="stat-label">Loan Interests</div>
+                    <div style="display: flex; gap: 1rem; margin-top: 0.5rem; flex-wrap: wrap;">
+                        <span class="badge badge-primary">Education: <span id="intEdu">0</span></span>
+                        <span class="badge badge-warning">Business: <span id="intBiz">0</span></span>
+                        <span class="badge badge-success">Personal: <span id="intPer">0</span></span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Calling Hours</div>
+                    <div class="stat-value" id="callingActive">-</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Recent Calls</h3>
+                    <button class="btn btn-secondary" onclick="loadRecentCalls()">🔄 Refresh</button>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Quality</th>
+                                <th>Loan Type</th>
+                                <th>Form Sent</th>
+                                <th>Status</th>
+                                <th>Duration</th>
+                                <th>Called At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recentCallsBody">
+                            <tr>
+                                <td colspan="8" class="no-data">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Upload Section -->
+        <section class="section" id="upload">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Upload Customer Data</h3>
+                </div>
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-icon">📁</div>
+                    <p class="upload-text">
+                        <strong>Click to upload</strong> or drag and drop<br>
+                        Excel (.xlsx, .xls) or CSV files
+                    </p>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+                </div>
+                <p style="margin-top: 1rem; color: var(--text-muted); font-size: 0.875rem;">
+                    Required columns: <strong>Name</strong>, <strong>Mobile_number</strong><br>
+                    Optional: email_id, aadhar_number, pan_number, custom_type, account_type, customer_since, gender_customer, current_address, dob
+                </p>
+
+                <!-- Language & Gender Selection -->
+                <div
+                    style="display: flex; gap: 1.5rem; margin-top: 1.5rem; padding: 1.25rem; background: var(--bg); border-radius: 10px; border: 1px solid var(--border);">
+                    <div style="flex: 1;">
+                        <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">🌐 Agent
+                            Language</label>
+                        <select class="form-select" id="uploadLanguage">
+                            <option value="hindi" selected>🇮🇳 Hindi</option>
+                            <option value="marathi">🏛️ Marathi</option>
+                            <option value="english">🌍 English</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">👤 Agent
+                            Gender</label>
+                        <select class="form-select" id="uploadGender">
+                            <option value="male" selected>👨 Male (Rajesh)</option>
+                            <option value="female">👩 Female (Diya)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Manual Batch Trigger</h3>
+                    <div class="action-btns">
+                        <button class="btn btn-success" onclick="triggerBatch()">🚀 Start Batch Calling</button>
+                        <button class="btn btn-secondary" onclick="triggerRetryBatch()">🔄 Retry Failed Calls</button>
+                        <button class="btn btn-danger" onclick="cleanupStuckCalls()"
+                            title="Fix calls stuck at 'Calling' status">🧹 Cleanup Stuck Calls</button>
+                    </div>
+                </div>
+                <div class="action-btns" style="margin-top: 1rem; margin-bottom: 1rem;">
+                    <button class="btn" style="background: var(--danger); color: white;" onclick="emergencyStop()">🛑
+                        EMERGENCY STOP</button>
+                    <button class="btn btn-secondary" onclick="resumeCalling()">🟢 Resume Calling</button>
+                </div>
+                <p style="color: var(--text-muted);">
+                    <strong>Calling Hours:</strong> 10 AM - 12 AM (Midnight) IST only.<br>
+                    Batch call processes pending calls. Retry batch processes failed/needs-follow-up calls (max 2
+                    retries).
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Upload History</h3>
+                    <button class="btn btn-secondary" onclick="loadUploads()">🔄 Refresh</button>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Batch ID</th>
+                                <th>Uploaded At</th>
+                                <th>Records</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="uploadsBody">
+                            <tr>
+                                <td colspan="4" class="no-data">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Calls Section -->
+        <section class="section" id="calls">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">All Calls</h3>
+                    <div class="action-btns">
+                        <button class="btn btn-secondary" onclick="loadCalls()">🔄 Refresh</button>
+                    </div>
+                </div>
+                <div class="filters">
+                    <select class="form-select" id="filterStatus" onchange="loadCalls()" style="width: 160px;">
+                        <option value="">All Status</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Calling">Calling</option>
+                        <option value="Called - Interested">Called - Interested</option>
+                        <option value="Called - Not Interested">Called - Not Interested</option>
+                        <option value="Not Answered">Not Answered</option>
+                        <option value="Failed">Failed</option>
+                    </select>
+                    <select class="form-select" id="filterCategory" onchange="loadCalls()" style="width: 200px;">
+                        <option value="">All Categories</option>
+                        <option value="Very Interested – Form Sent">Very Interested – Form Sent</option>
+                        <option value="Interested – Callback Requested">Callback Requested</option>
+                        <option value="Not Interested – No Need Currently">Not Interested</option>
+                        <option value="Call Not Connected">Call Not Connected</option>
+                    </select>
+                    <select class="form-select" id="filterLeadQuality" onchange="loadCalls()" style="width: 130px;">
+                        <option value="">All Quality</option>
+                        <option value="hot">🔥 Hot</option>
+                        <option value="warm">⭐ Warm</option>
+                        <option value="cold">❄️ Cold</option>
+                    </select>
+                    <select class="form-select" id="filterFormSent" onchange="loadCalls()" style="width: 140px;">
+                        <option value="">All - Form</option>
+                        <option value="true">Form Sent ✅</option>
+                        <option value="false">Form Pending ⏳</option>
+                    </select>
+                    <input type="date" class="form-input" id="filterDate" onchange="loadCalls()" style="width: 150px;">
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Quality</th>
+                                <th>Loan Type</th>
+                                <th>Interested</th>
+                                <th>Form Sent</th>
+                                <th>Status</th>
+                                <th>Category</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="callsBody">
+                            <tr>
+                                <td colspan="9" class="no-data">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                    <span id="callsPagination" style="color: var(--text-muted);"></span>
+                    <div>
+                        <button class="btn btn-secondary" id="prevPage" onclick="changePage(-1)">← Previous</button>
+                        <button class="btn btn-secondary" id="nextPage" onclick="changePage(1)">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Analytics Section -->
+        <section class="section" id="analytics">
+            <div class="stats-grid" id="analyticsStats">
+                <!-- Populated by JS -->
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Lead Quality Breakdown</h3>
+                </div>
+                <div class="stats-grid" id="leadQualityGrid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Loan Type Interest</h3>
+                </div>
+                <div id="performanceMetrics">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Outcome Distribution</h3>
+                </div>
+                <div id="outcomeChart">
+                    <!-- Category breakdown will be shown here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Exports Section -->
+        <section class="section" id="exports">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Export Daily Report</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select Date</label>
+                    <input type="date" class="form-input" id="exportDate" style="max-width: 250px;">
+                </div>
+                <button class="btn btn-primary" onclick="exportReport()">📥 Download Excel Report</button>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Comprehensive Export (All Columns)</h3>
+                </div>
+                <div class="filters" style="margin-bottom: 1rem;">
+                    <select class="form-select" id="exportStatus" style="width: 150px;">
+                        <option value="">All Status</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Called">Called</option>
+                        <option value="Not Answered">Not Answered</option>
+                        <option value="Failed">Failed</option>
+                    </select>
+                    <select class="form-select" id="exportCategory" style="width: 200px;">
+                        <option value="">All Categories</option>
+                        <option value="Payment Promised – Today">Payment Promised – Today</option>
+                        <option value="Payment Promised – Within 2–3 Days">Payment Promised – Soon</option>
+                        <option value="Unable to Pay Currently">Unable to Pay</option>
+                        <option value="Call Not Connected">Call Not Connected</option>
+                    </select>
+                    <input type="date" class="form-input" id="exportDateFrom" style="width: 150px;" placeholder="From">
+                    <input type="date" class="form-input" id="exportDateTo" style="width: 150px;" placeholder="To">
+                </div>
+                <p style="color: var(--text-muted); margin-bottom: 1rem;">
+                    Exports all 23 columns including loan details, follow-up status, retry count, and more.
+                </p>
+                <button class="btn btn-primary" onclick="exportComprehensive()">📊 Export All Fields (Excel)</button>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Quick Export Options</h3>
+                </div>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <button class="btn btn-secondary" onclick="exportToday()">📅 Today's Report</button>
+                    <button class="btn btn-secondary" onclick="exportAllCalls()">📋 Export All Calls (JSON)</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Settings Section -->
+        <section class="section" id="settings">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">API Configuration</h3>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Backend API URL</label>
+                    <input type="text" class="form-input" id="settingsApiUrl" placeholder="http://localhost:8000">
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">API Endpoints Reference</h3>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Endpoint</th>
+                            <th>Method</th>
+                            <th>Description</th>
+                            <th>Test</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>/api/agent/dashboard-stats</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>Dashboard statistics</td>
+                            <td><button class="btn btn-secondary"
+                                    onclick="testEndpoint('/api/agent/dashboard-stats')">Test</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/analytics</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>Enhanced analytics</td>
+                            <td><button class="btn btn-secondary"
+                                    onclick="testEndpoint('/api/agent/analytics')">Test</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/calls</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>List all calls</td>
+                            <td><button class="btn btn-secondary"
+                                    onclick="testEndpoint('/api/agent/calls')">Test</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/recent_calls</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>Recent calls</td>
+                            <td><button class="btn btn-secondary"
+                                    onclick="testEndpoint('/api/agent/recent_calls')">Test</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/uploads</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>Upload history</td>
+                            <td><button class="btn btn-secondary"
+                                    onclick="testEndpoint('/api/agent/uploads')">Test</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/upload-excel</td>
+                            <td><span class="badge badge-primary">POST</span></td>
+                            <td>Upload Excel file</td>
+                            <td><span class="badge badge-muted">Use Upload Tab</span></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/batch-call</td>
+                            <td><span class="badge badge-primary">POST</span></td>
+                            <td>Trigger batch (12-6 PM only)</td>
+                            <td><button class="btn btn-secondary" onclick="triggerBatch()">Trigger</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/batch-retry</td>
+                            <td><span class="badge badge-primary">POST</span></td>
+                            <td>Retry failed/follow-up calls</td>
+                            <td><button class="btn btn-secondary" onclick="triggerRetryBatch()">Retry</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/live-status</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>Current active call</td>
+                            <td><button class="btn btn-secondary"
+                                    onclick="testEndpoint('/api/agent/live-status')">Test</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/agent/export/all-calls</td>
+                            <td><span class="badge badge-success">GET</span></td>
+                            <td>Comprehensive Excel export</td>
+                            <td><button class="btn btn-secondary" onclick="exportComprehensive()">Export</button></td>
+                        </tr>
+                        <tr>
+                            <td>/api/auth/register</td>
+                            <td><span class="badge badge-primary">POST</span></td>
+                            <td>Register new user</td>
+                            <td><span class="badge badge-muted">API only</span></td>
+                        </tr>
+                        <tr>
+                            <td>/api/auth/login</td>
+                            <td><span class="badge badge-primary">POST</span></td>
+                            <td>User login (JWT)</td>
+                            <td><span class="badge badge-muted">API only</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Call Detail Modal -->
+    <div class="modal-overlay" id="callModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">Call Details</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Content loaded dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // State
+        let currentPage = 1;
+        let totalPages = 1;
+
+        // Get API URL
+        function getApiUrl() {
+            return document.getElementById('apiBaseUrl').value.replace(/\/$/, '');
+        }
+
+        
+        function getLeadQualityBadge(quality) {
+            if (!quality) return '<span class="badge badge-muted">Unknown</span>';
+            switch (quality.toLowerCase()) {
+                case 'hot': return '<span class="badge badge-danger">🔥 Hot</span>';
+                case 'warm': return '<span class="badge badge-warning">⭐ Warm</span>';
+                case 'cold': return '<span class="badge badge-primary">❄️ Cold</span>';
+                default: return `<span class="badge badge-muted">${quality}</span>`;
+            }
+        }
+        
+        // Navigation
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+                item.classList.add('active');
+                document.getElementById(item.dataset.section).classList.add('active');
+
+                // Load data for section
+                switch (item.dataset.section) {
+                    case 'dashboard': loadDashboard(); break;
+                    case 'upload': loadUploads(); break;
+                    case 'calls': loadCalls(); break;
+                    case 'analytics': loadAnalytics(); break;
+                }
+            });
+        });
+
+        // Toast notifications
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<span>${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'}</span><span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 5000);
+        }
+
+        // API Helper
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${getApiUrl()}${endpoint}`, {
+                    ...options,
+                    headers: {
+                        'Accept': 'application/json',
+                        ...options.headers
+                    }
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'API Error');
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+
+        // Test Connection
+        async function testConnection() {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            try {
+                await apiCall('/api/agent/dashboard-stats');
+                statusDot.classList.add('connected');
+                statusText.textContent = 'Connected';
+                showToast('API connection successful!', 'success');
+                loadDashboard();
+            } catch (error) {
+                statusDot.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+                showToast(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Refresh All
+        function refreshAll() {
+            loadDashboard();
+            showToast('Refreshing data...', 'info');
+        }
+
+        // Load Dashboard
+        async function loadDashboard() {
+            try {
+                const stats = await apiCall('/api/agent/dashboard-stats');
+                document.getElementById('totalCalls').textContent = stats.total_calls || 0;
+                document.getElementById('whatsappFormsSent').textContent = stats.whatsapp_forms_sent || 0;
+                document.getElementById('hotLeads').textContent = stats.hot_leads || 0;
+                document.getElementById('warmLeads').textContent = stats.warm_leads || 0;
+                document.getElementById('pendingCalls').textContent = stats.pending_calls || 0;
+                document.getElementById('failedCalls').textContent = stats.not_answered || 0;
+                
+                document.getElementById('intEdu').textContent = stats.loan_interests?.education || 0;
+                document.getElementById('intBiz').textContent = stats.loan_interests?.business || 0;
+                document.getElementById('intPer').textContent = stats.loan_interests?.personal || 0;
+
+                document.getElementById('callingActive').textContent = stats.calling_hours?.currently_active ? '🟢 Yes' : '🔴 No';
+                document.getElementById('callingActive').style.color = stats.calling_hours?.currently_active ? 'var(--success)' : 'var(--danger)';
+
+                // Load live status
+                loadLiveStatus();
+                loadRecentCalls();
+            } catch (error) {
+                showToast(`Failed to load dashboard: ${error.message}`, 'error');
+            }
+        }
+
+        // Load Live Status
+        async function loadLiveStatus() {
+            try {
+                const liveStatus = await apiCall('/api/agent/live-status');
+                const banner = document.getElementById('liveStatusBanner');
+                const info = document.getElementById('liveCallInfo');
+
+                if (liveStatus.status === 'active' && liveStatus.current_call) {
+                    banner.style.display = 'block';
+                    info.innerHTML = `<strong>${liveStatus.current_call.name}</strong> - ${liveStatus.current_call.phone} (${liveStatus.duration || '0s'})`;
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (error) {
+                document.getElementById('liveStatusBanner').style.display = 'none';
+            }
+        }
+
+        // Load Recent Calls
+        async function loadRecentCalls() {
+            const tbody = document.getElementById('recentCallsBody');
+            try {
+                const data = await apiCall('/api/agent/recent_calls?limit=10');
+                if (!data.recent_calls || data.recent_calls.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="no-data"><div class="no-data-icon">📭</div>No calls yet</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.recent_calls.map(call => `
+                    <tr onclick="viewCall('${call._id}')" style="cursor: pointer;">
+                        <td><strong>${call.name || '-'}</strong></td>
+                        <td>${call.phone || '-'}</td>
+                        <td>${getLeadQualityBadge(call.lead_quality)}</td>
+                        <td><span class="badge badge-muted">${call.loan_type_interested || '-'}</span></td>
+                        <td>${call.whatsapp_form_sent ? '<span class="badge badge-success">✅ Sent</span>' : '<span class="badge badge-warning">⏳ No</span>'}</td>
+                        <td>${getStatusBadge(call.call_status || call.status)}</td>
+                        <td>${call.call_duration_seconds ? call.call_duration_seconds + 's' : '-'}</td>
+                        <td>${formatDate(call.call_start_time)}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                tbody.innerHTML = '<tr><td colspan="8" class="no-data">Failed to load</td></tr>';
+            }
+        }
+
+        // Load Calls with filters
+        async function loadCalls() {
+            const tbody = document.getElementById('callsBody');
+            tbody.innerHTML = '<tr><td colspan="9"><div class="loading"></div> Loading...</td></tr>';
+
+            try {
+                // Safe element reads (filters were missing in old version)
+                const status = document.getElementById('filterStatus')?.value || '';
+                const category = document.getElementById('filterCategory')?.value || '';
+                const date = document.getElementById('filterDate')?.value || '';
+                const leadQuality = document.getElementById('filterLeadQuality')?.value || '';
+                const formSent = document.getElementById('filterFormSent')?.value || '';
+
+                let url = `/api/agent/calls?page=${currentPage}&page_size=20`;
+                if (status) url += `&status=${encodeURIComponent(status)}`;
+                if (category) url += `&category=${encodeURIComponent(category)}`;
+                if (leadQuality) url += `&lead_quality=${encodeURIComponent(leadQuality)}`;
+                if (formSent) url += `&form_sent=${encodeURIComponent(formSent)}`;
+                if (date) url += `&date=${date}`;
+
+                const data = await apiCall(url);
+                totalPages = data.total_pages || 1;
+
+                document.getElementById('callsPagination').textContent =
+                    `Page ${data.page} of ${totalPages} (${data.total} total calls)`;
+
+                if (!data.calls || data.calls.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" class="no-data"><div class="no-data-icon">📭</div>No calls found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.calls.map(call => {
+                    const formLinkBtn = call.form_url
+                        ? `<button class="action-btn" onclick="window.open('${call.form_url}','_blank')" title="Open Form">📋</button>`
+                        : '';
+                    return `
+                    <tr>
+                        <td><strong>${call.name || '-'}</strong></td>
+                        <td>${call.phone || '-'}</td>
+                        <td>${getLeadQualityBadge(call.lead_quality)}</td>
+                        <td><span class="badge badge-muted">${call.loan_type_interested || '-'}</span></td>
+                        <td>${call.customer_interested ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-muted">No</span>'}</td>
+                        <td>${call.whatsapp_form_sent ? '<span class="badge badge-success">✅ Sent</span>' : '<span class="badge badge-warning">⏳ No</span>'}</td>
+                        <td>${getStatusBadge(call.call_status || call.status)}</td>
+                        <td style="font-size:0.8rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${call.category || ''}">${ call.category || '-'}</td>
+                        <td class="action-btns">
+                            <button class="action-btn" onclick="viewCall('${call._id}')" title="View Details">👁️</button>
+                            <button class="action-btn" onclick="viewTranscript('${call._id}')" title="Transcript">📝</button>
+                            ${formLinkBtn}
+                            ${call.recording_url ? `<button class="action-btn" onclick="playRecording('${call.recording_url}')" title="Play Recording">🔊</button>` : ''}
+                        </td>
+                    </tr>`;
+                }).join('');
+            } catch (error) {
+                tbody.innerHTML = `<tr><td colspan="9" class="no-data">Failed to load: ${error.message}</td></tr>`;
+            }
+        }
+
+        function changePage(delta) {
+            currentPage = Math.max(1, Math.min(totalPages, currentPage + delta));
+            loadCalls();
+        }
+
+        // Load Analytics
+        async function loadAnalytics() {
+            try {
+                const data = await apiCall('/api/agent/analytics');
+
+                document.getElementById('analyticsStats').innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-label">Total Calls</div>
+                        <div class="stat-value primary">${data.total_calls_made || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Forms Sent</div>
+                        <div class="stat-value success">${data.forms_sent || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Interested</div>
+                        <div class="stat-value warning">${data.interested_customers || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Success Rate</div>
+                        <div class="stat-value success">${data.success_rate || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Failure Rate</div>
+                        <div class="stat-value danger">${data.failure_rate || 0}</div>
+                    </div>
+                `;
+
+                // Show lead quality and loan type summary
+                const lq = data.lead_quality || {};
+                const lt = data.loan_types || {};
+                
+                document.getElementById('leadQualityGrid').innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-label">🔥 Hot Leads</div>
+                        <div class="stat-value danger">${lq.hot || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">⭐ Warm Leads</div>
+                        <div class="stat-value warning">${lq.warm || 0}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">❄️ Cold Leads</div>
+                        <div class="stat-value primary">${lq.cold || 0}</div>
+                    </div>
+                `;
+                
+                document.getElementById('performanceMetrics').innerHTML = `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; padding: 1.5rem;">
+                        <div style="padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
+                            <div style="color: var(--text-muted); margin-bottom: 0.5rem; font-weight: 500;">Education Loans Interest</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary-light);">${lt.education || 0} Leads</div>
+                        </div>
+                        <div style="padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
+                            <div style="color: var(--text-muted); margin-bottom: 0.5rem; font-weight: 500;">Business Loans Interest</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--warning);">${lt.business || 0} Leads</div>
+                        </div>
+                        <div style="padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
+                            <div style="color: var(--text-muted); margin-bottom: 0.5rem; font-weight: 500;">Personal Loans Interest</div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);">${lt.personal || 0} Leads</div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                showToast(`Failed to load analytics: ${error.message}`, 'error');
+            }
+        }
+
+        // Load Uploads
+        async function loadUploads() {
+            const tbody = document.getElementById('uploadsBody');
+            try {
+                const data = await apiCall('/api/agent/uploads');
+                if (!data.uploads || data.uploads.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="no-data">No uploads yet</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.uploads.map(upload => `
+                    <tr>
+                        <td style="font-family: monospace; font-size: 0.75rem;">${upload._id || '-'}</td>
+                        <td>${formatDate(upload.uploaded_at)}</td>
+                        <td>${upload.record_count || 0}</td>
+                        <td>
+                            <button class="btn btn-secondary" onclick="viewBatch('${upload._id}')">View Details</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                tbody.innerHTML = '<tr><td colspan="4" class="no-data">Failed to load</td></tr>';
+            }
+        }
+
+        // File Upload
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadZone.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                uploadFile(e.dataTransfer.files[0]);
+            }
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                uploadFile(fileInput.files[0]);
+            }
+        });
+
+        async function uploadFile(file) {
+            const language = document.getElementById('uploadLanguage').value;
+            const gender = document.getElementById('uploadGender').value;
+            showToast(`Uploading file... (${language} / ${gender})`, 'info');
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${getApiUrl()}/api/agent/upload-excel?language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    showToast(`✅ Uploaded ${data.inserted_count} records! Batch: ${data.batch_id}`, 'success');
+                    loadUploads();
+                    loadDashboard();
+                } else {
+                    showToast(`❌ Upload failed: ${data.detail}`, 'error');
+                }
+            } catch (error) {
+                showToast(`❌ Upload error: ${error.message}`, 'error');
+            }
+        }
+
+        // Trigger Batch
+        async function triggerBatch() {
+            try {
+                const data = await apiCall('/api/agent/batch-call', { method: 'POST' });
+                showToast('🚀 Batch calling started! You will be notified when it completes.', 'success');
+                startBatchCompletionPolling();
+            } catch (error) {
+                showToast(`Failed to trigger batch: ${error.message}`, 'error');
+            }
+        }
+
+        // Trigger Retry Batch
+        async function triggerRetryBatch() {
+            try {
+                const data = await apiCall('/api/agent/batch-retry', { method: 'POST' });
+                showToast('🔄 Retry batch started for failed/needs-follow-up calls!', 'success');
+                startBatchCompletionPolling();
+            } catch (error) {
+                showToast(`Failed to trigger retry: ${error.message}`, 'error');
+            }
+        }
+
+        // Batch Completion Polling
+        let batchPollInterval = null;
+        function startBatchCompletionPolling() {
+            if (batchPollInterval) clearInterval(batchPollInterval);
+            let pollCount = 0;
+            let errorCount = 0;  // ✅ FIX: Track consecutive errors
+            batchPollInterval = setInterval(async () => {
+                pollCount++;
+                try {
+                    const status = await apiCall('/api/agent/live-status');
+                    errorCount = 0;  // Reset on success
+                    if (status.status !== 'active' && pollCount > 3) {
+                        clearInterval(batchPollInterval);
+                        batchPollInterval = null;
+                        showToast('✅ Batch calling completed! Refreshing dashboard...', 'success');
+                        loadDashboard();
+                    }
+                } catch (e) {
+                    errorCount++;
+                    // ✅ FIX: Stop polling after 5 consecutive errors
+                    if (errorCount >= 5) {
+                        clearInterval(batchPollInterval);
+                        batchPollInterval = null;
+                        showToast('⚠️ Lost connection to backend', 'error');
+                        return;
+                    }
+                }
+                if (pollCount > 360) { // 30 min max
+                    clearInterval(batchPollInterval);
+                    batchPollInterval = null;
+                }
+            }, 5000);
+        }
+
+        // Emergency Control
+        async function emergencyStop() {
+            if (!confirm("🚨 WARNING 🚨\n\nAre you sure you want to trigger the EMERGENCY STOP?\nThis will IMMEDIATELY halt the batch process and forcefully close any currently active call.")) {
+                return;
+            }
+            try {
+                const data = await apiCall('/api/agent/emergency-stop', { method: 'POST' });
+                showToast(`🛑 ${data.message}`, 'error');
+                loadDashboard();
+            } catch (error) {
+                showToast(`Failed to trigger emergency stop: ${error.message}`, 'error');
+            }
+        }
+
+        async function resumeCalling() {
+            try {
+                const data = await apiCall('/api/agent/resume-calling', { method: 'POST' });
+                showToast(`🟢 ${data.message}`, 'success');
+                loadDashboard();
+            } catch (error) {
+                showToast(`Failed to resume calling: ${error.message}`, 'error');
+            }
+        }
+
+        // Cleanup Stuck Calls
+        async function cleanupStuckCalls() {
+            try {
+                const data = await apiCall('/api/agent/stale-cleanup', { method: 'POST' });
+                showToast(`🧹 Cleanup done: ${data.cleaned || 0} stuck calls fixed`, 'success');
+                loadDashboard();
+            } catch (error) {
+                showToast(`Cleanup failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Export Comprehensive Excel
+        function exportComprehensive() {
+            const status = document.getElementById('exportStatus')?.value || '';
+            const category = document.getElementById('exportCategory')?.value || '';
+            const dateFrom = document.getElementById('exportDateFrom')?.value || '';
+            const dateTo = document.getElementById('exportDateTo')?.value || '';
+
+            let url = `${getApiUrl()}/api/agent/export/all-calls?`;
+            if (status) url += `status=${encodeURIComponent(status)}&`;
+            if (category) url += `category=${encodeURIComponent(category)}&`;
+            if (dateFrom) url += `date_from=${dateFrom}&`;
+            if (dateTo) url += `date_to=${dateTo}&`;
+
+            window.open(url, '_blank');
+            showToast('📊 Starting comprehensive export...', 'info');
+        }
+
+        // View Call Details
+        async function viewCall(callId) {
+            try {
+                const call = await apiCall(`/api/agent/call/${callId}`);
+                document.getElementById('modalTitle').textContent = `Call: ${call.name}`;
+                document.getElementById('modalBody').innerHTML = `
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+                        <div><strong>Name:</strong> ${call.name}</div>
+                        <div><strong>Phone:</strong> ${call.phone}</div>
+                        
+                        <!-- LEAD QUALITY & LOAN INFO -->
+                        <div style="grid-column: span 2; padding-top: 0.5rem; border-top: 1px dashed var(--border);"></div>
+                        
+                        <div><strong>Quality:</strong> ${getLeadQualityBadge(call.lead_quality)}</div>
+                        <div><strong>Loan Type:</strong> <span class="badge badge-primary">${call.loan_type_interested || '-'}</span></div>
+                        <div><strong>Interested:</strong> ${call.customer_interested ? '✅ Yes' : '❌ No'}</div>
+                        <div><strong>Form Sent:</strong> ${call.whatsapp_form_sent ? '✅ Yes' : '⏳ No'}</div>
+                        <div><strong>Amount Req:</strong> ₹${call.loan_amount_requested || '-'}</div>
+                        <div><strong>Monthly Income:</strong> ₹${call.monthly_income || '-'}</div>
+                        <div><strong>Employment:</strong> ${call.employment_type || '-'}</div>
+                        <div><strong>Employer:</strong> ${call.employer_name || '-'}</div>
+                        <div><strong>Loan Purpose:</strong> ${call.loan_purpose || '-'}</div>
+                        <div><strong>Aadhar:</strong> ${call.aadhar_number || '-'}</div>
+                        
+                        ${call.form_url ? `<div style="grid-column: span 2;"><strong>Form Link:</strong> <a href="${call.form_url}" target="_blank" style="color: var(--primary-light); text-decoration: underline;">${call.form_url}</a></div>` : ''}
+                        ${call.notification_message ? `<div style="grid-column: span 2; background: rgba(13,148,136,0.1); border: 1px solid rgba(13,148,136,0.3); border-radius: 8px; padding: 0.75rem; font-size: 0.85rem;"><strong>Notification Message:</strong><pre style="margin-top: 0.5rem; white-space: pre-wrap; color: var(--text-muted);">${call.notification_message}</pre></div>` : ''}
+                        ${call.form_submitted ? `<div style="grid-column: span 2;"><span class="badge badge-success">✅ Form Submitted by Customer</span></div>` : ''}
+                        
+                        <div style="grid-column: span 2; padding-top: 0.5rem; border-top: 1px dashed var(--border);"></div>
+
+                        <div><strong>Status:</strong> ${getStatusBadge(call.call_status || call.status)}</div>
+                        <div><strong>Category:</strong> ${call.category || '-'}</div>
+                        <div><strong>Follow-up:</strong> ${call.follow_up_needed === 'Yes' ? '<span class="badge badge-warning">Yes</span>' : '<span class="badge badge-muted">No</span>'}</div>
+                        <div><strong>Duration:</strong> ${call.call_duration_seconds ? call.call_duration_seconds + 's' : '-'}</div>
+                        <div><strong>Retry Count:</strong> ${call.retry_count || 0}</div>
+                        <div><strong>Success:</strong> ${call.success ? '✅ Yes' : '❌ No'}</div>
+                    </div>
+                    ${call.transcript && call.transcript.length ? `
+                        <h4 style="margin-bottom: 1rem;">Transcript</h4>
+                        <div class="transcript-container">
+                            ${call.transcript.map(msg => `
+                                <div class="transcript-msg ${msg.role}">
+                                    <div class="transcript-role">${msg.role === 'agent' ? '🤖 Agent' : '👤 Customer'}</div>
+                                    <div>${msg.text}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : '<p style="color: var(--text-muted);">No transcript available</p>'}
+                    ${call.recording_url ? `
+                        <div style="margin-top: 1rem;">
+                            <h4>Recording</h4>
+                            <audio controls src="${call.recording_url}" style="width: 100%; margin-top: 0.5rem;"></audio>
+                        </div>
+                    ` : ''}
+                `;
+                document.getElementById('callModal').classList.add('active');
+            } catch (error) {
+                showToast(`Failed to load call: ${error.message}`, 'error');
+            }
+        }
+
+        async function viewTranscript(callId) {
+            try {
+                const data = await apiCall(`/api/agent/call/${callId}/transcript`);
+                document.getElementById('modalTitle').textContent = `Transcript: ${data.name}`;
+                if (!data.transcript || data.transcript.length === 0) {
+                    document.getElementById('modalBody').innerHTML = '<p class="no-data">No transcript available for this call</p>';
+                } else {
+                    document.getElementById('modalBody').innerHTML = `
+                        <div class="transcript-container">
+                            ${data.transcript.map(msg => `
+                                <div class="transcript-msg ${msg.role}">
+                                    <div class="transcript-role">${msg.role === 'agent' ? '🤖 Agent' : '👤 Customer'}</div>
+                                    <div>${msg.text}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                document.getElementById('callModal').classList.add('active');
+            } catch (error) {
+                showToast(`Failed to load transcript: ${error.message}`, 'error');
+            }
+        }
+
+        function playRecording(url) {
+            document.getElementById('modalTitle').textContent = 'Recording';
+            document.getElementById('modalBody').innerHTML = `
+                <audio controls autoplay src="${url}" style="width: 100%;"></audio>
+            `;
+            document.getElementById('callModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('callModal').classList.remove('active');
+        }
+
+        // Export functions
+        function exportReport() {
+            const date = document.getElementById('exportDate').value;
+            if (!date) {
+                showToast('Please select a date', 'error');
+                return;
+            }
+            window.open(`${getApiUrl()}/api/agent/export/daily-report?date=${date}`, '_blank');
+        }
+
+        function exportToday() {
+            const today = new Date().toISOString().split('T')[0];
+            window.open(`${getApiUrl()}/api/agent/export/daily-report?date=${today}`, '_blank');
+        }
+
+        async function exportAllCalls() {
+            try {
+                const data = await apiCall('/api/agent/calls');
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'pusad_all_calls.json';
+                a.click();
+                showToast('Exported all calls as JSON', 'success');
+            } catch (error) {
+                showToast(`Export failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Test endpoint
+        async function testEndpoint(endpoint) {
+            try {
+                const data = await apiCall(endpoint);
+                console.log('API Response:', data);
+                showToast(`✅ ${endpoint} - Success!`, 'success');
+            } catch (error) {
+                showToast(`❌ ${endpoint} - ${error.message}`, 'error');
+            }
+        }
+
+        // View batch details
+        async function viewBatch(batchId) {
+            try {
+                const data = await apiCall(`/api/agent/upload/${batchId}`);
+                document.getElementById('modalTitle').textContent = `Batch: ${batchId}`;
+                document.getElementById('modalBody').innerHTML = `
+                    <p><strong>Total Records:</strong> ${data.record_count}</p>
+                    <div class="table-wrapper" style="margin-top: 1rem;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Phone</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.records.slice(0, 20).map(r => `
+                                    <tr>
+                                        <td>${r.name}</td>
+                                        <td>${r.phone}</td>
+                                        <td>${getStatusBadge(r.status)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        ${data.records.length > 20 ? `<p style="color: var(--text-muted); margin-top: 1rem;">Showing 20 of ${data.record_count} records</p>` : ''}
+                    </div>
+                `;
+                document.getElementById('callModal').classList.add('active');
+            } catch (error) {
+                showToast(`Failed to load batch: ${error.message}`, 'error');
+            }
+        }
+
+        // Settings
+        function saveSettings() {
+            const url = document.getElementById('settingsApiUrl').value;
+            document.getElementById('apiBaseUrl').value = url;
+            localStorage.setItem('pusadApiUrl', url);
+            showToast('Settings saved!', 'success');
+            testConnection();
+        }
+
+        // Helpers
+        function getStatusBadge(status) {
+            const badges = {
+                'Pending': 'badge-warning',
+                'Calling': 'badge-primary',
+                'Called': 'badge-success',
+                'Called - Interested': 'badge-success',
+                'Called - Not Interested': 'badge-muted',
+                'Not Answered': 'badge-muted',
+                'Failed': 'badge-danger',
+                'Invalid Phone': 'badge-danger',
+            };
+            return `<span class="badge ${badges[status] || 'badge-muted'}">${status || 'Unknown'}</span>`;
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            return new Date(dateStr).toLocaleString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // Initialize
+        let liveStatusInterval = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedUrl = localStorage.getItem('pusadApiUrl');
+            if (savedUrl) {
+                document.getElementById('apiBaseUrl').value = savedUrl;
+                document.getElementById('settingsApiUrl').value = savedUrl;
+            }
+
+            // Set today's date for export
+            document.getElementById('exportDate').value = new Date().toISOString().split('T')[0];
+
+            testConnection();
+
+            // Auto-refresh live status every 5 seconds when on dashboard
+            liveStatusInterval = setInterval(() => {
+                const dashboardSection = document.getElementById('dashboard');
+                if (dashboardSection && dashboardSection.classList.contains('active')) {
+                    loadLiveStatus();
+                }
+            }, 5000);
+        });
+
+        // Close modal on escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+    </script>
+</body>
+
+</html>

@@ -217,6 +217,11 @@ CREATE TABLE IF NOT EXISTS agent_batches (
 -- Add retry_count to agent_calls (used by batch scheduler)
 ALTER TABLE agent_calls ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0;
 
+-- Agent ↔ Loan Application cross-references
+ALTER TABLE agent_calls ADD COLUMN IF NOT EXISTS application_id UUID;
+ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS agent_call_id UUID;
+ALTER TABLE agent_batches ADD COLUMN IF NOT EXISTS batch_id VARCHAR(100);
+
 CREATE INDEX IF NOT EXISTS idx_agent_calls_bank ON agent_calls(bank_id);
 CREATE INDEX IF NOT EXISTS idx_agent_calls_batch ON agent_calls(batch_id);
 CREATE INDEX IF NOT EXISTS idx_agent_calls_status ON agent_calls(status);

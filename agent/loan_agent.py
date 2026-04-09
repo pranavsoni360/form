@@ -307,7 +307,7 @@ class LoanEnquirySession:
             "collected_address": self.collected_address,
         }
 
-        logger.info(f"📤 Sending transcript to {BACKEND_URL}/api/pusad/transcript | call_id={self.call_id}, msgs={len(self.transcript)}")
+        logger.info(f"📤 Sending transcript to {BACKEND_URL}/api/agent/transcript | call_id={self.call_id}, msgs={len(self.transcript)}")
 
         if not self.transcript:
             logger.warning(f"⚠️ Sending EMPTY transcript for {self.room_name}")
@@ -316,7 +316,7 @@ class LoanEnquirySession:
             try:
                 async with aiohttp.ClientSession() as http:
                     async with http.post(
-                        f"{BACKEND_URL}/api/pusad/transcript",
+                        f"{BACKEND_URL}/api/agent/transcript",
                         json=payload,
                         timeout=aiohttp.ClientTimeout(total=15)
                     ) as resp:
@@ -355,54 +355,14 @@ async def send_form_link(context: RunContext, loan_type: str, estimated_amount: 
         }
         async with aiohttp.ClientSession() as http:
             async with http.post(
-                f"{BACKEND_URL}/api/pusad/send-whatsapp-form",
+                f"{BACKEND_URL}/api/agent/send-whatsapp-form",
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 backend_ok = resp.status == 200
 
-        # ── 2. Fire AiSensy campaign directly ────────────────────────
-        phone_clean = session.phone.strip().replace("+", "").replace(" ", "")
-        if not phone_clean.startswith("91"):
-            phone_clean = "91" + phone_clean
-
-        first_name = session.customer_name.strip().split()[0] if session.customer_name.strip() else "Customer"
-
-        aisensy_payload = {
-            "apiKey": os.getenv("AISENSY_API_KEY", ""),
-            "campaignName": os.getenv("AISENSY_CAMPAIGN_NAME", "LRS_TESTING"),
-            "destination": phone_clean,
-            "userName": os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA"),
-            "templateParams": [
-                first_name,
-                first_name,
-            ],
-            "source": "loan-voice-agent",
-            "media": {
-                "url": os.getenv("AISENSY_IMAGE_URL", "https://d3jt6ku4g6z5l8.cloudfront.net/IMAGE/6353da2e153a147b991dd812/4958901_highanglekidcheatingschooltestmin.jpg"),
-                "filename": "loan_form",
-            },
-            "buttons": [],
-            "carouselCards": [],
-            "location": {},
-            "attributes": {},
-            "paramsFallbackValue": {"FirstName": "Customer"},
-        }
-
-        async with aiohttp.ClientSession() as http:
-            async with http.post(
-                "https://backend.aisensy.com/campaign/t1/api/v2",
-                json=aisensy_payload,
-                timeout=aiohttp.ClientTimeout(total=10),
-                ssl=False,
-            ) as resp:
-                aisensy_status = resp.status
-                aisensy_body = await resp.text()
-                logger.info(f"📲 AiSensy {phone_clean}: {aisensy_status} | {aisensy_body}")
-                aisensy_ok = aisensy_status == 200
-
-        # ── 3. Update session state ───────────────────────────────────
-        if backend_ok or aisensy_ok:
+        # ── 2. Update session state (AiSensy is handled by backend, no duplicate) ──
+        if backend_ok:
             session.form_link_sent = True
             session.loan_type = loan_type
             session.loan_amount = estimated_amount
@@ -544,9 +504,7 @@ FLOW:
 3. ग्राहक का bank account status पूछो:
    "क्या आपका पुसद अर्बन बैंक में पहले से कोई account है?"
    → अगर नहीं: "कोई बात नहीं — loan के साथ-साथ हम account खोलने में भी help कर सकते हैं।"
-4. Referral source पूछो:
-   "आपको हमारे बारे में कैसे पता चला — किसी ने refer किया या advertisement देखा?"
-5. Strong interest पर transition: "बहुत अच्छा! बस कुछ छोटे-छोटे सवाल पूछने हैं, उसके बाद WhatsApp पर form भेजूँगा। शुरू करते हैं —"
+4. Strong interest पर transition: "बहुत अच्छा! बस कुछ छोटे-छोटे सवाल पूछने हैं, उसके बाद WhatsApp पर form भेजूँगा। शुरू करते हैं —"
 6. एक-एक करके पूछो:
    - "आपकी उम्र क्या है?"
    - "आप क्या काम करते हैं?"

@@ -592,13 +592,13 @@ export default function LoanApplication() {
                 </F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Industry Type" required error={errors.industry_type}>
+                <F label="Industry Type" required error={errors.industry_type} fieldName="industry_type" fieldSources={formData.field_sources}>
                   <select value={formData.industry_type || ''} onChange={e => onChange('industry_type', e.target.value)} className={inp(errors.industry_type)}>
                     <option value="">Select</option>
                     {['IT/Software','Banking/Finance','Healthcare','Education','Manufacturing','Retail','Government','Real Estate','Transport','Other'].map(i => <option key={i}>{i}</option>)}
                   </select>
                 </F>
-                <F label="Employment Type" required error={errors.employment_type}>
+                <F label="Employment Type" required error={errors.employment_type} fieldName="employment_type" fieldSources={formData.field_sources}>
                   <select value={formData.employment_type || ''} onChange={e => onChange('employment_type', e.target.value)} className={inp(errors.employment_type)}>
                     <option value="">Select</option>
                     {['Permanent','Contractual','Part-time','Self-employed','Business Owner'].map(e => <option key={e}>{e}</option>)}
@@ -606,8 +606,8 @@ export default function LoanApplication() {
                 </F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Employer Name"><input type="text" value={formData.employer_name || ''} onChange={e => onChange('employer_name', e.target.value)} className={inp('')} placeholder="Company / Business name" /></F>
-                <F label="Designation" required error={errors.designation}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
+                <F label="Employer Name" fieldName="employer_name" fieldSources={formData.field_sources}><input type="text" value={formData.employer_name || ''} onChange={e => onChange('employer_name', e.target.value)} className={inp('')} placeholder="Company / Business name" /></F>
+                <F label="Designation" required error={errors.designation} fieldName="designation" fieldSources={formData.field_sources}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
@@ -640,7 +640,7 @@ export default function LoanApplication() {
               <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Loan Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Loan Amount (₹)" required error={errors.loan_amount_requested}>
+                  <F label="Loan Amount (₹)" required error={errors.loan_amount_requested} fieldName="loan_amount_requested" fieldSources={formData.field_sources}>
                     <input type="number" value={formData.loan_amount_requested || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
                   </F>
                   <F label="Repayment Period (Years)">
@@ -650,7 +650,7 @@ export default function LoanApplication() {
                     </select>
                   </F>
                 </div>
-                <F label="Purpose of Loan" required error={errors.purpose_of_loan}>
+                <F label="Purpose of Loan" required error={errors.purpose_of_loan} fieldName="purpose_of_loan" fieldSources={formData.field_sources}>
                   <select value={formData.purpose_of_loan || ''} onChange={e => onChange('purpose_of_loan', e.target.value)} className={inp(errors.purpose_of_loan)}>
                     <option value="">Select</option>
                     {['Home Purchase','Home Renovation','Business Expansion','Education','Medical Emergency','Debt Consolidation','Vehicle Purchase','Wedding','Travel','Personal Use','Other'].map(p => <option key={p}>{p}</option>)}
@@ -661,7 +661,7 @@ export default function LoanApplication() {
               <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Financial Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income}>
+                  <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income} fieldName="monthly_gross_income" fieldSources={formData.field_sources}>
                     <input type="number" value={formData.monthly_gross_income || ''} onChange={e => onChange('monthly_gross_income', e.target.value)} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
                   </F>
                   <F label="Monthly Deductions (₹)">
@@ -669,7 +669,7 @@ export default function LoanApplication() {
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Existing Monthly EMIs (₹)">
+                  <F label="Existing Monthly EMIs (₹)" fieldName="monthly_emi_existing" fieldSources={formData.field_sources}>
                     <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => onChange('monthly_emi_existing', e.target.value)} className={inp('')} placeholder="0 if none" />
                   </F>
                   <F label="Monthly Net Income (₹)" required error={errors.monthly_net_income}>

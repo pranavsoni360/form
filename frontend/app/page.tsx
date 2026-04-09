@@ -64,11 +64,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center p-4 transition-colors">
-      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-xl dark:shadow-gray-900/50 p-8 max-w-md w-full transition-colors">
+      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-xl dark:shadow-gray-900/50 p-5 sm:p-8 max-w-md w-full transition-colors overflow-hidden">
         <div className="flex justify-end mb-4"><ThemeToggle /></div>
-        <div className="text-center mb-8">
-          <div className="mb-4"><Building2 className="w-14 h-14 text-blue-600 mx-auto" /></div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Loan Application</h1>
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="mb-3 sm:mb-4"><Building2 className="w-12 h-12 sm:w-14 sm:h-14 text-blue-600 mx-auto" /></div>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-2">Loan Application</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {step === 'phone' ? 'Enter your registered mobile number to continue' : `Enter the OTP sent to your WhatsApp (+91 ${phone})`}
           </p>
@@ -81,11 +81,11 @@ export default function Home() {
                 Mobile Number <span className="text-red-500">*</span>
               </label>
               <div className="flex gap-2">
-                <div className="px-4 py-3 bg-gray-100 dark:bg-dark-input border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 font-medium flex items-center gap-1">
+                <div className="px-3 sm:px-4 py-3 bg-gray-100 dark:bg-dark-input border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 font-medium flex items-center gap-1 text-sm sm:text-base flex-shrink-0">
                   <Phone className="w-4 h-4" /> +91
                 </div>
                 <input type="tel" value={phone} onChange={e => { setPhone(e.target.value.replace(/\D/g,'').slice(0,10)); setError(''); }}
-                  className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-lg"
+                  className="flex-1 min-w-0 px-3 sm:px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-base sm:text-lg"
                   placeholder="10-digit mobile" maxLength={10} autoFocus
                   onKeyDown={e => e.key === 'Enter' && handleSendOTP()} />
               </div>
@@ -109,8 +109,8 @@ export default function Home() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Enter 6-digit OTP <span className="text-red-500">*</span></label>
               <input type="text" value={otp} onChange={e => { setOtp(e.target.value.replace(/\D/g,'').slice(0,6)); setError(''); }}
-                className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-center text-2xl font-bold tracking-widest"
-                placeholder="000000" maxLength={6} autoFocus
+                className="w-full px-3 sm:px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl sm:text-2xl font-bold tracking-[0.3em] sm:tracking-widest"
+                placeholder="000000" maxLength={6} autoFocus inputMode="numeric"
                 onKeyDown={e => e.key === 'Enter' && handleVerifyOTP()} />
             </div>
             {error && <div className="bg-red-50 dark:bg-dark-section border border-red-200 dark:border-gray-700 rounded-lg p-3"><p className="text-sm text-red-800">{error}</p></div>}

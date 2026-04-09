@@ -2295,6 +2295,15 @@ async def autosave_session(request: Request):
         raise HTTPException(status_code=401, detail="Session expired due to inactivity")
     await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
     safe_data = {k: _coerce_value(k, v) for k, v in form_data.items() if k in AUTOSAVE_COLUMNS}
+    # Ensure highest_step only goes up, never down
+    if "highest_step" in safe_data:
+        app_row = await db_pool.fetchrow("SELECT highest_step, current_step FROM loan_applications WHERE id = $1", session["application_id"])
+        if app_row:
+            current_highest = app_row["highest_step"] or 1
+            if safe_data["highest_step"] is not None and safe_data["highest_step"] <= current_highest:
+                safe_data.pop("highest_step")
+            # Don't downgrade current_step when user navigates back to review
+            step = max(step, app_row["current_step"] or 1)
     if safe_data:
         sets = ", ".join(f"{k} = ${i+1}" for i, k in enumerate(safe_data.keys()))
         vals = list(safe_data.values())
@@ -2304,6 +2313,9 @@ async def autosave_session(request: Request):
             f"UPDATE loan_applications SET {sets}, current_step = ${n+1}, last_saved_at = ${n+2} WHERE id = ${n+3}", *vals
         )
     else:
+        # Still don't downgrade current_step
+        app_row = await db_pool.fetchrow("SELECT current_step FROM loan_applications WHERE id = $1", session["application_id"])
+        step = max(step, (app_row["current_step"] or 1) if app_row else 1)
         await db_pool.execute("UPDATE loan_applications SET current_step = $1, last_saved_at = $2 WHERE id = $3", step, now_utc(), session["application_id"])
     return {"status": "saved", "timestamp": now_utc().isoformat()}
 

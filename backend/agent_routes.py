@@ -1605,6 +1605,66 @@ async def save_transcript(data: TranscriptPayload):
         actual_uuid,
     )
 
+    # ── If a loan_application was created from this call, backfill with collected data ──
+    try:
+        app_row = await db_pool.fetchrow(
+            "SELECT id FROM loan_applications WHERE agent_call_id = $1", actual_uuid)
+        if app_row:
+            from main import save_field_sources
+
+            def _parse_num(val):
+                if not val: return None
+                cleaned = "".join(c for c in str(val) if c.isdigit() or c == ".")
+                try: return float(cleaned) if cleaned else None
+                except ValueError: return None
+
+            await db_pool.execute(
+                """UPDATE loan_applications SET
+                    employer_name = COALESCE($1, employer_name),
+                    designation = COALESCE($2, designation),
+                    employment_type = COALESCE($3, employment_type),
+                    monthly_gross_income = COALESCE($4, monthly_gross_income),
+                    monthly_emi_existing = COALESCE($5, monthly_emi_existing),
+                    current_address = COALESCE($6, current_address),
+                    purpose_of_loan = COALESCE($7, purpose_of_loan),
+                    loan_amount_requested = COALESCE($8, loan_amount_requested),
+                    industry_type = COALESCE($9, industry_type),
+                    customer_type = COALESCE($10, customer_type)
+                WHERE id = $11""",
+                existing_collected.get("employer_name") or None,
+                existing_collected.get("designation") or None,
+                existing_collected.get("employment_type") or None,
+                _parse_num(existing_collected.get("monthly_income")),
+                _parse_num(existing_collected.get("existing_emi")),
+                existing_collected.get("collected_address") or None,
+                existing_collected.get("loan_purpose") or None,
+                _parse_num(data.loan_amount),
+                existing_collected.get("business_type") or None,
+                existing_collected.get("customer_type") or None,
+                app_row["id"],
+            )
+            # Save field_sources for Voice Call badges
+            source_fields = {}
+            field_map = {
+                "employer_name": existing_collected.get("employer_name"),
+                "designation": existing_collected.get("designation"),
+                "employment_type": existing_collected.get("employment_type"),
+                "monthly_gross_income": existing_collected.get("monthly_income"),
+                "monthly_emi_existing": existing_collected.get("existing_emi"),
+                "current_address": existing_collected.get("collected_address"),
+                "purpose_of_loan": existing_collected.get("loan_purpose"),
+                "industry_type": existing_collected.get("business_type"),
+                "customer_type": existing_collected.get("customer_type"),
+            }
+            for field, value in field_map.items():
+                if value and str(value).strip():
+                    source_fields[field] = value
+            if source_fields:
+                await save_field_sources(app_row["id"], "agent_call", source_fields)
+            logger.info(f"Backfilled loan_application {app_row['id']} with {len(source_fields)} fields from call data")
+    except Exception as e:
+        logger.warning(f"Could not backfill loan_application: {e}")
+
     return {"status": "success", "room": room, "updated": True}
 
 # ============================================================================

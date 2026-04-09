@@ -648,7 +648,7 @@
         <!-- API Config Bar -->
         <div class="config-bar">
             <input type="text" class="config-input" id="apiBaseUrl" placeholder="Backend URL"
-                value="http://localhost:8200">
+                value="">
             <button class="btn btn-primary" onclick="testConnection()">🔌 Test Connection</button>
             <button class="btn btn-secondary" onclick="refreshAll()">🔄 Refresh All</button>
         </div>
@@ -1798,6 +1798,15 @@
             if (savedUrl) {
                 document.getElementById('apiBaseUrl').value = savedUrl;
                 document.getElementById('settingsApiUrl').value = savedUrl;
+            } else {
+                // Auto-detect: same host as frontend but port 8200
+                const proto = window.location.protocol;
+                const host = window.location.hostname;
+                const defaultUrl = host === 'localhost' || host === '127.0.0.1'
+                    ? 'http://localhost:8200'
+                    : `${proto}//${host}:8200`;
+                document.getElementById('apiBaseUrl').value = defaultUrl;
+                document.getElementById('settingsApiUrl').value = defaultUrl;
             }
 
             // Set today's date for export

@@ -2827,7 +2827,9 @@ async def seed_mock_data(admin: dict = Depends(get_current_admin)):
 
 def build_api_payload(app_data: dict) -> dict:
     """Convert loan_applications row → lrsAnalysisSummary API payload (42 fields)."""
-    phone = (app_data.get("phone") or "").lstrip("+").lstrip("91")
+    # Take the last 10 digits — lstrip("91") treats it as a char set, not a prefix.
+    _digits = ''.join(c for c in (app_data.get("phone") or "") if c.isdigit())
+    phone = _digits[-10:] if len(_digits) >= 10 else _digits
     # Concatenate address parts for API
     cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
                  app_data.get("current_landmark", ""), app_data.get("current_locality", "")]

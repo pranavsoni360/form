@@ -1714,8 +1714,11 @@ async def send_whatsapp_form(request: Request):
 
     # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
     app_id = None
-    # Append phone as query param so the OTP page auto-fills and auto-sends
-    bare_phone = phone_norm.lstrip('+').lstrip('91') if phone_norm else ''
+    # Append phone as query param so the OTP page auto-fills and auto-sends.
+    # Take the last 10 digits — handles +91/91 prefixes without the str.lstrip
+    # character-class footgun (lstrip("91") strips any leading 9s and 1s).
+    _digits = ''.join(c for c in (phone_norm or '') if c.isdigit())
+    bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
     form_url = f"{FORM_BASE_URL}?phone={bare_phone}" if bare_phone else FORM_BASE_URL
 
     if phone_norm:

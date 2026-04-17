@@ -783,7 +783,7 @@ async def get_bank_supervisor(credentials: HTTPAuthorizationCredentials = Depend
 # TYPE COERCION FOR DB COLUMNS
 # ============================================
 DATE_COLUMNS = {"date_of_birth"}
-BOOLEAN_COLUMNS = {"criminal_records", "same_as_current", "highest_step", "same_as_current", "pan_verified", "aadhaar_verified"}
+BOOLEAN_COLUMNS = {"criminal_records", "same_as_current", "pan_verified", "aadhaar_verified"}
 DECIMAL_COLUMNS = {
     "loan_amount_requested", "monthly_gross_income", "monthly_deductions",
     "monthly_emi_existing", "monthly_net_income",

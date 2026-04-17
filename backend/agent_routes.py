@@ -1714,7 +1714,9 @@ async def send_whatsapp_form(request: Request):
 
     # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
     app_id = None
-    form_url = FORM_BASE_URL  # Customer goes to main site, enters phone + OTP
+    # Append phone as query param so the OTP page auto-fills and auto-sends
+    bare_phone = phone_norm.lstrip('+').lstrip('91') if phone_norm else ''
+    form_url = f"{FORM_BASE_URL}?phone={bare_phone}" if bare_phone else FORM_BASE_URL
 
     if phone_norm:
         # Check if application already exists for this phone
@@ -1820,8 +1822,9 @@ async def send_whatsapp_form(request: Request):
     notification_message = (
         f"Dear {customer_name},\n\n"
         f"Thank you for your interest in a {loan_type} loan.\n"
-        f"Please visit {form_url} to complete your application.\n"
-        f"Enter your phone number and verify with OTP to get started."
+        f"Please click the link below to complete your application:\n"
+        f"{form_url}\n"
+        f"An OTP will be sent to your WhatsApp automatically."
     )
     logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 

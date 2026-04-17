@@ -67,6 +67,11 @@ VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VGIL")
 VG_BANK_NAME = os.getenv("VG_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
 VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "true" only when needed for testing without VG API access
 
+# ── Code List API (lrsAnalysisSummary dropdown codes) ──
+CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", "http://10.200.10.83:5020")
+_code_list_cache: dict[str, tuple[float, list]] = {}  # cache_key -> (expiry_timestamp, data)
+CODE_LIST_CACHE_TTL = 3600  # 1 hour
+
 # ── Auth Configuration ──
 ACCESS_TOKEN_MINUTES = int(os.getenv("LOS_ACCESS_TOKEN_MINUTES", "30"))
 REFRESH_TOKEN_HOURS = int(os.getenv("LOS_REFRESH_TOKEN_HOURS", "9"))
@@ -814,6 +819,11 @@ AUTOSAVE_COLUMNS = {
     "loan_amount_requested", "repayment_period_years", "purpose_of_loan", "scheme",
     "monthly_gross_income", "monthly_deductions", "monthly_emi_existing", "monthly_net_income",
     "criminal_records", "same_as_current", "highest_step",
+    # Split address fields (form step 2)
+    "current_house", "current_street", "current_landmark", "current_locality",
+    "current_pincode", "current_state_code", "current_city_code",
+    "permanent_house", "permanent_street", "permanent_landmark", "permanent_locality",
+    "permanent_pincode", "permanent_state_code", "permanent_city_code",
 }
 
 # ============================================
@@ -1952,18 +1962,28 @@ async def download_aadhaar(request: Request):
         pin = ""
         district = ""
         state = ""
+        addr_house = ""
+        addr_street = ""
+        addr_landmark = ""
+        addr_locality = ""
         address_full = ""
         if isinstance(addr, dict):
-            pin = addr.get("pin", addr.get("pc", ""))
-            district = addr.get("district", addr.get("dist", ""))
-            state = addr.get("state", "")
-            # Build full address string
-            parts = [addr.get("house", ""), addr.get("locality", addr.get("street", "")),
-                     addr.get("landmark", addr.get("lm", "")), addr.get("loc", ""),
-                     addr.get("vtc", ""), district, state, pin]
-            address_full = ", ".join([str(p).strip() for p in parts if p and str(p).strip()])
+            pin = str(addr.get("pin", addr.get("pc", ""))).strip()
+            district = str(addr.get("district", addr.get("dist", ""))).strip()
+            state = str(addr.get("state", "")).strip()
+            addr_house = str(addr.get("house", "")).strip()
+            addr_street = str(addr.get("street", "") or addr.get("locality", "")).strip()
+            addr_landmark = str(addr.get("landmark", "") or addr.get("lm", "")).strip()
+            addr_locality = str(addr.get("loc", "") or addr.get("vtc", "")).strip()
+            # Build full address string (backward compat)
+            parts = [addr_house, addr_street, addr_landmark, addr_locality, district, state, pin]
+            address_full = ", ".join([p for p in parts if p])
         elif isinstance(addr, str) and addr:
             address_full = addr
+
+        # Resolve state/city text to API codes
+        state_code = await resolve_state_code(state) if state else None
+        city_code = await resolve_city_code(district, state_code) if district and state_code else None
 
         # Photo (base64 JPEG)
         photo_data = issued_to.get("photo", {})
@@ -2017,12 +2037,32 @@ async def download_aadhaar(request: Request):
                    aadhaar_photo_b64 = $6, aadhaar_verification_timestamp = $7,
                    marital_status = COALESCE(NULLIF($9, ''), marital_status),
                    photo_url = COALESCE($10, photo_url),
-                   aadhaar_front_url = COALESCE($11, aadhaar_front_url)
+                   aadhaar_front_url = COALESCE($11, aadhaar_front_url),
+                   current_address = COALESCE(NULLIF($12, ''), current_address),
+                   current_house = COALESCE(NULLIF($13, ''), current_house),
+                   current_street = COALESCE(NULLIF($14, ''), current_street),
+                   current_landmark = COALESCE(NULLIF($15, ''), current_landmark),
+                   current_locality = COALESCE(NULLIF($16, ''), current_locality),
+                   current_pincode = COALESCE(NULLIF($17, ''), current_pincode),
+                   current_state_code = COALESCE(NULLIF($18, ''), current_state_code),
+                   current_city_code = COALESCE(NULLIF($19, ''), current_city_code)
                    WHERE id = $8""",
                 last4, name, dob, gender, address_full, photo_b64, now_utc(), application_id, marital_status,
                 photo_file_url, aadhaar_pdf_url,
+                address_full, addr_house, addr_street, addr_landmark, addr_locality, pin,
+                state_code or "", city_code or "",
             )
-            source_fields = {"date_of_birth": dob, "gender": gender, "current_address": address_full, "pincode": pin, "city": district, "state": state}
+            source_fields = {
+                "date_of_birth": dob, "gender": gender,
+                "current_address": address_full,
+            }
+            if addr_house: source_fields["current_house"] = addr_house
+            if addr_street: source_fields["current_street"] = addr_street
+            if addr_landmark: source_fields["current_landmark"] = addr_landmark
+            if addr_locality: source_fields["current_locality"] = addr_locality
+            if pin: source_fields["current_pincode"] = pin
+            if state_code or state: source_fields["current_state_code"] = state_code or state
+            if city_code or district: source_fields["current_city_code"] = city_code or district
             if marital_status:
                 source_fields["marital_status"] = marital_status
             if photo_file_url:
@@ -2033,7 +2073,10 @@ async def download_aadhaar(request: Request):
         return {"status": "success", "data": {
             "name": name, "dob": dob, "gender": gender, "marital_status": marital_status,
             "address": address_full, "last4": last4,
+            "house": addr_house, "street": addr_street,
+            "landmark": addr_landmark, "locality": addr_locality,
             "pin": pin, "district": district, "state": state,
+            "state_code": state_code, "city_code": city_code,
             "photo": bool(photo_b64),
             "photo_url": photo_file_url,
             "aadhaar_front_url": aadhaar_pdf_url,
@@ -2172,6 +2215,165 @@ async def send_campaign_bulk(request: Request):
         result = await send_whatsapp_aisensy(phone=r["phone"], customer_name=r["customer_name"], template_params=[r["customer_name"]])
         results.append({"phone": r["phone"], "customer_name": r["customer_name"], "loan_id": r["loan_id"], "status": "sent", "response": result})
     return {"status": "completed", "total_sent": len(results), "results": results}
+
+# ============================================
+# CODE LIST API (Dropdown Lookup Codes)
+# ============================================
+
+import time as _time
+
+# Hardcoded fallbacks when the code list API is unreachable (local dev without
+# VPN). Codes are illustrative — prod always hits the real upstream.
+_CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
+    5: [  # States (partial — common ones)
+        {"code_mst_id": "269", "code_desc": "Maharashtra"},
+        {"code_mst_id": "258", "code_desc": "Gujarat"},
+        {"code_mst_id": "264", "code_desc": "Karnataka"},
+        {"code_mst_id": "286", "code_desc": "Tamil Nadu"},
+        {"code_mst_id": "262", "code_desc": "Delhi"},
+        {"code_mst_id": "289", "code_desc": "Uttar Pradesh"},
+        {"code_mst_id": "280", "code_desc": "Rajasthan"},
+        {"code_mst_id": "268", "code_desc": "Madhya Pradesh"},
+        {"code_mst_id": "291", "code_desc": "West Bengal"},
+        {"code_mst_id": "285", "code_desc": "Telangana"},
+        {"code_mst_id": "255", "code_desc": "Andhra Pradesh"},
+        {"code_mst_id": "265", "code_desc": "Kerala"},
+        {"code_mst_id": "278", "code_desc": "Punjab"},
+        {"code_mst_id": "259", "code_desc": "Haryana"},
+        {"code_mst_id": "260", "code_desc": "Himachal Pradesh"},
+        {"code_mst_id": "263", "code_desc": "Goa"},
+    ],
+    7: [  # Qualification
+        {"code_mst_id": "438", "code_desc": "10th Pass"},
+        {"code_mst_id": "439", "code_desc": "12th Pass"},
+        {"code_mst_id": "440", "code_desc": "Graduation"},
+        {"code_mst_id": "441", "code_desc": "Post Graduation"},
+        {"code_mst_id": "442", "code_desc": "Diploma"},
+        {"code_mst_id": "443", "code_desc": "Doctorate"},
+        {"code_mst_id": "444", "code_desc": "Other"},
+    ],
+    8: [  # Occupation
+        {"code_mst_id": "131", "code_desc": "Service"},
+        {"code_mst_id": "132", "code_desc": "Business"},
+        {"code_mst_id": "133", "code_desc": "Self Employed Professional"},
+        {"code_mst_id": "134", "code_desc": "Farmer"},
+        {"code_mst_id": "135", "code_desc": "Retired"},
+        {"code_mst_id": "136", "code_desc": "Student"},
+        {"code_mst_id": "137", "code_desc": "Homemaker"},
+        {"code_mst_id": "138", "code_desc": "Other"},
+    ],
+    9: [  # Employment Type
+        {"code_mst_id": "260490", "code_desc": "Salaried — Private"},
+        {"code_mst_id": "260491", "code_desc": "Salaried — PSU"},
+        {"code_mst_id": "260492", "code_desc": "Salaried — Government"},
+        {"code_mst_id": "260493", "code_desc": "Self Employed"},
+        {"code_mst_id": "260494", "code_desc": "Contract"},
+        {"code_mst_id": "260495", "code_desc": "Unemployed"},
+    ],
+    10: [  # Industry Type
+        {"code_mst_id": "260470", "code_desc": "IT / Software"},
+        {"code_mst_id": "260471", "code_desc": "Banking & Financial Services"},
+        {"code_mst_id": "260472", "code_desc": "Manufacturing"},
+        {"code_mst_id": "260473", "code_desc": "Healthcare"},
+        {"code_mst_id": "260474", "code_desc": "Education"},
+        {"code_mst_id": "260475", "code_desc": "Retail"},
+        {"code_mst_id": "260476", "code_desc": "Government"},
+        {"code_mst_id": "260477", "code_desc": "Agriculture"},
+        {"code_mst_id": "260478", "code_desc": "Other"},
+    ],
+    11: [  # Residential Status
+        {"code_mst_id": "260510", "code_desc": "Owned (with mortgage)"},
+        {"code_mst_id": "260512", "code_desc": "Owned (no mortgage)"},
+        {"code_mst_id": "260513", "code_desc": "Rented"},
+        {"code_mst_id": "260514", "code_desc": "Company Provided"},
+        {"code_mst_id": "260515", "code_desc": "Parental / Family"},
+    ],
+    12: [  # Tenure Stability
+        {"code_mst_id": "260520", "code_desc": "Less than 1 year"},
+        {"code_mst_id": "260521", "code_desc": "1 to 3 years"},
+        {"code_mst_id": "260522", "code_desc": "3 to 5 years"},
+        {"code_mst_id": "260523", "code_desc": "5 to 10 years"},
+        {"code_mst_id": "260524", "code_desc": "More than 10 years"},
+    ],
+    13: [  # Purpose of Loan
+        {"code_mst_id": "1020", "code_desc": "Home Renovation"},
+        {"code_mst_id": "1021", "code_desc": "Computer / Electronics"},
+        {"code_mst_id": "1022", "code_desc": "Vehicle Purchase"},
+        {"code_mst_id": "1023", "code_desc": "Education"},
+        {"code_mst_id": "1024", "code_desc": "Medical"},
+        {"code_mst_id": "1025", "code_desc": "Wedding"},
+        {"code_mst_id": "1026", "code_desc": "Travel"},
+        {"code_mst_id": "1027", "code_desc": "Debt Consolidation"},
+        {"code_mst_id": "1028", "code_desc": "Business Expansion"},
+        {"code_mst_id": "1029", "code_desc": "Other"},
+    ],
+}
+
+
+async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
+    """Fetch code list from API with caching."""
+    cache_key = f"{sql_mst_id}:{param}"
+    cached = _code_list_cache.get(cache_key)
+    if cached and cached[0] > _time.time():
+        return cached[1]
+
+    try:
+        body: dict = {"sqlMstId": sql_mst_id}
+        if param:
+            body["param"] = param
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{CODE_LIST_API_URL}/api/getCodeList/", json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        result = data if isinstance(data, list) else data.get("data", data.get("result", []))
+        _code_list_cache[cache_key] = (_time.time() + CODE_LIST_CACHE_TTL, result)
+        return result
+    except Exception as e:
+        print(f"[CodeList] Failed to fetch sqlMstId={sql_mst_id}: {e}")
+        return _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+
+
+@app.get("/api/code-list/{sql_mst_id}")
+async def get_code_list(sql_mst_id: int, param: str = ""):
+    """Proxy for getCodeList API — returns dropdown options with code_mst_id + code_desc."""
+    data = await _fetch_code_list(sql_mst_id, param)
+    fallback = len(data) > 0 and data == _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+    return {"status": "success", "data": data, "fallback": fallback}
+
+
+async def resolve_state_code(state_text: str) -> str | None:
+    """Match DigiLocker state text (e.g. 'Maharashtra') to API code_mst_id."""
+    if not state_text:
+        return None
+    states = await _fetch_code_list(5)
+    st = state_text.strip().upper()
+    for s in states:
+        if s.get("code_desc", "").strip().upper() == st:
+            return str(s["code_mst_id"])
+    # Substring match fallback
+    for s in states:
+        desc = s.get("code_desc", "").strip().upper()
+        if st in desc or desc in st:
+            return str(s["code_mst_id"])
+    return None
+
+
+async def resolve_city_code(city_text: str, state_code: str) -> str | None:
+    """Match DigiLocker city/district text to API code_mst_id (filtered by state)."""
+    if not city_text or not state_code:
+        return None
+    cities = await _fetch_code_list(6, state_code)
+    ct = city_text.strip().upper()
+    for c in cities:
+        if c.get("code_desc", "").strip().upper() == ct:
+            return str(c["code_mst_id"])
+    # Substring match fallback
+    for c in cities:
+        desc = c.get("code_desc", "").strip().upper()
+        if ct in desc or desc in ct:
+            return str(c["code_mst_id"])
+    return None
+
 
 # ============================================
 # PHONE-BASED AUTHENTICATION (EXISTING)
@@ -2614,6 +2816,81 @@ async def seed_mock_data(admin: dict = Depends(get_current_admin)):
         "applications": created_apps,
         "note": "Use the username/password pairs above to log in as bank users. Passwords are shown once here."
     }
+
+# ============================================
+# API PAYLOAD BUILDER (lrsAnalysisSummary)
+# ============================================
+# TODO(lrs-integration): wire this into a background task fired on form submission
+# once the bank provides the public lrsAnalysisSummary endpoint URL. The response
+# should populate system_suggestion / system_score / system_suggestion_reason on
+# the loan_applications row. Not called from any route yet.
+
+def build_api_payload(app_data: dict) -> dict:
+    """Convert loan_applications row → lrsAnalysisSummary API payload (42 fields)."""
+    phone = (app_data.get("phone") or "").lstrip("+").lstrip("91")
+    # Concatenate address parts for API
+    cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
+                 app_data.get("current_landmark", ""), app_data.get("current_locality", "")]
+    current_addr = ", ".join([p for p in cur_parts if p and str(p).strip()])
+    is_same = app_data.get("same_as_current", False)
+    if is_same:
+        perm_addr = current_addr
+        per_state = app_data.get("current_state_code", "")
+        per_city = app_data.get("current_city_code", "")
+    else:
+        per_parts = [app_data.get("permanent_house", ""), app_data.get("permanent_street", ""),
+                     app_data.get("permanent_landmark", ""), app_data.get("permanent_locality", "")]
+        perm_addr = ", ".join([p for p in per_parts if p and str(p).strip()])
+        per_state = app_data.get("permanent_state_code", "")
+        per_city = app_data.get("permanent_city_code", "")
+    # Repayment period: years → months
+    years = app_data.get("repayment_period_years")
+    months = str(int(float(years) * 12)) if years else ""
+    return {
+        "panNo": app_data.get("pan_number", ""),
+        "firstName": app_data.get("first_name", ""),
+        "middleName": app_data.get("middle_name", ""),
+        "lastName": app_data.get("last_name", ""),
+        "dateOfBirth": app_data.get("date_of_birth", ""),
+        "phoneNo": phone,
+        "gender": app_data.get("gender", ""),
+        "maritalStatus": app_data.get("marital_status", ""),
+        "enqId": app_data.get("loan_id", ""),
+        "currentAddress1": current_addr or app_data.get("current_address", ""),
+        "pinCode": app_data.get("current_pincode", ""),
+        "curr_state": app_data.get("current_state_code", ""),
+        "curr_city": app_data.get("current_city_code", ""),
+        "curr_country": "1",
+        "permanentAddress1": perm_addr or app_data.get("permanent_address", ""),
+        "per_state": per_state,
+        "per_city": per_city,
+        "per_country": "1",
+        "qualification": app_data.get("qualification", ""),
+        "occupation": app_data.get("occupation", ""),
+        "industryType": app_data.get("industry_type", ""),
+        "employmentType": app_data.get("employment_type", ""),
+        "employerName": app_data.get("employer_name", ""),
+        "designation": app_data.get("designation", ""),
+        "totalWorkExp": str(app_data.get("total_work_experience", "")),
+        "totalWorkExpCurOrg": str(app_data.get("experience_current_org", "")),
+        "residentialStatus": app_data.get("residential_status", ""),
+        "tenureStatbility": app_data.get("tenure_stability", ""),
+        "employerAddress": app_data.get("employer_address", ""),
+        "requestedLoanAmt": str(app_data.get("loan_amount_requested", "")),
+        "loanRepaymentPeriod": months,
+        "purposeOfLoan": app_data.get("purpose_of_loan", ""),
+        "scheme": app_data.get("scheme", ""),
+        "monthlyGrossIncome": str(app_data.get("monthly_gross_income", "")),
+        "monthlyDeduction": str(app_data.get("monthly_deductions", "")),
+        "monthlyEMI": str(app_data.get("monthly_emi_existing", "")),
+        "monthlyNetIncome": str(app_data.get("monthly_net_income", "")),
+        "salarySlip": app_data.get("salary_slips_url", ""),
+        "itrDocument": app_data.get("itr_form16_url", ""),
+        "bankStatementDocument": app_data.get("bank_statements_url", ""),
+        "itrJsonData": {},
+        "bankStatementJsonData": {},
+    }
+
 
 # ============================================
 # ENTRY POINT

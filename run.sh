@@ -16,18 +16,42 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ── Docker Postgres ──────────────────────────────────────────
+# Apply every database/migration_*.sql in sorted order. Safe to re-run — all
+# migrations use IF NOT EXISTS / IF EXISTS, so existing containers pick up new
+# files automatically on next start.
+apply_migrations() {
+    local container="$1"
+    local count=0
+    for mig in "$PROJECT_DIR"/database/migration_*.sql; do
+        [[ -f "$mig" ]] || continue
+        local name
+        name=$(basename "$mig")
+        docker cp "$mig" "${container}:/tmp/${name}" >/dev/null 2>&1
+        # -q silences ALTER TABLE success lines; PGOPTIONS hides NOTICE ("already
+        # exists, skipping") spam. Real errors still surface on stderr.
+        local errs
+        errs=$(PGOPTIONS='--client-min-messages=warning' docker exec -e PGOPTIONS \
+            "$container" psql -q -U los_admin -d los_form -f "/tmp/${name}" 2>&1 1>/dev/null \
+            | grep -i 'error' || true)
+        if [[ -n "$errs" ]]; then
+            echo -e "${YELLOW}[db]${NC} ${name} had errors:"
+            echo "$errs" | sed 's/^/    /'
+        fi
+        count=$((count + 1))
+    done
+    [[ $count -gt 0 ]] && echo -e "${CYAN}[db]${NC} Applied ${count} migration(s)"
+}
+
 ensure_postgres() {
     local container="los-postgres-dev"
     local pg_port=5435
 
     if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
         echo -e "${CYAN}[db]${NC} Postgres already running on port ${pg_port}"
-        return 0
-    fi
-
-    if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
         echo -e "${CYAN}[db]${NC} Starting existing Postgres container..."
-        docker start "$container"
+        docker start "$container" >/dev/null
+        sleep 2
     else
         echo -e "${CYAN}[db]${NC} Creating Postgres container on port ${pg_port}..."
         docker run -d --name "$container" \
@@ -36,16 +60,14 @@ ensure_postgres() {
             -e POSTGRES_DB=${LOS_PG_DB:-los_form} \
             -p ${pg_port}:5432 \
             --restart unless-stopped \
-            postgres:16
+            postgres:16 >/dev/null
         sleep 3
-        echo -e "${CYAN}[db]${NC} Running schema migrations..."
-        docker cp "$PROJECT_DIR/database/schema.sql" "${container}:/tmp/schema.sql"
-        docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema.sql 2>/dev/null || true
-        if [[ -f "$PROJECT_DIR/database/migration_v2.sql" ]]; then
-            docker cp "$PROJECT_DIR/database/migration_v2.sql" "${container}:/tmp/migration_v2.sql"
-            docker exec "$container" psql -U los_admin -d los_form -f /tmp/migration_v2.sql 2>/dev/null || true
-        fi
+        echo -e "${CYAN}[db]${NC} Seeding base schema..."
+        docker cp "$PROJECT_DIR/database/schema.sql" "${container}:/tmp/schema.sql" >/dev/null 2>&1
+        docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema.sql >/dev/null 2>&1 || true
     fi
+
+    apply_migrations "$container"
     echo -e "${GREEN}[db]${NC} Postgres ready on port ${pg_port}"
 }
 

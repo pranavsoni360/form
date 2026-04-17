@@ -269,6 +269,16 @@ export async function submitForm(token: string) {
 }
 
 // ============================================
+// CODE LIST (API Dropdown Options)
+// ============================================
+
+export async function getCodeList(sqlMstId: number, param?: string): Promise<{status: string, data: {code_mst_id: string, code_desc: string}[], fallback: boolean}> {
+  const qs = param ? `?param=${encodeURIComponent(param)}` : '';
+  const res = await fetch(`${API_URL}/api/code-list/${sqlMstId}${qs}`);
+  return res.json();
+}
+
+// ============================================
 // UTILITIES
 // ============================================
 

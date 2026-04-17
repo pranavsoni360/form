@@ -392,11 +392,13 @@ security = HTTPBearer(auto_error=False)  # auto_error=False allows unauthenticat
 async def get_current_bank_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
-    """Decode JWT if provided, otherwise return operator-level access (no bank_id filter).
-    Bank officers get bank_id scoping; operators (no auth) see everything."""
+    """Decode JWT and return a scoped user dict. v3 roles: admin / bank_user / vendor_user.
+    Admins see everything (bank_id=None). Bank users get bank-wide scope. Vendor users see
+    only their vendor's rows (bank+vendor filter applied downstream)."""
     if not credentials:
-        # No auth — operator mode (sees all banks)
-        return {"user_id": "operator", "role": "operator", "bank_id": None, "user_type": "operator"}
+        # Backwards compatibility: unauthenticated access is still operator-level so the
+        # LiveKit voice agent (server-to-server) can post transcript updates.
+        return {"user_id": "operator", "role": "operator", "bank_id": None, "vendor_id": None}
 
     try:
         payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
@@ -405,30 +407,51 @@ async def get_current_bank_user(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    if payload.get("user_type") != "bank_user":
-        raise HTTPException(status_code=403, detail="Bank user access required")
-    if payload.get("role") not in ("bank_officer", "bank_supervisor"):
-        raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+    role = payload.get("role")
+    if role not in ("admin", "bank_user", "vendor_user"):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     return {
         "user_id": payload["user_id"],
-        "role": payload["role"],
-        "bank_id": payload.get("bank_id"),
-        "user_type": payload["user_type"],
+        "role": role,
+        "bank_id": payload.get("bank_id") if role != "admin" else None,
+        "vendor_id": payload.get("vendor_id") if role == "vendor_user" else None,
     }
 
+
 def _bank_uuid(user: dict):
-    """Get bank_id as UUID, or None for operators (no bank scoping)."""
+    """Bank scope UUID: admin/operator see all; bank/vendor users are bank-scoped."""
     bid = user.get("bank_id")
     return uuid.UUID(bid) if bid else None
 
+
+def _vendor_uuid(user: dict):
+    vid = user.get("vendor_id")
+    return uuid.UUID(vid) if vid else None
+
+
 def _bank_filter(bank_uuid, param_idx: int = 1, table_alias: str = "") -> tuple:
     """Build conditional bank_id SQL filter. Returns (condition_str, params_list, next_idx).
-    When bank_uuid is None (operator), returns TRUE (no filter)."""
+    When bank_uuid is None (admin/operator), returns TRUE (no filter)."""
     prefix = f"{table_alias}." if table_alias else ""
     if bank_uuid is None:
         return "TRUE", [], param_idx
     return f"{prefix}bank_id = ${param_idx}", [bank_uuid], param_idx + 1
+
+
+def _scope_filter(user: dict, param_idx: int = 1, table_alias: str = "") -> tuple:
+    """Return (condition, params, next_idx) enforcing bank AND vendor scope as required."""
+    prefix = f"{table_alias}." if table_alias else ""
+    conds: list[str] = []
+    params: list = []
+    idx = param_idx
+    bid = _bank_uuid(user)
+    vid = _vendor_uuid(user)
+    if bid is not None:
+        conds.append(f"{prefix}bank_id = ${idx}"); params.append(bid); idx += 1
+    if vid is not None:
+        conds.append(f"{prefix}vendor_id = ${idx}"); params.append(vid); idx += 1
+    return (" AND ".join(conds) if conds else "TRUE"), params, idx
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -1714,7 +1737,9 @@ async def send_whatsapp_form(request: Request):
 
     # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
     app_id = None
-    form_url = FORM_BASE_URL  # Customer goes to main site, enters phone + OTP
+    # Append phone as query param so the OTP page auto-fills and auto-sends
+    bare_phone = phone_norm.lstrip('+').lstrip('91') if phone_norm else ''
+    form_url = f"{FORM_BASE_URL}?phone={bare_phone}" if bare_phone else FORM_BASE_URL
 
     if phone_norm:
         # Check if application already exists for this phone
@@ -1820,8 +1845,9 @@ async def send_whatsapp_form(request: Request):
     notification_message = (
         f"Dear {customer_name},\n\n"
         f"Thank you for your interest in a {loan_type} loan.\n"
-        f"Please visit {form_url} to complete your application.\n"
-        f"Enter your phone number and verify with OTP to get started."
+        f"Please click the link below to complete your application:\n"
+        f"{form_url}\n"
+        f"An OTP will be sent to your WhatsApp automatically."
     )
     logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 

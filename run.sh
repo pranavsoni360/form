@@ -38,15 +38,27 @@ ensure_postgres() {
             --restart unless-stopped \
             postgres:16
         sleep 3
-        echo -e "${CYAN}[db]${NC} Running schema migrations..."
-        docker cp "$PROJECT_DIR/database/schema.sql" "${container}:/tmp/schema.sql"
-        docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema.sql 2>/dev/null || true
-        if [[ -f "$PROJECT_DIR/database/migration_v2.sql" ]]; then
-            docker cp "$PROJECT_DIR/database/migration_v2.sql" "${container}:/tmp/migration_v2.sql"
-            docker exec "$container" psql -U los_admin -d los_form -f /tmp/migration_v2.sql 2>/dev/null || true
-        fi
+        echo -e "${CYAN}[db]${NC} Applying schema_v3..."
+        docker cp "$PROJECT_DIR/database/schema_v3.sql" "${container}:/tmp/schema_v3.sql"
+        docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema_v3.sql
     fi
     echo -e "${GREEN}[db]${NC} Postgres ready on port ${pg_port}"
+}
+
+# Wipe all LOS tables and reapply schema_v3 (destructive)
+wipe_db() {
+    local container="los-postgres-dev"
+    if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+        echo -e "${RED}[db]${NC} Postgres container not running. Run './run.sh db' first."
+        exit 1
+    fi
+    echo -e "${YELLOW}[db]${NC} Dropping all LOS tables..."
+    docker cp "$PROJECT_DIR/database/drop_all.sql" "${container}:/tmp/drop_all.sql"
+    docker exec "$container" psql -U los_admin -d los_form -f /tmp/drop_all.sql
+    echo -e "${CYAN}[db]${NC} Applying schema_v3..."
+    docker cp "$PROJECT_DIR/database/schema_v3.sql" "${container}:/tmp/schema_v3.sql"
+    docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema_v3.sql
+    echo -e "${GREEN}[db]${NC} Database wiped and reinitialized with schema_v3."
 }
 
 # MongoDB removed — agent module uses Postgres
@@ -147,6 +159,10 @@ case "${1:-start}" in
         ensure_postgres
         echo -e "${GREEN}[db]${NC} Postgres is running."
         ;;
+    wipe)
+        ensure_postgres
+        wipe_db
+        ;;
     logs)
         tail -f "$LOGDIR"/*.log
         ;;
@@ -166,11 +182,12 @@ case "${1:-start}" in
         wait
         ;;
     *)
-        echo "Usage: ./run.sh [start|stop|build|db|logs]"
+        echo "Usage: ./run.sh [start|stop|build|db|wipe|logs]"
         echo "  start  - Start Docker + backend + frontend (auto-build if needed)"
         echo "  stop   - Kill all LOS processes"
         echo "  build  - Force rebuild frontend + restart everything"
         echo "  db     - Just ensure Postgres is running"
+        echo "  wipe   - DESTRUCTIVE: drop all tables & reapply schema_v3"
         echo "  logs   - Tail backend and frontend logs"
         exit 1
         ;;

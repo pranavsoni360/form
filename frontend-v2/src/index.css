@@ -1,0 +1,93 @@
+@import url('https://fonts.googleapis.com/css2?family=Sen:wght@400..800&display=swap');
+@import "tailwindcss";
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@theme {
+  --font-display: 'Sen', sans-serif;
+  --font-body: 'Sen', sans-serif;
+  --font-mono: 'Sen', sans-serif;
+
+  /* Semantic color tokens (light defaults) */
+  --color-page: #f4f4f5;
+  --color-elevated: #ffffff;
+  --color-sunken: #e4e4e7;
+  --color-surface: #ffffff;
+  --color-input: #ffffff;
+  --color-heading: #09090b;
+  --color-line: #d4d4d8;
+  --color-strong: #a1a1aa;
+  --color-subtle: #e4e4e7;
+  --color-faint: #f4f4f5;
+  --color-muted: #71717a;
+
+  /* Brand: teal-cyan (bank-appropriate) */
+  --color-brand: #0891B2;              /* teal-600 */
+  --color-brand-hover: #0E7490;        /* teal-700 */
+  --color-brand-dim: rgba(8, 145, 178, 0.10);
+  --color-brand-glow: rgba(6, 182, 212, 0.06);
+
+  /* Sidebar tokens */
+  --color-sidebar: #ffffff;
+  --color-sidebar-active: rgba(8, 145, 178, 0.08);
+  --color-sidebar-hover: rgba(0, 0, 0, 0.03);
+}
+
+:root {
+  --t-scrollbar-thumb: #c0c0c0;
+  --t-brand-glow: rgba(8, 145, 178, 0.08);
+  --t-brand-glow-strong: rgba(8, 145, 178, 0.18);
+}
+
+[data-theme="dark"], .dark {
+  --color-page: #09090b;
+  --color-elevated: #111113;
+  --color-sunken: #050505;
+  --color-surface: #18181b;
+  --color-input: #1c1c1f;
+  --color-heading: #ffffff;
+  --color-line: #27272a;
+  --color-strong: #3f3f46;
+  --color-subtle: #1a1a1e;
+  --color-faint: #111114;
+  --color-muted: #71717a;
+
+  --color-brand: #06B6D4;              /* cyan-500 — pops better in dark */
+  --color-brand-hover: #0891B2;
+  --color-brand-dim: rgba(6, 182, 212, 0.15);
+  --color-brand-glow: rgba(6, 182, 212, 0.08);
+
+  --color-sidebar: #0c0c0e;
+  --color-sidebar-active: rgba(6, 182, 212, 0.10);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.04);
+
+  --t-scrollbar-thumb: #333;
+  --t-brand-glow: rgba(6, 182, 212, 0.15);
+  --t-brand-glow-strong: rgba(6, 182, 212, 0.30);
+}
+
+@layer base {
+  html, body, #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    font-family: var(--font-body);
+    background: var(--color-page);
+    color: var(--color-heading);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+.scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--t-scrollbar-thumb) transparent; }
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: var(--t-scrollbar-thumb); border-radius: 2px; }
+
+.theme-transitioning,
+.theme-transitioning *,
+.theme-transitioning *::before,
+.theme-transitioning *::after {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease !important;
+}

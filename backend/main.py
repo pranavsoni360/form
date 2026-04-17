@@ -38,6 +38,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://172.20.10.4:3001",
         "https://virtualvaani.vgipl.com:3001",
         "https://virtualvaani.vgipl.com",
     ],
@@ -59,8 +60,24 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001")
 
+# ── Network switch ──
+# APP_NETWORK=internal (default) uses office-LAN IPs (fast path for deployed
+# server + devs on office WiFi). APP_NETWORK=public routes upstream API calls
+# through the public internet-reachable URLs (for devs on hotspot/home WiFi).
+# An explicit VG_API_BASE / CODE_LIST_API_URL env var always wins.
+APP_NETWORK = os.getenv("APP_NETWORK", "internal").lower()
+
+_VG_API_BASE_DEFAULT = (
+    "https://galaxypay.in:9005/VGDocverify/VGKVerify.asmx"
+    if APP_NETWORK == "public"
+    else "http://10.200.10.43/VGDocverify/VGKVerify.asmx"
+)
+# Code List API has no known public mirror yet — on public network the
+# hardcoded _CODE_LIST_FALLBACKS serves dropdowns.
+_CODE_LIST_API_URL_DEFAULT = "http://10.200.10.83:5020"
+
 # ── VG DocVerify API Configuration ──
-VG_API_BASE = os.getenv("VG_API_BASE", "http://10.200.10.43/VGDocverify/VGKVerify.asmx")
+VG_API_BASE = os.getenv("VG_API_BASE", _VG_API_BASE_DEFAULT)
 VG_USER_ID = os.getenv("VG_USER_ID", "33")
 VG_KEY = os.getenv("VG_KEY", "")
 VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VGIL")
@@ -68,7 +85,8 @@ VG_BANK_NAME = os.getenv("VG_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
 VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "true" only when needed for testing without VG API access
 
 # ── Code List API (lrsAnalysisSummary dropdown codes) ──
-CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", "http://10.200.10.83:5020")
+CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", _CODE_LIST_API_URL_DEFAULT)
+print(f"[config] APP_NETWORK={APP_NETWORK} VG_API_BASE={VG_API_BASE} CODE_LIST_API_URL={CODE_LIST_API_URL}")
 _code_list_cache: dict[str, tuple[float, list]] = {}  # cache_key -> (expiry_timestamp, data)
 CODE_LIST_CACHE_TTL = 3600  # 1 hour
 

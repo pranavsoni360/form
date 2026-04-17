@@ -1,13 +1,16 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { API_URL } from '@/lib/api';
 import { Building2, Lock, CheckCircle2, Loader2, Phone } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
-
 export default function Home() {
+  return <Suspense><OTPPage /></Suspense>;
+}
+
+function OTPPage() {
   const router = useRouter();
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
@@ -16,6 +19,25 @@ export default function Home() {
   const [error, setError] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [timer, setTimer] = useState(0);
+  const searchParams = useSearchParams();
+  const autoTriggered = useRef(false);
+
+  useEffect(() => {
+    const phoneParam = searchParams.get('phone');
+    if (phoneParam && /^\d{10}$/.test(phoneParam) && !autoTriggered.current) {
+      setPhone(phoneParam);
+      autoTriggered.current = true;
+    }
+  }, [searchParams]);
+
+  // Auto-send OTP once phone is set from URL param
+  useEffect(() => {
+    if (autoTriggered.current && phone.length === 10 && step === 'phone' && !sessionId) {
+      handleSendOTPRef.current();
+    }
+  }, [phone]);
+
+  const handleSendOTPRef = useRef<() => void>(() => {});
 
   const handleSendOTP = async () => {
     if (phone.length !== 10) { setError('Enter valid 10-digit mobile number'); return; }
@@ -40,6 +62,7 @@ export default function Home() {
     } catch { setError('Connection error. Please try again.'); }
     finally { setLoading(false); }
   };
+  handleSendOTPRef.current = handleSendOTP;
 
   const handleVerifyOTP = async () => {
     if (otp.length !== 6) { setError('Enter 6-digit OTP'); return; }
@@ -70,7 +93,9 @@ export default function Home() {
           <div className="mb-3 sm:mb-4"><Building2 className="w-12 h-12 sm:w-14 sm:h-14 text-blue-600 mx-auto" /></div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-2">Loan Application</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            {step === 'phone' ? 'Enter your registered mobile number to continue' : `Enter the OTP sent to your WhatsApp (+91 ${phone})`}
+            {loading && autoTriggered.current && step === 'phone'
+              ? 'Sending OTP to your WhatsApp...'
+              : step === 'phone' ? 'Enter your registered mobile number to continue' : `Enter the OTP sent to your WhatsApp (+91 ${phone})`}
           </p>
         </div>
 

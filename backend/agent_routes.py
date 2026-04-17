@@ -1714,7 +1714,12 @@ async def send_whatsapp_form(request: Request):
 
     # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
     app_id = None
-    form_url = FORM_BASE_URL  # Customer goes to main site, enters phone + OTP
+    # Append phone as query param so the OTP page auto-fills and auto-sends.
+    # Take the last 10 digits — handles +91/91 prefixes without the str.lstrip
+    # character-class footgun (lstrip("91") strips any leading 9s and 1s).
+    _digits = ''.join(c for c in (phone_norm or '') if c.isdigit())
+    bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
+    form_url = f"{FORM_BASE_URL}?phone={bare_phone}" if bare_phone else FORM_BASE_URL
 
     if phone_norm:
         # Check if application already exists for this phone
@@ -1820,8 +1825,9 @@ async def send_whatsapp_form(request: Request):
     notification_message = (
         f"Dear {customer_name},\n\n"
         f"Thank you for your interest in a {loan_type} loan.\n"
-        f"Please visit {form_url} to complete your application.\n"
-        f"Enter your phone number and verify with OTP to get started."
+        f"Please click the link below to complete your application:\n"
+        f"{form_url}\n"
+        f"An OTP will be sent to your WhatsApp automatically."
     )
     logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 
@@ -1832,12 +1838,15 @@ async def send_whatsapp_form(request: Request):
             wa_phone = f"91{wa_phone}"
 
         first_name = customer_name.strip().split()[0] if customer_name else "Customer"
+        # 3rd param = bare_phone so the AiSensy template can render a URL button
+        # like https://virtualvaani.vgipl.com/?phone={{3}} for auto-OTP flow.
+        # Harmless until the template is updated; AiSensy silently ignores extras.
         payload = {
             "apiKey": AISENSY_API_KEY,
             "campaignName": AISENSY_CAMPAIGN_NAME,
             "destination": wa_phone,
             "userName": AISENSY_USERNAME,
-            "templateParams": [first_name, first_name],
+            "templateParams": [first_name, first_name, bare_phone or ""],
             "source": "loan-voice-agent",
             "media": {"url": AISENSY_IMAGE_URL, "filename": "loan_form"},
             "buttons": [], "carouselCards": [], "location": {}, "attributes": {},

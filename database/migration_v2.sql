@@ -171,8 +171,7 @@ ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS highest_step INTEGER DEFA
 ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 ALTER TABLE loan_applications ALTER COLUMN marital_status TYPE VARCHAR(50);
 ALTER TABLE loan_applications ALTER COLUMN gender TYPE VARCHAR(20);
-ALTER TABLE loan_applications DROP CONSTRAINT IF EXISTS chk_step;
-ALTER TABLE loan_applications ADD CONSTRAINT chk_step CHECK (current_step BETWEEN 1 AND 5);
+-- chk_step constraint moved to migration_v3_address_split.sql (raised to 1..6).
 
 -- 15. Agent calling module tables (Postgres-based, no MongoDB)
 CREATE TABLE IF NOT EXISTS agent_calls (

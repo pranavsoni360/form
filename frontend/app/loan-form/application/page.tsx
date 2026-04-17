@@ -5,7 +5,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { API_URL } from '@/lib/api';
+import { API_URL, getCodeList } from '@/lib/api';
 const INACTIVITY_LIMIT = 4 * 60 * 1000; // 4 min warning, 5 min logout
 
 export default function LoanApplication() {
@@ -17,7 +17,11 @@ export default function LoanApplication() {
   const [currentStep, setCurrentStep] = useState(1);
   const [highestStep, setHighestStep] = useState(1);
   const [panVerifying, setPanVerifying] = useState(false);
+  const [panFocused, setPanFocused] = useState(false);
   const [aadhaarVerifying, setAadhaarVerifying] = useState(false);
+  const [codeLists, setCodeLists] = useState<Record<number, {code_mst_id: string, code_desc: string}[]>>({});
+  const [cityOptions, setCityOptions] = useState<{code_mst_id: string, code_desc: string}[]>([]);
+  const [permCityOptions, setPermCityOptions] = useState<{code_mst_id: string, code_desc: string}[]>([]);
 
   const handleVerifyPAN = async () => {
     const pan = formData.pan_number || '';
@@ -187,18 +191,25 @@ export default function LoanApplication() {
           if (d.dob) onChange('date_of_birth', d.dob);
           if (d.gender) onChange('gender', d.gender);
           if (d.address) onChange('current_address', d.address);
-          if (d.pin) onChange('pincode', d.pin);
-          if (d.district) onChange('city', d.district);
-          if (d.state) onChange('state', d.state);
+          if (d.house) onChange('current_house', d.house);
+          if (d.street) onChange('current_street', d.street);
+          if (d.landmark) onChange('current_landmark', d.landmark);
+          if (d.locality) onChange('current_locality', d.locality);
+          if (d.pin) onChange('current_pincode', d.pin);
+          if (d.state_code) { onChange('current_state_code', d.state_code); fetchCities(d.state_code, 'current'); }
+          if (d.city_code) onChange('current_city_code', d.city_code);
           if (d.marital_status) onChange('marital_status', d.marital_status);
           // Set field_sources for Aadhaar badges
           const aadhaarSources: Record<string, any> = {};
           if (d.dob) aadhaarSources.date_of_birth = { source: 'aadhaar', original: d.dob, modified: false };
           if (d.gender) aadhaarSources.gender = { source: 'aadhaar', original: d.gender, modified: false };
-          if (d.address) aadhaarSources.current_address = { source: 'aadhaar', original: d.address, modified: false };
-          if (d.pin) aadhaarSources.pincode = { source: 'aadhaar', original: d.pin, modified: false };
-          if (d.district) aadhaarSources.city = { source: 'aadhaar', original: d.district, modified: false };
-          if (d.state) aadhaarSources.state = { source: 'aadhaar', original: d.state, modified: false };
+          if (d.house) aadhaarSources.current_house = { source: 'aadhaar', original: d.house, modified: false };
+          if (d.street) aadhaarSources.current_street = { source: 'aadhaar', original: d.street, modified: false };
+          if (d.landmark) aadhaarSources.current_landmark = { source: 'aadhaar', original: d.landmark, modified: false };
+          if (d.locality) aadhaarSources.current_locality = { source: 'aadhaar', original: d.locality, modified: false };
+          if (d.pin) aadhaarSources.current_pincode = { source: 'aadhaar', original: d.pin, modified: false };
+          if (d.state_code || d.state) aadhaarSources.current_state_code = { source: 'aadhaar', original: d.state || d.state_code, modified: false };
+          if (d.city_code || d.district) aadhaarSources.current_city_code = { source: 'aadhaar', original: d.district || d.city_code, modified: false };
           if (d.marital_status) aadhaarSources.marital_status = { source: 'aadhaar', original: d.marital_status, modified: false };
           // Auto-insert passport photo and Aadhaar document from DigiLocker
           if (d.photo_url) {
@@ -228,6 +239,32 @@ export default function LoanApplication() {
     return () => clearTimeout(timer);
   }, [formData]);
 
+  // Fetch dropdown code lists on mount (state, qualification, occupation, etc.)
+  useEffect(() => {
+    [5, 7, 8, 9, 10, 11, 12, 13].forEach(id => {
+      getCodeList(id).then(res => {
+        if (res?.data) setCodeLists(prev => ({ ...prev, [id]: res.data }));
+      }).catch(() => {});
+    });
+  }, []);
+
+  const fetchCities = async (stateCode: string, type: 'current' | 'permanent') => {
+    try {
+      const res = await getCodeList(6, stateCode);
+      if (res?.data) {
+        if (type === 'current') setCityOptions(res.data);
+        else setPermCityOptions(res.data);
+      }
+    } catch {}
+  };
+
+  // Helper: resolve code_desc from code_mst_id for review display
+  const codeLabel = (sqlMstId: number, code: string) => {
+    if (!code) return '—';
+    const list = codeLists[sqlMstId] || [];
+    return list.find(o => o.code_mst_id === code)?.code_desc || code;
+  };
+
   const loadApplication = async () => {
     const session = getSession();
     if (!session) { router.push('/loan-form'); return; }
@@ -239,6 +276,9 @@ export default function LoanApplication() {
         setAppData(data.data);
         setFormData(data.data);
         const savedStep = data.data.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, data.data.highest_step || 1));
+        // Pre-load city options if state is already set (resuming saved form)
+        if (data.data.current_state_code) fetchCities(data.data.current_state_code, 'current');
+        if (data.data.permanent_state_code) fetchCities(data.data.permanent_state_code, 'permanent');
       }
     } catch { logout(); }
     finally { setLoading(false); }
@@ -249,10 +289,9 @@ export default function LoanApplication() {
     if (!session || !appData) return;
     setSaving(true);
     try {
+      const isSame = formData.same_as_current;
       const cleanData = {
         customer_name: formData.customer_name,
-        email: formData.email,
-        title: formData.title,
         first_name: formData.first_name,
         middle_name: formData.middle_name,
         last_name: formData.last_name,
@@ -260,9 +299,27 @@ export default function LoanApplication() {
         date_of_birth: formData.date_of_birth,
         gender: formData.gender,
         marital_status: formData.marital_status,
-        current_address: formData.current_address,
-        permanent_address: formData.same_as_current ? formData.current_address : formData.permanent_address,
+        // Build concatenated address for backward compat
+        current_address: [formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', '),
+        permanent_address: isSame
+          ? [formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', ')
+          : [formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', '),
         same_as_current: formData.same_as_current,
+        // Split address fields
+        current_house: formData.current_house,
+        current_street: formData.current_street,
+        current_landmark: formData.current_landmark,
+        current_locality: formData.current_locality,
+        current_pincode: formData.current_pincode,
+        current_state_code: formData.current_state_code,
+        current_city_code: formData.current_city_code,
+        permanent_house: isSame ? formData.current_house : formData.permanent_house,
+        permanent_street: isSame ? formData.current_street : formData.permanent_street,
+        permanent_landmark: isSame ? formData.current_landmark : formData.permanent_landmark,
+        permanent_locality: isSame ? formData.current_locality : formData.permanent_locality,
+        permanent_pincode: isSame ? formData.current_pincode : formData.permanent_pincode,
+        permanent_state_code: isSame ? formData.current_state_code : formData.permanent_state_code,
+        permanent_city_code: isSame ? formData.current_city_code : formData.permanent_city_code,
         pan_number: formData.pan_number,
         aadhaar_last4: formData.aadhaar_number ? String(formData.aadhaar_number).slice(-4) : undefined,
         aadhaar_number_encrypted: formData.aadhaar_number,
@@ -346,27 +403,40 @@ export default function LoanApplication() {
     return Object.keys(e).length === 0;
   };
 
-  const step1Valid = () => validate({ pan_number: 'Required', full_name: 'Required', date_of_birth: 'Required', gender: 'Required', current_address: 'Required' });
-  const step2Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
-  const step3Valid = () => validate({ loan_amount_requested: 'Required', purpose_of_loan: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+  const step1Valid = () => validate({ pan_number: 'Required', full_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+  const step2Valid = () => {
+    const base: any = { current_house: 'Required', current_street: 'Required', current_pincode: 'Required', current_state_code: 'Required', current_city_code: 'Required' };
+    if (!formData.same_as_current) {
+      base.permanent_house = 'Required'; base.permanent_street = 'Required';
+      base.permanent_pincode = 'Required'; base.permanent_state_code = 'Required'; base.permanent_city_code = 'Required';
+    }
+    const ok = validate(base);
+    if (ok && formData.current_pincode && !/^\d{6}$/.test(formData.current_pincode)) {
+      setErrors((p: any) => ({ ...p, current_pincode: 'Enter valid 6-digit pincode' })); return false;
+    }
+    if (ok && !formData.same_as_current && formData.permanent_pincode && !/^\d{6}$/.test(formData.permanent_pincode)) {
+      setErrors((p: any) => ({ ...p, permanent_pincode: 'Enter valid 6-digit pincode' })); return false;
+    }
+    return ok;
+  };
+  const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+  const step4Valid = () => validate({ loan_amount_requested: 'Required', purpose_of_loan: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
 
   const handleNext = () => {
-  let valid = false;
+    let valid = false;
+    if (currentStep === 1) valid = step1Valid();
+    else if (currentStep === 2) valid = step2Valid();
+    else if (currentStep === 3) valid = step3Valid();
+    else if (currentStep === 4) valid = step4Valid();
+    else valid = true;
 
-  if (currentStep === 1) valid = step1Valid();
-  else if (currentStep === 2) valid = step2Valid();
-  else if (currentStep === 3) valid = step3Valid();
-  else valid = true;
-
-  if (valid) {
-    autoSave();
-    setCurrentStep(prev => { const next = prev + 1; setHighestStep(h => Math.max(h, next)); return next; });
-    setErrors({});
-    window.scrollTo(0,0);
-    setErrors({});
-    window.scrollTo(0, 0);
-  }
-};
+    if (valid) {
+      autoSave();
+      setCurrentStep(prev => { const next = prev + 1; setHighestStep(h => Math.max(h, next)); return next; });
+      setErrors({});
+      window.scrollTo(0, 0);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!agreed) { alert('Please agree to the declaration'); return; }
@@ -407,7 +477,7 @@ export default function LoanApplication() {
     </div>
   );
 
-  const steps = ['KYC & Personal', 'Occupation', 'Loan & Financial', 'Documents', 'Review'];
+  const steps = ['KYC & Identity', 'Address', 'Occupation', 'Loan & Financial', 'Documents', 'Review'];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 py-6 px-4 transition-colors">
@@ -494,7 +564,23 @@ export default function LoanApplication() {
                 <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Identity Verification</p>
                 <F label="PAN Number" required error={errors.pan_number}>
                   <div className="flex gap-2">
-                    <input type="text" value={formData.pan_number || ''} onChange={e => onChange('pan_number', e.target.value.toUpperCase())} disabled={formData.pan_verified} className={`flex-1 ${formData.pan_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${inp(errors.pan_number)}`} placeholder="ABCDE1234F" maxLength={10} />
+                    <div className="flex-1 relative">
+                      <input type="text"
+                        value={panFocused ? (formData.pan_number || '') : (formData.pan_number ? formData.pan_number.replace(/./g, '\u2022') : '')}
+                        onChange={e => onChange('pan_number', e.target.value.toUpperCase())}
+                        onFocus={() => setPanFocused(true)}
+                        onBlur={() => setPanFocused(false)}
+                        disabled={formData.pan_verified}
+                        readOnly={!panFocused && !!formData.pan_number && !formData.pan_verified}
+                        className={`w-full ${formData.pan_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${!panFocused && formData.pan_number ? 'tracking-widest' : ''} ${inp(errors.pan_number)}`}
+                        placeholder="ABCDE1234F" maxLength={10} />
+                      {formData.pan_number && !formData.pan_verified && !panFocused && (
+                        <button type="button" onClick={() => { onChange('pan_number', ''); setPanFocused(true); }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 transition p-1" title="Clear & re-enter">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                     <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${formData.pan_verified ? 'bg-green-500 text-white cursor-default' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                       {panVerifying ? 'Verifying...' : formData.pan_verified ? 'Verified' : 'Verify'}
                     </button>
@@ -523,24 +609,14 @@ export default function LoanApplication() {
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1"><Lock className="w-3 h-3" />Only last 4 digits stored</p>
                 </F>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                <F label="Title">
-                  <select value={formData.title || ''} onChange={e => onChange('title', e.target.value)} className={inp('')}>
-                    <option value="">-</option>
-                    {['Mr','Mrs','Ms','Dr'].map(t => <option key={t}>{t}</option>)}
-                  </select>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                <F label="First Name" required error={errors.full_name} fieldName="first_name" fieldSources={formData.field_sources}>
+                  <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name)} placeholder="First name" />
                 </F>
-                <div className="col-span-3">
-                  <F label="First Name" required error={errors.full_name} fieldName="first_name" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${formData.title||''} ${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name)} placeholder="First name" />
-                  </F>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Middle Name" fieldName="middle_name" fieldSources={formData.field_sources}><input type="text" value={formData.middle_name || ''} onChange={e => onChange('middle_name', e.target.value)} className={inp('')} placeholder="Optional" /></F>
                 <F label="Last Name" required fieldName="last_name" fieldSources={formData.field_sources}><input type="text" value={formData.last_name || ''} onChange={e => onChange('last_name', e.target.value)} className={inp('')} placeholder="Last name" /></F>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <F label="Date of Birth" required error={errors.date_of_birth} fieldName="date_of_birth" fieldSources={formData.field_sources}>
                   <input type="date" value={formData.date_of_birth || ''} onChange={e => onChange('date_of_birth', e.target.value)} className={inp(errors.date_of_birth)} max={new Date().toISOString().split('T')[0]} />
                 </F>
@@ -550,44 +626,116 @@ export default function LoanApplication() {
                     {['Male','Female','Other'].map(g => <option key={g}>{g}</option>)}
                   </select>
                 </F>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Marital Status">
+                <F label="Marital Status" fieldName="marital_status" fieldSources={formData.field_sources}>
                   <select value={formData.marital_status || ''} onChange={e => onChange('marital_status', e.target.value)} className={inp('')}>
                     <option value="">Select</option>
                     {['Single','Married','Divorced','Widowed'].map(s => <option key={s}>{s}</option>)}
                   </select>
                 </F>
-                <F label="Email"><input type="email" value={formData.email || ''} onChange={e => onChange('email', e.target.value)} className={inp('')} placeholder="Optional" /></F>
               </div>
-              <F label="Current Address" required error={errors.current_address} fieldName="current_address" fieldSources={formData.field_sources}>
-                <textarea rows={3} value={formData.current_address || ''} onChange={e => onChange('current_address', e.target.value)} className={inp(errors.current_address)} placeholder="Full current address" />
-              </F>
-              <F label="Permanent Address">
-                <textarea rows={2} value={formData.same_as_current ? formData.current_address : (formData.permanent_address || '')} onChange={e => onChange('permanent_address', e.target.value)} disabled={formData.same_as_current} className={`${formData.same_as_current ? 'bg-gray-100 text-gray-500' : ''} ${inp('')}`} placeholder="If different from current address" />
-                <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                  <input type="checkbox" checked={formData.same_as_current || false} onChange={e => { onChange('same_as_current', e.target.checked); if(e.target.checked) onChange('permanent_address', formData.current_address); }} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
-                  <span className="text-sm text-gray-600 dark:text-gray-400">Same as current address</span>
-                </label>
-              </F>
               <Nav onNext={handleNext} />
             </div>
           )}
 
           {currentStep === 2 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Address Details</h2>
+              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+                <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Current Address</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <F label="House / Flat No" required error={errors.current_house} fieldName="current_house" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.current_house || ''} onChange={e => onChange('current_house', e.target.value)} className={inp(errors.current_house)} placeholder="e.g. 123, Flat B-2" />
+                  </F>
+                  <F label="Street / Road" required error={errors.current_street} fieldName="current_street" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.current_street || ''} onChange={e => onChange('current_street', e.target.value)} className={inp(errors.current_street)} placeholder="e.g. MG Road" />
+                  </F>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <F label="Landmark" fieldName="current_landmark" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp('')} placeholder="e.g. Near Railway Station" />
+                  </F>
+                  <F label="Locality / Area" fieldName="current_locality" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp('')} placeholder="e.g. Andheri West" />
+                  </F>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                  <F label="Pincode" required error={errors.current_pincode} fieldName="current_pincode" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.current_pincode || ''} onChange={e => onChange('current_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.current_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                  </F>
+                  <F label="State" required error={errors.current_state_code} fieldName="current_state_code" fieldSources={formData.field_sources}>
+                    <select value={formData.current_state_code || ''} onChange={e => { onChange('current_state_code', e.target.value); onChange('current_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'current'); else setCityOptions([]); }} className={inp(errors.current_state_code)}>
+                      <option value="">Select State</option>
+                      {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
+                    </select>
+                  </F>
+                  <F label="City / District" required error={errors.current_city_code} fieldName="current_city_code" fieldSources={formData.field_sources}>
+                    <select value={formData.current_city_code || ''} onChange={e => onChange('current_city_code', e.target.value)} disabled={!formData.current_state_code} className={inp(errors.current_city_code)}>
+                      <option value="">{formData.current_state_code ? 'Select City' : 'Select state first'}</option>
+                      {cityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
+                    </select>
+                  </F>
+                </div>
+              </div>
+              <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Permanent Address</p>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={formData.same_as_current || false} onChange={e => onChange('same_as_current', e.target.checked)} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
+                    <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Same as current</span>
+                  </label>
+                </div>
+                {formData.same_as_current ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 italic">Permanent address will be the same as current address.</p>
+                ) : (<>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <F label="House / Flat No" required error={errors.permanent_house}>
+                    <input type="text" value={formData.permanent_house || ''} onChange={e => onChange('permanent_house', e.target.value)} className={inp(errors.permanent_house)} placeholder="e.g. 456, Block C" />
+                  </F>
+                  <F label="Street / Road" required error={errors.permanent_street}>
+                    <input type="text" value={formData.permanent_street || ''} onChange={e => onChange('permanent_street', e.target.value)} className={inp(errors.permanent_street)} placeholder="e.g. Station Road" />
+                  </F>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <F label="Landmark"><input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp('')} placeholder="Optional" /></F>
+                  <F label="Locality / Area"><input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp('')} placeholder="Optional" /></F>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                  <F label="Pincode" required error={errors.permanent_pincode}>
+                    <input type="text" value={formData.permanent_pincode || ''} onChange={e => onChange('permanent_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.permanent_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                  </F>
+                  <F label="State" required error={errors.permanent_state_code}>
+                    <select value={formData.permanent_state_code || ''} onChange={e => { onChange('permanent_state_code', e.target.value); onChange('permanent_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'permanent'); else setPermCityOptions([]); }} className={inp(errors.permanent_state_code)}>
+                      <option value="">Select State</option>
+                      {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
+                    </select>
+                  </F>
+                  <F label="City / District" required error={errors.permanent_city_code}>
+                    <select value={formData.permanent_city_code || ''} onChange={e => onChange('permanent_city_code', e.target.value)} disabled={!formData.permanent_state_code} className={inp(errors.permanent_city_code)}>
+                      <option value="">{formData.permanent_state_code ? 'Select City' : 'Select state first'}</option>
+                      {permCityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
+                    </select>
+                  </F>
+                </div>
+                </>)}
+              </div>
+              <Nav onPrev={() => setCurrentStep(1)} onNext={handleNext} />
+            </div>
+          )}
+
+          {currentStep === 3 && (
+            <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Occupation Details</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Qualification" required error={errors.qualification}>
                   <select value={formData.qualification || ''} onChange={e => onChange('qualification', e.target.value)} className={inp(errors.qualification)}>
                     <option value="">Select</option>
-                    {['Below 10th','10th Pass','12th Pass','Diploma','Graduate','Post Graduate','PhD'].map(q => <option key={q}>{q}</option>)}
+                    {(codeLists[7] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
                 <F label="Occupation" required error={errors.occupation}>
                   <select value={formData.occupation || ''} onChange={e => onChange('occupation', e.target.value)} className={inp(errors.occupation)}>
                     <option value="">Select</option>
-                    {['Salaried','Self Employed Professional','Self Employed Business','Retired','Student','Housewife'].map(o => <option key={o}>{o}</option>)}
+                    {(codeLists[8] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
               </div>
@@ -595,13 +743,13 @@ export default function LoanApplication() {
                 <F label="Industry Type" required error={errors.industry_type} fieldName="industry_type" fieldSources={formData.field_sources}>
                   <select value={formData.industry_type || ''} onChange={e => onChange('industry_type', e.target.value)} className={inp(errors.industry_type)}>
                     <option value="">Select</option>
-                    {['IT/Software','Banking/Finance','Healthcare','Education','Manufacturing','Retail','Government','Real Estate','Transport','Other'].map(i => <option key={i}>{i}</option>)}
+                    {(codeLists[10] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
                 <F label="Employment Type" required error={errors.employment_type} fieldName="employment_type" fieldSources={formData.field_sources}>
                   <select value={formData.employment_type || ''} onChange={e => onChange('employment_type', e.target.value)} className={inp(errors.employment_type)}>
                     <option value="">Select</option>
-                    {['Permanent','Contractual','Part-time','Self-employed','Business Owner'].map(e => <option key={e}>{e}</option>)}
+                    {(codeLists[9] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
               </div>
@@ -617,24 +765,24 @@ export default function LoanApplication() {
                 <F label="Residential Status" required error={errors.residential_status}>
                   <select value={formData.residential_status || ''} onChange={e => onChange('residential_status', e.target.value)} className={inp(errors.residential_status)}>
                     <option value="">Select</option>
-                    {['Self Owned','Rented','Company Provided','Family Owned','PG/Hostel'].map(r => <option key={r}>{r}</option>)}
+                    {(codeLists[11] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
                 <F label="Tenure Stability" required error={errors.tenure_stability}>
                   <select value={formData.tenure_stability || ''} onChange={e => onChange('tenure_stability', e.target.value)} className={inp(errors.tenure_stability)}>
                     <option value="">Select</option>
-                    {['Less than 1 year','1-2 years','2-5 years','5-10 years','More than 10 years'].map(t => <option key={t}>{t}</option>)}
+                    {(codeLists[12] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
               </div>
               <F label="Employer Address" required error={errors.employer_address}>
                 <textarea rows={2} value={formData.employer_address || ''} onChange={e => onChange('employer_address', e.target.value)} className={inp(errors.employer_address)} placeholder="Full employer / business address" />
               </F>
-              <Nav onPrev={() => setCurrentStep(1)} onNext={handleNext} />
+              <Nav onPrev={() => setCurrentStep(2)} onNext={handleNext} />
             </div>
           )}
 
-          {currentStep === 3 && (
+          {currentStep === 4 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Loan & Financial Details</h2>
               <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
@@ -653,7 +801,7 @@ export default function LoanApplication() {
                 <F label="Purpose of Loan" required error={errors.purpose_of_loan} fieldName="purpose_of_loan" fieldSources={formData.field_sources}>
                   <select value={formData.purpose_of_loan || ''} onChange={e => onChange('purpose_of_loan', e.target.value)} className={inp(errors.purpose_of_loan)}>
                     <option value="">Select</option>
-                    {['Home Purchase','Home Renovation','Business Expansion','Education','Medical Emergency','Debt Consolidation','Vehicle Purchase','Wedding','Travel','Personal Use','Other'].map(p => <option key={p}>{p}</option>)}
+                    {(codeLists[13] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
                 <F label="Scheme"><input type="text" value={formData.scheme || ''} onChange={e => onChange('scheme', e.target.value)} className={inp('')} placeholder="Optional" /></F>
@@ -683,17 +831,16 @@ export default function LoanApplication() {
                   <span className="text-sm text-gray-700 dark:text-gray-300">I have pending criminal cases or criminal records</span>
                 </label>
               </div>
-              <Nav onPrev={() => setCurrentStep(2)} onNext={handleNext} />
+              <Nav onPrev={() => setCurrentStep(3)} onNext={handleNext} />
             </div>
           )}
 
-          {currentStep === 4 && (
+          {currentStep === 5 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Document Upload</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">Max 5MB each. PDF/JPG/PNG accepted.</p>
               <div className="space-y-3">
                 {[
-                  { key: 'pan_card_url', label: 'PAN Card', required: true },
                   { key: 'aadhaar_front_url', label: 'Aadhaar Document', required: true },
                   { key: 'photo_url', label: 'Passport Size Photo', required: true },
                   { key: 'salary_slips_url', label: 'Salary Slips (Last 3 months)', required: true },
@@ -747,34 +894,42 @@ export default function LoanApplication() {
                   );
                 })}
               </div>
-              <Nav onPrev={() => setCurrentStep(3)} onNext={handleNext} />
+              <Nav onPrev={() => setCurrentStep(4)} onNext={handleNext} />
             </div>
           )}
 
-          {currentStep === 5 && (
+          {currentStep === 6 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Review & Submit</h2>
               <RS title="Identity & KYC">
                 <RR label="PAN" value={formData.pan_number ? formData.pan_number.slice(0,2)+'***'+formData.pan_number.slice(-2) : ''} />
                 <RR label="Aadhaar" value={formData.aadhaar_number ? 'XXXX XXXX '+String(formData.aadhaar_number).slice(-4) : formData.aadhaar_last4 ? `XXXX XXXX ${formData.aadhaar_last4}` : ''} />
-              </RS>
-              <RS title="Personal Details">
-                <RR label="Name" value={[formData.title, formData.first_name, formData.middle_name, formData.last_name].filter(Boolean).join(' ') || formData.customer_name} />
+                <RR label="Name" value={[formData.first_name, formData.middle_name, formData.last_name].filter(Boolean).join(' ') || formData.customer_name} />
                 <RR label="DOB" value={formData.date_of_birth} />
                 <RR label="Gender" value={formData.gender} />
-                <RR label="Email" value={formData.email} />
-                <RR label="Address" value={formData.current_address} />
+                <RR label="Marital Status" value={formData.marital_status} />
+              </RS>
+              <RS title="Address">
+                <RR label="Current" value={[formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', ') || formData.current_address} />
+                <RR label="Pincode" value={formData.current_pincode} />
+                <RR label="State" value={codeLabel(5, formData.current_state_code)} />
+                <RR label="City" value={codeLabel(6, formData.current_city_code)} />
+                {formData.same_as_current ? (
+                  <RR label="Permanent" value="Same as current address" />
+                ) : (
+                  <RR label="Permanent" value={[formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ') || formData.permanent_address} />
+                )}
               </RS>
               <RS title="Occupation">
-                <RR label="Qualification" value={formData.qualification} />
-                <RR label="Employment" value={formData.employment_type} />
+                <RR label="Qualification" value={codeLabel(7, formData.qualification)} />
+                <RR label="Employment" value={codeLabel(9, formData.employment_type)} />
                 <RR label="Employer" value={formData.employer_name} />
                 <RR label="Designation" value={formData.designation} />
                 <RR label="Experience" value={formData.total_work_experience ? `${formData.total_work_experience} years` : ''} />
               </RS>
               <RS title="Loan & Financial">
                 <RR label="Amount" value={formData.loan_amount_requested ? `₹${parseFloat(formData.loan_amount_requested).toLocaleString('en-IN')}` : ''} />
-                <RR label="Purpose" value={formData.purpose_of_loan} />
+                <RR label="Purpose" value={codeLabel(13, formData.purpose_of_loan)} />
                 <RR label="Net Income" value={formData.monthly_net_income ? `₹${parseFloat(formData.monthly_net_income).toLocaleString('en-IN')}` : ''} />
               </RS>
               <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4">
@@ -787,7 +942,7 @@ export default function LoanApplication() {
                 <p className="text-xs text-yellow-800 dark:text-gray-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
               </div>
               <div className="flex gap-4">
-                <button onClick={() => { autoSave(); setCurrentStep(4); window.scrollTo(0,0); }} className="flex-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-4 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition">← Previous</button>
+                <button onClick={() => { autoSave(); setCurrentStep(5); window.scrollTo(0,0); }} className="flex-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-4 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition">← Previous</button>
                 <button onClick={handleSubmit} disabled={submitting || !agreed}
                   className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-4 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition disabled:opacity-50">
                   {submitting ? 'Submitting...' : 'Submit Application'}

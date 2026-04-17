@@ -6,7 +6,7 @@ PIDFILE="$PROJECT_DIR/.los-pids"
 LOGDIR="$PROJECT_DIR/logs"
 BACKEND_VENV="$PROJECT_DIR/backend/venv/bin"
 BACKEND_PORT=8200
-FRONTEND_PORT=3001
+FRONTEND_PORT=5180
 
 # ── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -61,8 +61,6 @@ wipe_db() {
     echo -e "${GREEN}[db]${NC} Database wiped and reinitialized with schema_v3."
 }
 
-# MongoDB removed — agent module uses Postgres
-
 # ── Kill stale processes ─────────────────────────────────────
 stop_all() {
     if [[ -f "$PIDFILE" ]]; then
@@ -71,7 +69,6 @@ stop_all() {
         done < "$PIDFILE"
         rm -f "$PIDFILE"
     fi
-    # Kill by port
     local backend_pid frontend_pid
     backend_pid=$(lsof -i :${BACKEND_PORT} -t 2>/dev/null || true)
     frontend_pid=$(lsof -i :${FRONTEND_PORT} -t 2>/dev/null || true)
@@ -86,34 +83,20 @@ ensure_backend_venv() {
         echo -e "${CYAN}[backend]${NC} Creating Python venv..."
         python3 -m venv "$PROJECT_DIR/backend/venv"
     fi
-    # Install deps if requirements changed
     local marker="$PROJECT_DIR/backend/venv/.deps-installed"
     if [[ ! -f "$marker" ]] || [[ "$PROJECT_DIR/backend/requirements.txt" -nt "$marker" ]]; then
         echo -e "${CYAN}[backend]${NC} Installing Python dependencies..."
-        "$BACKEND_VENV/pip" install -q fastapi uvicorn asyncpg bcrypt PyJWT python-dotenv pydantic email-validator httpx python-multipart aiofiles
+        "$BACKEND_VENV/pip" install -q fastapi uvicorn asyncpg bcrypt PyJWT python-dotenv pydantic email-validator httpx python-multipart aiofiles fpdf2
         touch "$marker"
     fi
 }
 
-# ── Frontend build ───────────────────────────────────────────
-needs_frontend_build() {
-    local next_dir="$PROJECT_DIR/frontend/.next"
-    [[ ! -d "$next_dir" ]] && return 0
-    # Check if source files are newer than build
-    local newest_src newest_build
-    newest_src=$(find "$PROJECT_DIR/frontend/app" "$PROJECT_DIR/frontend/components" "$PROJECT_DIR/frontend/lib" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
-    newest_build=$(stat -c '%Y' "$next_dir" 2>/dev/null || echo 0)
-    (( $(echo "${newest_src:-0} > $newest_build" | bc) )) && return 0
-    return 1
-}
-
-build_frontend() {
-    echo -e "${CYAN}[frontend]${NC} Installing npm dependencies..."
-    cd "$PROJECT_DIR/frontend" && npm install --silent 2>/dev/null
-    echo -e "${CYAN}[frontend]${NC} Building Next.js..."
-    npm run build
-    cd "$PROJECT_DIR"
-    echo -e "${GREEN}[frontend]${NC} Frontend build complete."
+# ── Frontend (Vite dev) ──────────────────────────────────────
+ensure_frontend_deps() {
+    if [[ ! -d "$PROJECT_DIR/frontend/node_modules" ]]; then
+        echo -e "${CYAN}[frontend]${NC} Installing npm dependencies (first run)..."
+        (cd "$PROJECT_DIR/frontend" && npm install --silent)
+    fi
 }
 
 # ── Start services ───────────────────────────────────────────
@@ -127,9 +110,9 @@ start_all() {
     echo -e "${GREEN}[start]${NC} Backend PID $! → logs/backend.log (port ${BACKEND_PORT})"
     cd "$PROJECT_DIR"
 
-    # Frontend
+    # Frontend — Vite dev server
     cd "$PROJECT_DIR/frontend"
-    PORT=${FRONTEND_PORT} npx next start -p ${FRONTEND_PORT} > "$LOGDIR/frontend.log" 2>&1 &
+    ./node_modules/.bin/vite --port ${FRONTEND_PORT} --host 0.0.0.0 > "$LOGDIR/frontend.log" 2>&1 &
     echo $! >> "$PIDFILE"
     echo -e "${GREEN}[start]${NC} Frontend PID $! → logs/frontend.log (port ${FRONTEND_PORT})"
     cd "$PROJECT_DIR"
@@ -144,17 +127,6 @@ case "${1:-start}" in
         stop_all
         echo -e "${YELLOW}[stop]${NC} All processes stopped."
         ;;
-    build)
-        stop_all
-        ensure_postgres
-        ensure_backend_venv
-        build_frontend
-        start_all
-        echo -e "${GREEN}[ready]${NC} LOS Form running. Ctrl+C to stop."
-        echo -e "${GREEN}[ready]${NC} Backend:  http://localhost:${BACKEND_PORT}"
-        echo -e "${GREEN}[ready]${NC} Frontend: http://localhost:${FRONTEND_PORT}"
-        wait
-        ;;
     db)
         ensure_postgres
         echo -e "${GREEN}[db]${NC} Postgres is running."
@@ -166,26 +138,29 @@ case "${1:-start}" in
     logs)
         tail -f "$LOGDIR"/*.log
         ;;
+    build)
+        # Production build of the frontend
+        ensure_frontend_deps
+        echo -e "${CYAN}[frontend]${NC} Building Vite bundle..."
+        (cd "$PROJECT_DIR/frontend" && npm run build)
+        echo -e "${GREEN}[frontend]${NC} Build complete → frontend/dist"
+        ;;
     start|"")
         stop_all
         ensure_postgres
         ensure_backend_venv
-        if needs_frontend_build; then
-            build_frontend
-        else
-            echo -e "${CYAN}[frontend]${NC} Build up to date, skipping."
-        fi
+        ensure_frontend_deps
         start_all
-        echo -e "${GREEN}[ready]${NC} LOS Form running. Ctrl+C to stop."
+        echo -e "${GREEN}[ready]${NC} LOS running. Ctrl+C to stop."
         echo -e "${GREEN}[ready]${NC} Backend:  http://localhost:${BACKEND_PORT}"
         echo -e "${GREEN}[ready]${NC} Frontend: http://localhost:${FRONTEND_PORT}"
         wait
         ;;
     *)
         echo "Usage: ./run.sh [start|stop|build|db|wipe|logs]"
-        echo "  start  - Start Docker + backend + frontend (auto-build if needed)"
-        echo "  stop   - Kill all LOS processes"
-        echo "  build  - Force rebuild frontend + restart everything"
+        echo "  start  - Start Postgres + backend + Vite dev frontend"
+        echo "  stop   - Kill backend & frontend processes"
+        echo "  build  - Production-build the Vite frontend"
         echo "  db     - Just ensure Postgres is running"
         echo "  wipe   - DESTRUCTIVE: drop all tables & reapply schema_v3"
         echo "  logs   - Tail backend and frontend logs"

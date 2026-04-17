@@ -623,6 +623,13 @@ class RejectRequest(BaseModel):
     notes: Optional[str] = None
     rejection_reason: Optional[str] = None
 
+class SingleCallRequest(BaseModel):
+    customer_name: str
+    phone: str
+    loan_type: Optional[str] = None
+    loan_amount: Optional[str] = None
+    language: str = "hindi"
+
 class GenerateFormLinksRequest(BaseModel):
     customers: List[CustomerData]
     bank_id: Optional[str] = None
@@ -1767,9 +1774,232 @@ async def portal_create_vendor_user(vendor_id: str, user_payload: UserCreate, us
     out["generated_password"] = password
     return {"user": out}
 
-# ============================================
+# ============================================================
+# CALLS — portal + admin + live transcript SSE
+# ============================================================
+
+import asyncio as _asyncio
+_call_subscribers: dict[str, list["_asyncio.Queue"]] = {}
+_ended_calls: set[str] = set()
+
+
+async def publish_to_call(call_id: str, payload: dict):
+    queues = _call_subscribers.get(call_id, [])
+    for q in list(queues):
+        try:
+            q.put_nowait(payload)
+        except Exception:
+            pass
+
+
+def _subscribe_call(call_id: str) -> "_asyncio.Queue":
+    q: _asyncio.Queue = _asyncio.Queue(maxsize=256)
+    _call_subscribers.setdefault(call_id, []).append(q)
+    return q
+
+
+def _unsubscribe_call(call_id: str, q: "_asyncio.Queue") -> None:
+    queues = _call_subscribers.get(call_id, [])
+    if q in queues:
+        queues.remove(q)
+    if not queues:
+        _call_subscribers.pop(call_id, None)
+
+
+def mark_call_ended(call_id: str):
+    _ended_calls.add(call_id)
+
+
+def _calls_scope_where(user: dict, table_alias: str = "c") -> tuple[str, list]:
+    prefix = f"{table_alias}." if table_alias else ""
+    role = user["role"]
+    if role == "admin":
+        return "TRUE", []
+    if role == "bank_user":
+        return f"{prefix}bank_id = $1", [uuid.UUID(user["bank_id"])]
+    if role == "vendor_user":
+        return f"{prefix}vendor_id = $1", [uuid.UUID(user["vendor_id"])]
+    raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/api/portal/calls")
+async def portal_list_calls(
+    status: Optional[str] = None,
+    user: dict = Depends(require_bank_or_vendor),
+):
+    where, params = _calls_scope_where(user, "c")
+    if status:
+        where += f" AND c.status = ${len(params)+1}"
+        params.append(status)
+    rows = await db_pool.fetch(
+        f"""SELECT c.*, b.name AS bank_name, b.code AS bank_code,
+                   v.name AS vendor_name, v.code AS vendor_code
+              FROM agent_calls c
+              LEFT JOIN banks b   ON b.id = c.bank_id
+              LEFT JOIN vendors v ON v.id = c.vendor_id
+             WHERE {where}
+             ORDER BY c.created_at DESC LIMIT 200""",
+        *params,
+    )
+    return {"calls": _rows_to_list(rows)}
+
+
+@app.get("/api/portal/calls/{call_id}")
+async def portal_get_call(call_id: str, user: dict = Depends(require_bank_or_vendor)):
+    where, params = _calls_scope_where(user, "c")
+    row = await db_pool.fetchrow(
+        f"""SELECT c.*, b.name AS bank_name, b.code AS bank_code,
+                   v.name AS vendor_name, v.code AS vendor_code
+              FROM agent_calls c
+              LEFT JOIN banks b   ON b.id = c.bank_id
+              LEFT JOIN vendors v ON v.id = c.vendor_id
+             WHERE c.id = ${len(params)+1} AND {where}""",
+        *params, uuid.UUID(call_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found or out of scope")
+    return {"call": _row_to_dict(row)}
+
+
+@app.post("/api/portal/calls/single")
+async def portal_initiate_single_call(
+    payload: SingleCallRequest,
+    user: dict = Depends(require_bank_or_vendor),
+):
+    """Create an agent_calls row in 'queued' status. Voice-agent dispatch happens
+    separately (the LiveKit worker picks queued rows up)."""
+    bank_id = uuid.UUID(user["bank_id"])
+    vendor_id = uuid.UUID(user["vendor_id"]) if user.get("vendor_id") else None
+    room_name = f"los_{secrets.token_hex(6)}_{int(datetime.now().timestamp())}"
+    row = await db_pool.fetchrow(
+        """INSERT INTO agent_calls
+            (bank_id, vendor_id, initiated_by, customer_name, phone,
+             loan_type, loan_amount, language, status, room_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', $9)
+           RETURNING *""",
+        bank_id, vendor_id, uuid.UUID(user["id"]),
+        payload.customer_name, payload.phone,
+        payload.loan_type or None, payload.loan_amount or None,
+        payload.language, room_name,
+    )
+    return {"call": _row_to_dict(row)}
+
+
+# ---------- Admin-scoped calls ----------
+
+@app.get("/api/admin/calls")
+async def admin_list_calls(
+    status: Optional[str] = None,
+    bank_id: Optional[str] = None,
+    vendor_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    conds, params = [], []
+    if status:     conds.append(f"c.status = ${len(params)+1}"); params.append(status)
+    if bank_id:    conds.append(f"c.bank_id = ${len(params)+1}"); params.append(uuid.UUID(bank_id))
+    if vendor_id:  conds.append(f"c.vendor_id = ${len(params)+1}"); params.append(uuid.UUID(vendor_id))
+    where = " AND ".join(conds) if conds else "TRUE"
+    rows = await db_pool.fetch(
+        f"""SELECT c.*, b.name AS bank_name, b.code AS bank_code,
+                   v.name AS vendor_name, v.code AS vendor_code
+              FROM agent_calls c
+              LEFT JOIN banks b   ON b.id = c.bank_id
+              LEFT JOIN vendors v ON v.id = c.vendor_id
+             WHERE {where}
+             ORDER BY c.created_at DESC LIMIT 500""",
+        *params,
+    )
+    return {"calls": _rows_to_list(rows)}
+
+
+@app.get("/api/admin/calls/{call_id}")
+async def admin_get_call(call_id: str, _: dict = Depends(require_admin)):
+    row = await db_pool.fetchrow(
+        """SELECT c.*, b.name AS bank_name, b.code AS bank_code,
+                  v.name AS vendor_name, v.code AS vendor_code
+             FROM agent_calls c
+             LEFT JOIN banks b   ON b.id = c.bank_id
+             LEFT JOIN vendors v ON v.id = c.vendor_id
+            WHERE c.id = $1""",
+        uuid.UUID(call_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+    return {"call": _row_to_dict(row)}
+
+
+# ---------- Live transcript SSE ----------
+
+def _sse(event: str, data) -> bytes:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode("utf-8")
+
+
+async def _call_access_for(user: dict, call_id: str) -> dict:
+    """Fetch a call and enforce scope. Admin sees all, bank sees own bank, vendor sees own vendor."""
+    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", uuid.UUID(call_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+    role = user["role"]
+    if role == "admin":
+        return dict(row)
+    if role == "bank_user" and str(row["bank_id"]) == user["bank_id"]:
+        return dict(row)
+    if role == "vendor_user" and row["vendor_id"] and str(row["vendor_id"]) == user["vendor_id"]:
+        return dict(row)
+    raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/api/live-transcript/{call_id}")
+async def live_transcript_stream(
+    call_id: str,
+    request: Request,
+    user: dict = Depends(require_any_authenticated),
+):
+    """SSE stream of live transcript entries for an active call.
+    Snapshots the current DB transcript, then streams each new entry published by /api/agent/transcript."""
+    call_row = await _call_access_for(user, call_id)
+
+    from fastapi.responses import StreamingResponse
+
+    async def event_stream():
+        # snapshot
+        snapshot = call_row.get("transcript") or []
+        if isinstance(snapshot, str):
+            try:
+                snapshot = json.loads(snapshot)
+            except Exception:
+                snapshot = []
+        yield _sse("snapshot", snapshot)
+
+        queue = _subscribe_call(call_id)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    evt = await _asyncio.wait_for(queue.get(), timeout=25)
+                    yield _sse("transcript", evt)
+                    if call_id in _ended_calls:
+                        yield _sse("done", {"call_id": call_id})
+                        break
+                except _asyncio.TimeoutError:
+                    yield b": keepalive\n\n"
+                    # Also hop back to DB to detect terminal status in case we missed the signal
+                    cur = await db_pool.fetchrow(
+                        "SELECT status, ended_at FROM agent_calls WHERE id = $1", uuid.UUID(call_id),
+                    )
+                    if cur and (cur["ended_at"] or str(cur["status"]).lower() in ("completed", "failed", "not_answered")):
+                        yield _sse("done", {"call_id": call_id})
+                        break
+        finally:
+            _unsubscribe_call(call_id, queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ============================================================
 # FORM TOKEN & APPLICATION ENDPOINTS (EXISTING)
-# ============================================
+# ============================================================
 
 @app.post("/api/generate-form-links")
 async def generate_form_links(request: Request):

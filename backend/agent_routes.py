@@ -1527,6 +1527,48 @@ async def submit_form(call_id: str, request: Request):
 # TRANSCRIPT WEBHOOK (called by voice agent, no bank auth needed)
 # ============================================================================
 
+class TranscriptChunkPayload(BaseModel):
+    call_id: Optional[str] = None
+    room: Optional[str] = None
+    role: str  # 'agent' | 'user'
+    text: str
+    language: Optional[str] = None
+    timestamp: Optional[str] = None
+    final: bool = True
+
+
+@router.post("/transcript-chunk")
+async def save_transcript_chunk(data: TranscriptChunkPayload):
+    """Incremental transcript update — publish to live SSE subscribers only.
+    The voice agent MAY call this per turn to drive true live transcripts.
+    DB is not updated here; the final /transcript call persists the full transcript."""
+    call_uuid = None
+    if data.call_id:
+        try:
+            call_uuid = uuid.UUID(data.call_id)
+        except ValueError:
+            pass
+    if not call_uuid and data.room:
+        row = await db_pool.fetchrow("SELECT id FROM agent_calls WHERE room_name = $1", data.room)
+        if row:
+            call_uuid = row["id"]
+    if not call_uuid:
+        return {"status": "error", "message": "call not identified"}
+
+    try:
+        from main import publish_to_call
+        await publish_to_call(str(call_uuid), {
+            "role": data.role,
+            "text": data.text,
+            "language": data.language,
+            "timestamp": data.timestamp,
+            "final": data.final,
+        })
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "ok"}
+
+
 @router.post("/transcript")
 async def save_transcript(data: TranscriptPayload):
     """Save transcript from the voice agent. This is a webhook -- no JWT auth."""
@@ -1627,6 +1669,16 @@ async def save_transcript(data: TranscriptPayload):
         category,
         actual_uuid,
     )
+
+    # Publish each transcript entry so SSE subscribers see the full conversation
+    # and mark the call as ended so live streams terminate cleanly.
+    try:
+        from main import publish_to_call, mark_call_ended  # lazy import to avoid cycle at module load
+        for entry in transcript:
+            await publish_to_call(str(actual_uuid), entry)
+        mark_call_ended(str(actual_uuid))
+    except Exception:
+        pass
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:

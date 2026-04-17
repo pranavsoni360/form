@@ -38,9 +38,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
-        "http://172.20.10.4:3001",
         "https://virtualvaani.vgipl.com:3001",
         "https://virtualvaani.vgipl.com",
+        # Extra origins via env var: comma-separated. Useful for dev on LAN/hotspot.
+        *[o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()],
     ],
     allow_credentials=True,
     allow_methods=["*"],

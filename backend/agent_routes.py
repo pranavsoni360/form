@@ -1838,12 +1838,15 @@ async def send_whatsapp_form(request: Request):
             wa_phone = f"91{wa_phone}"
 
         first_name = customer_name.strip().split()[0] if customer_name else "Customer"
+        # 3rd param = bare_phone so the AiSensy template can render a URL button
+        # like https://virtualvaani.vgipl.com/?phone={{3}} for auto-OTP flow.
+        # Harmless until the template is updated; AiSensy silently ignores extras.
         payload = {
             "apiKey": AISENSY_API_KEY,
             "campaignName": AISENSY_CAMPAIGN_NAME,
             "destination": wa_phone,
             "userName": AISENSY_USERNAME,
-            "templateParams": [first_name, first_name],
+            "templateParams": [first_name, first_name, bare_phone or ""],
             "source": "loan-voice-agent",
             "media": {"url": AISENSY_IMAGE_URL, "filename": "loan_form"},
             "buttons": [], "carouselCards": [], "location": {}, "attributes": {},

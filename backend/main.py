@@ -2431,6 +2431,18 @@ _CITY_LIST_FALLBACKS: dict[str, list[dict]] = {
 }
 
 
+# Human-friendly label overrides for codes whose bank-side descriptions are
+# code-speak. Keyed by code_mst_id (as string) → friendly text. Applied to
+# both live API responses and fallback data via _normalize_code_list.
+_CODE_LABEL_OVERRIDES: dict[str, str] = {
+    # Tenure Stability (sqlMstId=1, param=260520) — the API returns raw rule
+    # strings like "years_at_address > 3"; show readable equivalents.
+    "260521": "More than 3 years",
+    "260522": "1 to 3 years",
+    "260523": "Less than 1 year",
+}
+
+
 def _normalize_code_list(raw: list[dict]) -> list[dict]:
     """Normalize heterogeneous bank API responses to a uniform {code_mst_id, code_desc} shape.
 
@@ -2439,6 +2451,7 @@ def _normalize_code_list(raw: list[dict]) -> list[dict]:
       • Purpose of Loan → purpose_id  (int) + purpose_name (str)
       • Country         → code_mst_id (int) + code_description (str)
     All code_mst_id values are cast to str so front-end === comparisons work.
+    _CODE_LABEL_OVERRIDES rewrites code-speak descriptions to user-friendly text.
     """
     out = []
     for item in raw:
@@ -2453,7 +2466,9 @@ def _normalize_code_list(raw: list[dict]) -> list[dict]:
         if mst_id is None or desc is None:
             out.append(item)  # pass through if shape is unexpected
             continue
-        out.append({"code_mst_id": str(mst_id), "code_desc": str(desc)})
+        mst_id_str = str(mst_id)
+        friendly_desc = _CODE_LABEL_OVERRIDES.get(mst_id_str, str(desc))
+        out.append({"code_mst_id": mst_id_str, "code_desc": friendly_desc})
     return out
 
 
@@ -2499,9 +2514,12 @@ async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
         print(f"[CodeList] Failed to fetch sqlMstId={real_sql_mst_id} param={real_param}: {e}")
         if internal_id == 6:
             # Cities are state-scoped: look up by the state code_mst_id (real_param)
-            fallback = _CITY_LIST_FALLBACKS.get(real_param, [])
+            raw_fallback = _CITY_LIST_FALLBACKS.get(real_param, [])
         else:
-            fallback = _CODE_LIST_FALLBACKS.get(internal_id, [])
+            raw_fallback = _CODE_LIST_FALLBACKS.get(internal_id, [])
+        # Run fallback through the same normalization so _CODE_LABEL_OVERRIDES
+        # apply uniformly whether data came from the API or the in-repo fallback.
+        fallback = _normalize_code_list(raw_fallback)
         # Cache the fallback too, with a short TTL, so subsequent requests
         # don't re-eat the timeout. The TTL is short enough that the bank API
         # gets retried periodically in case it becomes reachable.
@@ -2514,10 +2532,14 @@ async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
 async def get_code_list(sql_mst_id: int, param: str = ""):
     """Proxy for getCodeList API — returns dropdown options with code_mst_id + code_desc."""
     data = await _fetch_code_list(sql_mst_id, param)
-    # sql_mst_id here is the internal shorthand ID; use it to look up the
-    # fallback so the comparison is fallback-dict vs. fallback-dict (both
-    # normalized), not raw-API-response vs. fallback-dict.
-    fallback = len(data) > 0 and data == _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+    # Determine whether the response came from a fallback. Both sides must be
+    # normalized since live API data and fallback data both pass through
+    # _normalize_code_list now.
+    if sql_mst_id == 6:
+        raw_fb = _CITY_LIST_FALLBACKS.get(param, [])
+    else:
+        raw_fb = _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+    fallback = len(data) > 0 and data == _normalize_code_list(raw_fb)
     return {"status": "success", "data": data, "fallback": fallback}
 
 

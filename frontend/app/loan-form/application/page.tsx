@@ -780,7 +780,7 @@ export default function LoanApplication() {
                 <F label="Tenure Stability" required error={errors.tenure_stability}>
                   <select value={formData.tenure_stability || ''} onChange={e => onChange('tenure_stability', e.target.value)} className={inp(errors.tenure_stability)}>
                     <option value="">Select</option>
-                    {(codeLists[12] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
+                    {[...(codeLists[12] || [])].reverse().map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
               </div>
@@ -819,18 +819,18 @@ export default function LoanApplication() {
                 <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Financial Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income} fieldName="monthly_gross_income" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.monthly_gross_income || ''} onChange={e => onChange('monthly_gross_income', e.target.value)} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
+                    <input type="number" value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
                   </F>
                   <F label="Monthly Deductions (₹)">
-                    <input type="number" value={formData.monthly_deductions || ''} onChange={e => onChange('monthly_deductions', e.target.value)} className={inp('')} placeholder="Tax, PF etc." />
+                    <input type="number" value={formData.monthly_deductions || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_deductions: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(v) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp('')} placeholder="Tax, PF etc." />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Existing Monthly EMIs (₹)" fieldName="monthly_emi_existing" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => onChange('monthly_emi_existing', e.target.value)} className={inp('')} placeholder="0 if none" />
+                    <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_emi_existing: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(v) || 0))) })); }} className={inp('')} placeholder="0 if none" />
                   </F>
                   <F label="Monthly Net Income (₹)" required error={errors.monthly_net_income}>
-                    <input type="number" value={formData.monthly_net_income || ''} onChange={e => onChange('monthly_net_income', e.target.value)} className={inp(errors.monthly_net_income)} placeholder="Take home salary" />
+                    <input type="number" value={formData.monthly_net_income || ''} readOnly className={`${inp(errors.monthly_net_income)} bg-gray-100 dark:bg-gray-800 cursor-not-allowed`} placeholder="Auto: Gross − Deductions − EMIs" title="Auto-calculated from Gross − Deductions − Existing EMIs" />
                   </F>
                 </div>
               </div>

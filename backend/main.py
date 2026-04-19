@@ -89,7 +89,8 @@ VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "t
 CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", _CODE_LIST_API_URL_DEFAULT)
 print(f"[config] APP_NETWORK={APP_NETWORK} VG_API_BASE={VG_API_BASE} CODE_LIST_API_URL={CODE_LIST_API_URL}")
 _code_list_cache: dict[str, tuple[float, list]] = {}  # cache_key -> (expiry_timestamp, data)
-CODE_LIST_CACHE_TTL = 3600  # 1 hour
+CODE_LIST_CACHE_TTL = 3600  # 1 hour — successful bank API responses
+CODE_LIST_FALLBACK_TTL = 120  # 2 min — cache fallback so we don't re-eat the timeout every request
 
 # ── Auth Configuration ──
 ACCESS_TOKEN_MINUTES = int(os.getenv("LOS_ACCESS_TOKEN_MINUTES", "30"))
@@ -2483,7 +2484,10 @@ async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
         body: dict = {"sqlMstId": str(real_sql_mst_id)}
         if real_param:
             body["param"] = real_param
-        async with httpx.AsyncClient(timeout=10) as client:
+        # Short timeout: the office LAN API responds in <500ms; anything slower
+        # means we're off-LAN and should fall back immediately rather than make
+        # the dropdown spin for 10s.
+        async with httpx.AsyncClient(timeout=2.5) as client:
             resp = await client.post(f"{CODE_LIST_API_URL}/api/getCodeList/", json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -2495,8 +2499,15 @@ async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
         print(f"[CodeList] Failed to fetch sqlMstId={real_sql_mst_id} param={real_param}: {e}")
         if internal_id == 6:
             # Cities are state-scoped: look up by the state code_mst_id (real_param)
-            return _CITY_LIST_FALLBACKS.get(real_param, [])
-        return _CODE_LIST_FALLBACKS.get(internal_id, [])
+            fallback = _CITY_LIST_FALLBACKS.get(real_param, [])
+        else:
+            fallback = _CODE_LIST_FALLBACKS.get(internal_id, [])
+        # Cache the fallback too, with a short TTL, so subsequent requests
+        # don't re-eat the timeout. The TTL is short enough that the bank API
+        # gets retried periodically in case it becomes reachable.
+        if fallback:
+            _code_list_cache[cache_key] = (_time.time() + CODE_LIST_FALLBACK_TTL, fallback)
+        return fallback
 
 
 @app.get("/api/code-list/{sql_mst_id}")

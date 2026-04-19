@@ -2303,8 +2303,7 @@ _CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
         {"code_mst_id": "280", "code_desc": "Uttar Pradesh"},
         {"code_mst_id": "281", "code_desc": "West Bengal"},
     ],
-    # 6 (Cities) intentionally omitted — depends on selected state; an empty
-    # list is returned on fallback so the dropdown is blank rather than stale.
+    # 6 (Cities) — see _CITY_LIST_FALLBACKS below (keyed by state code_mst_id).
     7: [  # Qualification — sqlMstId=1, param="28"
         {"code_mst_id": "438",    "code_desc": "Ssc"},
         {"code_mst_id": "439",    "code_desc": "Hsc"},
@@ -2391,6 +2390,45 @@ _CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
     ],
 }
 
+# City fallbacks keyed by state code_mst_id string (the param the front-end
+# passes when calling internal ID 6).  Only states whose district list appears
+# in docs/API Details.docx are populated; others return [] so the dropdown
+# stays blank rather than showing stale data.
+_CITY_LIST_FALLBACKS: dict[str, list[dict]] = {
+    "269": [  # Maharashtra — sqlMstId=22, param="269"
+        {"code_mst_id": "549", "code_desc": "Aurangabad"},
+        {"code_mst_id": "550", "code_desc": "Mumbai Suburban"},
+        {"code_mst_id": "551", "code_desc": "Nagpur"},
+        {"code_mst_id": "552", "code_desc": "Pune"},
+        {"code_mst_id": "553", "code_desc": "Akola"},
+        {"code_mst_id": "554", "code_desc": "Chandrapur"},
+        {"code_mst_id": "555", "code_desc": "Jalgaon"},
+        {"code_mst_id": "556", "code_desc": "Parbhani"},
+        {"code_mst_id": "558", "code_desc": "Thane"},
+        {"code_mst_id": "559", "code_desc": "Latur"},
+        {"code_mst_id": "560", "code_desc": "Mumbai-City"},
+        {"code_mst_id": "561", "code_desc": "Buldana"},
+        {"code_mst_id": "562", "code_desc": "Dhule"},
+        {"code_mst_id": "563", "code_desc": "Kolhpur"},
+        {"code_mst_id": "564", "code_desc": "Nanded"},
+        {"code_mst_id": "566", "code_desc": "Amravati"},
+        {"code_mst_id": "567", "code_desc": "Nashik"},
+        {"code_mst_id": "568", "code_desc": "Wardha"},
+        {"code_mst_id": "569", "code_desc": "Ahmednagar"},
+        {"code_mst_id": "570", "code_desc": "Beed"},
+        {"code_mst_id": "571", "code_desc": "Bhandara"},
+        {"code_mst_id": "572", "code_desc": "Gadchiroli"},
+        {"code_mst_id": "573", "code_desc": "Jalna"},
+        {"code_mst_id": "574", "code_desc": "Osmanabad"},
+        {"code_mst_id": "579", "code_desc": "Yavatmal"},
+        {"code_mst_id": "580", "code_desc": "Nandurbar"},
+        {"code_mst_id": "581", "code_desc": "Washim"},
+        {"code_mst_id": "582", "code_desc": "Gondia"},
+        {"code_mst_id": "583", "code_desc": "Hingoli"},
+        {"code_mst_id": "901", "code_desc": "Palghar"},
+    ],
+}
+
 
 def _normalize_code_list(raw: list[dict]) -> list[dict]:
     """Normalize heterogeneous bank API responses to a uniform {code_mst_id, code_desc} shape.
@@ -2455,6 +2493,9 @@ async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
         return result
     except Exception as e:
         print(f"[CodeList] Failed to fetch sqlMstId={real_sql_mst_id} param={real_param}: {e}")
+        if internal_id == 6:
+            # Cities are state-scoped: look up by the state code_mst_id (real_param)
+            return _CITY_LIST_FALLBACKS.get(real_param, [])
         return _CODE_LIST_FALLBACKS.get(internal_id, [])
 
 

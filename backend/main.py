@@ -2241,121 +2241,230 @@ async def send_campaign_bulk(request: Request):
 
 import time as _time
 
-# Hardcoded fallbacks when the code list API is unreachable (local dev without
-# VPN). Codes are illustrative — prod always hits the real upstream.
+# ── Translation: internal shorthand IDs (used by the front-end) → real bank API
+# (sqlMstId, fixed_param).  For Cities (internal 6) the caller supplies the
+# state code as param; the map supplies an empty default so the caller's value
+# is used as-is.
+_CODE_LIST_ID_MAP: dict[int, tuple[int, str]] = {
+    5:  (22,   "1"),         # States      — sqlMstId=22, param="1"
+    6:  (22,   ""),          # Cities      — sqlMstId=22, param=<state_code_mst_id>
+    7:  (1,    "28"),        # Qualification
+    8:  (1,    "6"),         # Occupation
+    9:  (1,    "260475"),    # Employment Type
+    10: (1,    "260467"),    # Industry Type
+    11: (1,    "260511"),    # Residential Status
+    12: (1,    "260520"),    # Tenure Stability
+    13: (1050, "102"),       # Purpose of Loan
+    # Additional lists present in API spec (not yet wired to front-end)
+    14: (1,    "2"),         # Religion
+    15: (1,    "8"),         # Category
+    16: (3313, "''0''~C"),   # Country
+}
+
+# Fallbacks used when the bank API is unreachable (local dev without VPN).
+# Keyed by the INTERNAL shorthand ID (same key the front-end passes in).
+# All code_mst_id values are strings to match front-end === comparisons.
+# Source of truth: docs/API Details.docx
 _CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
-    5: [  # States (partial — common ones)
-        {"code_mst_id": "269", "code_desc": "Maharashtra"},
-        {"code_mst_id": "258", "code_desc": "Gujarat"},
-        {"code_mst_id": "264", "code_desc": "Karnataka"},
-        {"code_mst_id": "286", "code_desc": "Tamil Nadu"},
-        {"code_mst_id": "262", "code_desc": "Delhi"},
-        {"code_mst_id": "289", "code_desc": "Uttar Pradesh"},
-        {"code_mst_id": "280", "code_desc": "Rajasthan"},
+    5: [  # States — full list from API spec (sqlMstId=22, param="1")
+        {"code_mst_id": "289", "code_desc": "Andaman And Nicobar"},
+        {"code_mst_id": "258", "code_desc": "Andhra Pradesh"},
+        {"code_mst_id": "260", "code_desc": "Arunachal Pradesh"},
+        {"code_mst_id": "915", "code_desc": "Assam"},
+        {"code_mst_id": "262", "code_desc": "Bihar"},
+        {"code_mst_id": "288", "code_desc": "Chandigarh"},
+        {"code_mst_id": "292", "code_desc": "Chattisgarh"},
+        {"code_mst_id": "287", "code_desc": "Dadra And Nagar"},
+        {"code_mst_id": "286", "code_desc": "Daman And Diu"},
+        {"code_mst_id": "282", "code_desc": "Delhi"},
+        {"code_mst_id": "283", "code_desc": "Goa"},
+        {"code_mst_id": "261", "code_desc": "Gujrat"},
+        {"code_mst_id": "263", "code_desc": "Haryana"},
+        {"code_mst_id": "264", "code_desc": "Himachal Pradesh"},
+        {"code_mst_id": "265", "code_desc": "Jammu And Kashmir"},
+        {"code_mst_id": "291", "code_desc": "Jharkhand"},
+        {"code_mst_id": "266", "code_desc": "Karnataka"},
+        {"code_mst_id": "267", "code_desc": "Kerala"},
+        {"code_mst_id": "285", "code_desc": "Lakshdweep"},
         {"code_mst_id": "268", "code_desc": "Madhya Pradesh"},
-        {"code_mst_id": "291", "code_desc": "West Bengal"},
-        {"code_mst_id": "285", "code_desc": "Telangana"},
-        {"code_mst_id": "255", "code_desc": "Andhra Pradesh"},
-        {"code_mst_id": "265", "code_desc": "Kerala"},
-        {"code_mst_id": "278", "code_desc": "Punjab"},
-        {"code_mst_id": "259", "code_desc": "Haryana"},
-        {"code_mst_id": "260", "code_desc": "Himachal Pradesh"},
-        {"code_mst_id": "263", "code_desc": "Goa"},
+        {"code_mst_id": "269", "code_desc": "Maharashtra"},
+        {"code_mst_id": "270", "code_desc": "Manipur"},
+        {"code_mst_id": "271", "code_desc": "Meghalaya"},
+        {"code_mst_id": "272", "code_desc": "Mizoram"},
+        {"code_mst_id": "273", "code_desc": "Nagaland"},
+        {"code_mst_id": "274", "code_desc": "Orissa"},
+        {"code_mst_id": "284", "code_desc": "Pondichery"},
+        {"code_mst_id": "275", "code_desc": "Punjab"},
+        {"code_mst_id": "276", "code_desc": "Rajasthan"},
+        {"code_mst_id": "277", "code_desc": "Sikkim"},
+        {"code_mst_id": "278", "code_desc": "Tamil Nadu"},
+        {"code_mst_id": "279", "code_desc": "Tripura"},
+        {"code_mst_id": "290", "code_desc": "Uttaranchal"},
+        {"code_mst_id": "280", "code_desc": "Uttar Pradesh"},
+        {"code_mst_id": "281", "code_desc": "West Bengal"},
     ],
-    7: [  # Qualification
-        {"code_mst_id": "438", "code_desc": "10th Pass"},
-        {"code_mst_id": "439", "code_desc": "12th Pass"},
-        {"code_mst_id": "440", "code_desc": "Graduation"},
-        {"code_mst_id": "441", "code_desc": "Post Graduation"},
-        {"code_mst_id": "442", "code_desc": "Diploma"},
-        {"code_mst_id": "443", "code_desc": "Doctorate"},
-        {"code_mst_id": "444", "code_desc": "Other"},
+    # 6 (Cities) intentionally omitted — depends on selected state; an empty
+    # list is returned on fallback so the dropdown is blank rather than stale.
+    7: [  # Qualification — sqlMstId=1, param="28"
+        {"code_mst_id": "438",    "code_desc": "Ssc"},
+        {"code_mst_id": "439",    "code_desc": "Hsc"},
+        {"code_mst_id": "440",    "code_desc": "Graduation"},
+        {"code_mst_id": "441",    "code_desc": "Postgraduate, Professional Degrees (MBA, CA, MD, PhD, Engineering)"},
+        {"code_mst_id": "260532", "code_desc": "Diploma"},
     ],
-    8: [  # Occupation
-        {"code_mst_id": "131", "code_desc": "Service"},
-        {"code_mst_id": "132", "code_desc": "Business"},
-        {"code_mst_id": "133", "code_desc": "Self Employed Professional"},
-        {"code_mst_id": "134", "code_desc": "Farmer"},
-        {"code_mst_id": "135", "code_desc": "Retired"},
-        {"code_mst_id": "136", "code_desc": "Student"},
-        {"code_mst_id": "137", "code_desc": "Homemaker"},
-        {"code_mst_id": "138", "code_desc": "Other"},
+    8: [  # Occupation — sqlMstId=1, param="6"
+        {"code_mst_id": "131",    "code_desc": "Service"},
+        {"code_mst_id": "132",    "code_desc": "Business"},
+        {"code_mst_id": "133",    "code_desc": "House Wife"},
+        {"code_mst_id": "134",    "code_desc": "Professional"},
+        {"code_mst_id": "135",    "code_desc": "Retired"},
+        {"code_mst_id": "136",    "code_desc": "Student"},
+        {"code_mst_id": "137",    "code_desc": "Other"},
+        {"code_mst_id": "938",    "code_desc": "Penshioner"},
+        {"code_mst_id": "939",    "code_desc": "Ex-service man"},
+        {"code_mst_id": "940",    "code_desc": "Unemployed"},
+        {"code_mst_id": "941",    "code_desc": "Cultivator"},
+        {"code_mst_id": "1071",   "code_desc": "Self Employed"},
+        {"code_mst_id": "1072",   "code_desc": "Defence Personal"},
+        {"code_mst_id": "260135", "code_desc": "Self Employed Professional"},
+        {"code_mst_id": "260134", "code_desc": "Salaried"},
     ],
-    9: [  # Employment Type
-        {"code_mst_id": "260490", "code_desc": "Salaried — Private"},
-        {"code_mst_id": "260491", "code_desc": "Salaried — PSU"},
-        {"code_mst_id": "260492", "code_desc": "Salaried — Government"},
-        {"code_mst_id": "260493", "code_desc": "Self Employed"},
-        {"code_mst_id": "260494", "code_desc": "Contract"},
-        {"code_mst_id": "260495", "code_desc": "Unemployed"},
+    9: [  # Employment Type — sqlMstId=1, param="260475"
+        {"code_mst_id": "260492", "code_desc": "Salaried (Govt/PSU)"},
+        {"code_mst_id": "260493", "code_desc": "Salaried (Private MNC)"},
+        {"code_mst_id": "260494", "code_desc": "Salaried (Private Small Firm)"},
+        {"code_mst_id": "260495", "code_desc": "Self-Employed (Stable Income)"},
+        {"code_mst_id": "260496", "code_desc": "Self-Employed (Irregular Income)"},
+        {"code_mst_id": "260497", "code_desc": "Freelancer"},
     ],
-    10: [  # Industry Type
-        {"code_mst_id": "260470", "code_desc": "IT / Software"},
-        {"code_mst_id": "260471", "code_desc": "Banking & Financial Services"},
-        {"code_mst_id": "260472", "code_desc": "Manufacturing"},
-        {"code_mst_id": "260473", "code_desc": "Healthcare"},
-        {"code_mst_id": "260474", "code_desc": "Education"},
-        {"code_mst_id": "260475", "code_desc": "Retail"},
-        {"code_mst_id": "260476", "code_desc": "Government"},
-        {"code_mst_id": "260477", "code_desc": "Agriculture"},
-        {"code_mst_id": "260478", "code_desc": "Other"},
+    10: [  # Industry Type — sqlMstId=1, param="260467"
+        {"code_mst_id": "260537", "code_desc": "Other"},
+        {"code_mst_id": "260490", "code_desc": "Retail/Manufacturing"},
+        {"code_mst_id": "260491", "code_desc": "Construction/Tourism"},
+        {"code_mst_id": "260489", "code_desc": "Govt/Healthcare/Banking"},
+        {"code_mst_id": "260470", "code_desc": "IT Sector"},
     ],
-    11: [  # Residential Status
-        {"code_mst_id": "260510", "code_desc": "Owned (with mortgage)"},
-        {"code_mst_id": "260512", "code_desc": "Owned (no mortgage)"},
-        {"code_mst_id": "260513", "code_desc": "Rented"},
-        {"code_mst_id": "260514", "code_desc": "Company Provided"},
-        {"code_mst_id": "260515", "code_desc": "Parental / Family"},
+    11: [  # Residential Status — sqlMstId=1, param="260511"
+        {"code_mst_id": "260512", "code_desc": "Owned House (No Mortgage)"},
+        {"code_mst_id": "260513", "code_desc": "Owned House (With Mortgage)"},
+        {"code_mst_id": "260514", "code_desc": "Rented (Long-Term >3 Years in Same Place)"},
+        {"code_mst_id": "260515", "code_desc": "Rented (Short-Term <3 Years, Frequent Movers)"},
+        {"code_mst_id": "260517", "code_desc": "Paying Guest (PG) / Hostel / Temporary Stay"},
+        {"code_mst_id": "260518", "code_desc": "Homeless / Unknown Address"},
+        {"code_mst_id": "260516", "code_desc": "Living with Family"},
     ],
-    12: [  # Tenure Stability
-        {"code_mst_id": "260520", "code_desc": "Less than 1 year"},
-        {"code_mst_id": "260521", "code_desc": "1 to 3 years"},
-        {"code_mst_id": "260522", "code_desc": "3 to 5 years"},
-        {"code_mst_id": "260523", "code_desc": "5 to 10 years"},
-        {"code_mst_id": "260524", "code_desc": "More than 10 years"},
+    12: [  # Tenure Stability — sqlMstId=1, param="260520"
+        {"code_mst_id": "260521", "code_desc": "years_at_address > 3"},
+        {"code_mst_id": "260522", "code_desc": "1 <= years_at_address <= 3"},
+        {"code_mst_id": "260523", "code_desc": "years_at_address < 1"},
     ],
-    13: [  # Purpose of Loan
-        {"code_mst_id": "1020", "code_desc": "Home Renovation"},
-        {"code_mst_id": "1021", "code_desc": "Computer / Electronics"},
-        {"code_mst_id": "1022", "code_desc": "Vehicle Purchase"},
-        {"code_mst_id": "1023", "code_desc": "Education"},
-        {"code_mst_id": "1024", "code_desc": "Medical"},
-        {"code_mst_id": "1025", "code_desc": "Wedding"},
-        {"code_mst_id": "1026", "code_desc": "Travel"},
-        {"code_mst_id": "1027", "code_desc": "Debt Consolidation"},
-        {"code_mst_id": "1028", "code_desc": "Business Expansion"},
-        {"code_mst_id": "1029", "code_desc": "Other"},
+    13: [  # Purpose of Loan — sqlMstId=1050, param="102"
+        # Real API returns purpose_id/purpose_name; normalized to code_mst_id/code_desc.
+        {"code_mst_id": "1021", "code_desc": "Computer/ Laptop Purchase"},
+        {"code_mst_id": "1022", "code_desc": "Medical Treatment"},
+        {"code_mst_id": "1023", "code_desc": "Marriage"},
+        {"code_mst_id": "1359", "code_desc": "Purchase Of TV"},
+        {"code_mst_id": "1360", "code_desc": "Purchase of Phone"},
+        {"code_mst_id": "1361", "code_desc": "Other"},
+    ],
+    14: [  # Religion — sqlMstId=1, param="2"
+        {"code_mst_id": "102", "code_desc": "Hindu"},
+        {"code_mst_id": "942", "code_desc": "Jain"},
+        {"code_mst_id": "103", "code_desc": "Muslim"},
+        {"code_mst_id": "104", "code_desc": "Christian"},
+        {"code_mst_id": "105", "code_desc": "Budhha"},
+        {"code_mst_id": "106", "code_desc": "Sikha"},
+        {"code_mst_id": "107", "code_desc": "Parsi"},
+        {"code_mst_id": "108", "code_desc": "Yahudi"},
+        {"code_mst_id": "109", "code_desc": "Zoroistrian"},
+    ],
+    15: [  # Category — sqlMstId=1, param="8"
+        {"code_mst_id": "146", "code_desc": "SC"},
+        {"code_mst_id": "147", "code_desc": "ST"},
+        {"code_mst_id": "148", "code_desc": "OBC"},
+        {"code_mst_id": "149", "code_desc": "NT"},
+        {"code_mst_id": "150", "code_desc": "General"},
+        {"code_mst_id": "151", "code_desc": "Other"},
+    ],
+    16: [  # Country — sqlMstId=3313, param="''0''~C"
+        {"code_mst_id": "1", "code_desc": "India"},
     ],
 }
 
 
+def _normalize_code_list(raw: list[dict]) -> list[dict]:
+    """Normalize heterogeneous bank API responses to a uniform {code_mst_id, code_desc} shape.
+
+    Different endpoints return different field names:
+      • Most endpoints  → code_mst_id (int) + code_desc (str)
+      • Purpose of Loan → purpose_id  (int) + purpose_name (str)
+      • Country         → code_mst_id (int) + code_description (str)
+    All code_mst_id values are cast to str so front-end === comparisons work.
+    """
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        mst_id = item.get("code_mst_id") or item.get("purpose_id")
+        desc = (
+            item.get("code_desc")
+            or item.get("purpose_name")
+            or item.get("code_description")
+        )
+        if mst_id is None or desc is None:
+            out.append(item)  # pass through if shape is unexpected
+            continue
+        out.append({"code_mst_id": str(mst_id), "code_desc": str(desc)})
+    return out
+
+
 async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
-    """Fetch code list from API with caching."""
-    cache_key = f"{sql_mst_id}:{param}"
+    """Fetch a code list from the bank API with in-memory caching.
+
+    ``sql_mst_id`` may be an internal shorthand ID (5–16) used by the
+    front-end, or a real bank API sqlMstId.  Shorthand IDs are translated to
+    the correct (sqlMstId, param) pair via ``_CODE_LIST_ID_MAP``; if the
+    caller also supplies a param it takes precedence (used for cities where the
+    caller passes the state code_mst_id as the param).
+    """
+    internal_id = sql_mst_id
+
+    if sql_mst_id in _CODE_LIST_ID_MAP:
+        real_sql_mst_id, default_param = _CODE_LIST_ID_MAP[sql_mst_id]
+        real_param = param if param else default_param
+    else:
+        real_sql_mst_id = sql_mst_id
+        real_param = param
+
+    cache_key = f"{real_sql_mst_id}:{real_param}"
     cached = _code_list_cache.get(cache_key)
     if cached and cached[0] > _time.time():
         return cached[1]
 
     try:
-        body: dict = {"sqlMstId": sql_mst_id}
-        if param:
-            body["param"] = param
+        body: dict = {"sqlMstId": str(real_sql_mst_id)}
+        if real_param:
+            body["param"] = real_param
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{CODE_LIST_API_URL}/api/getCodeList/", json=body)
             resp.raise_for_status()
             data = resp.json()
-        result = data if isinstance(data, list) else data.get("data", data.get("result", []))
+        raw = data if isinstance(data, list) else data.get("data", data.get("result", []))
+        result = _normalize_code_list(raw)
         _code_list_cache[cache_key] = (_time.time() + CODE_LIST_CACHE_TTL, result)
         return result
     except Exception as e:
-        print(f"[CodeList] Failed to fetch sqlMstId={sql_mst_id}: {e}")
-        return _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+        print(f"[CodeList] Failed to fetch sqlMstId={real_sql_mst_id} param={real_param}: {e}")
+        return _CODE_LIST_FALLBACKS.get(internal_id, [])
 
 
 @app.get("/api/code-list/{sql_mst_id}")
 async def get_code_list(sql_mst_id: int, param: str = ""):
     """Proxy for getCodeList API — returns dropdown options with code_mst_id + code_desc."""
     data = await _fetch_code_list(sql_mst_id, param)
+    # sql_mst_id here is the internal shorthand ID; use it to look up the
+    # fallback so the comparison is fallback-dict vs. fallback-dict (both
+    # normalized), not raw-API-response vs. fallback-dict.
     fallback = len(data) > 0 and data == _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
     return {"status": "success", "data": data, "fallback": fallback}
 

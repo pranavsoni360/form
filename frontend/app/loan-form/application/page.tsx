@@ -190,26 +190,27 @@ export default function LoanApplication() {
           }
           if (d.dob) onChange('date_of_birth', d.dob);
           if (d.gender) onChange('gender', d.gender);
-          if (d.address) onChange('current_address', d.address);
-          if (d.house) onChange('current_house', d.house);
-          if (d.street) onChange('current_street', d.street);
-          if (d.landmark) onChange('current_landmark', d.landmark);
-          if (d.locality) onChange('current_locality', d.locality);
-          if (d.pin) onChange('current_pincode', d.pin);
-          if (d.state_code) { onChange('current_state_code', d.state_code); fetchCities(d.state_code, 'current'); }
-          if (d.city_code) onChange('current_city_code', d.city_code);
+          // Aadhaar address == permanent address, so fill the permanent_* fields.
+          if (d.address) onChange('permanent_address', d.address);
+          if (d.house) onChange('permanent_house', d.house);
+          if (d.street) onChange('permanent_street', d.street);
+          if (d.landmark) onChange('permanent_landmark', d.landmark);
+          if (d.locality) onChange('permanent_locality', d.locality);
+          if (d.pin) onChange('permanent_pincode', d.pin);
+          if (d.state_code) { onChange('permanent_state_code', d.state_code); fetchCities(d.state_code, 'permanent'); }
+          if (d.city_code) onChange('permanent_city_code', d.city_code);
           if (d.marital_status) onChange('marital_status', d.marital_status);
           // Set field_sources for Aadhaar badges
           const aadhaarSources: Record<string, any> = {};
           if (d.dob) aadhaarSources.date_of_birth = { source: 'aadhaar', original: d.dob, modified: false };
           if (d.gender) aadhaarSources.gender = { source: 'aadhaar', original: d.gender, modified: false };
-          if (d.house) aadhaarSources.current_house = { source: 'aadhaar', original: d.house, modified: false };
-          if (d.street) aadhaarSources.current_street = { source: 'aadhaar', original: d.street, modified: false };
-          if (d.landmark) aadhaarSources.current_landmark = { source: 'aadhaar', original: d.landmark, modified: false };
-          if (d.locality) aadhaarSources.current_locality = { source: 'aadhaar', original: d.locality, modified: false };
-          if (d.pin) aadhaarSources.current_pincode = { source: 'aadhaar', original: d.pin, modified: false };
-          if (d.state_code || d.state) aadhaarSources.current_state_code = { source: 'aadhaar', original: d.state || d.state_code, modified: false };
-          if (d.city_code || d.district) aadhaarSources.current_city_code = { source: 'aadhaar', original: d.district || d.city_code, modified: false };
+          if (d.house) aadhaarSources.permanent_house = { source: 'aadhaar', original: d.house, modified: false };
+          if (d.street) aadhaarSources.permanent_street = { source: 'aadhaar', original: d.street, modified: false };
+          if (d.landmark) aadhaarSources.permanent_landmark = { source: 'aadhaar', original: d.landmark, modified: false };
+          if (d.locality) aadhaarSources.permanent_locality = { source: 'aadhaar', original: d.locality, modified: false };
+          if (d.pin) aadhaarSources.permanent_pincode = { source: 'aadhaar', original: d.pin, modified: false };
+          if (d.state_code || d.state) aadhaarSources.permanent_state_code = { source: 'aadhaar', original: d.state || d.state_code, modified: false };
+          if (d.city_code || d.district) aadhaarSources.permanent_city_code = { source: 'aadhaar', original: d.district || d.city_code, modified: false };
           if (d.marital_status) aadhaarSources.marital_status = { source: 'aadhaar', original: d.marital_status, modified: false };
           // Auto-insert passport photo and Aadhaar document from DigiLocker
           if (d.photo_url) {
@@ -289,6 +290,9 @@ export default function LoanApplication() {
     if (!session || !appData) return;
     setSaving(true);
     try {
+      // `same_as_current` column name is historical; it now means
+      // "current address is the same as permanent" (permanent is always the
+      // source-of-truth, auto-filled from Aadhaar).
       const isSame = formData.same_as_current;
       const cleanData = {
         customer_name: formData.customer_name,
@@ -300,26 +304,27 @@ export default function LoanApplication() {
         gender: formData.gender,
         marital_status: formData.marital_status,
         // Build concatenated address for backward compat
-        current_address: [formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', '),
-        permanent_address: isSame
-          ? [formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', ')
-          : [formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', '),
+        permanent_address: [formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', '),
+        current_address: isSame
+          ? [formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ')
+          : [formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', '),
         same_as_current: formData.same_as_current,
-        // Split address fields
-        current_house: formData.current_house,
-        current_street: formData.current_street,
-        current_landmark: formData.current_landmark,
-        current_locality: formData.current_locality,
-        current_pincode: formData.current_pincode,
-        current_state_code: formData.current_state_code,
-        current_city_code: formData.current_city_code,
-        permanent_house: isSame ? formData.current_house : formData.permanent_house,
-        permanent_street: isSame ? formData.current_street : formData.permanent_street,
-        permanent_landmark: isSame ? formData.current_landmark : formData.permanent_landmark,
-        permanent_locality: isSame ? formData.current_locality : formData.permanent_locality,
-        permanent_pincode: isSame ? formData.current_pincode : formData.permanent_pincode,
-        permanent_state_code: isSame ? formData.current_state_code : formData.permanent_state_code,
-        permanent_city_code: isSame ? formData.current_city_code : formData.permanent_city_code,
+        // Permanent address — always the Aadhaar-sourced address
+        permanent_house: formData.permanent_house,
+        permanent_street: formData.permanent_street,
+        permanent_landmark: formData.permanent_landmark,
+        permanent_locality: formData.permanent_locality,
+        permanent_pincode: formData.permanent_pincode,
+        permanent_state_code: formData.permanent_state_code,
+        permanent_city_code: formData.permanent_city_code,
+        // Current address — copied from permanent when `isSame`, else user-entered
+        current_house: isSame ? formData.permanent_house : formData.current_house,
+        current_street: isSame ? formData.permanent_street : formData.current_street,
+        current_landmark: isSame ? formData.permanent_landmark : formData.current_landmark,
+        current_locality: isSame ? formData.permanent_locality : formData.current_locality,
+        current_pincode: isSame ? formData.permanent_pincode : formData.current_pincode,
+        current_state_code: isSame ? formData.permanent_state_code : formData.current_state_code,
+        current_city_code: isSame ? formData.permanent_city_code : formData.current_city_code,
         pan_number: formData.pan_number,
         aadhaar_last4: formData.aadhaar_number ? String(formData.aadhaar_number).slice(-4) : undefined,
         aadhaar_number_encrypted: formData.aadhaar_number,
@@ -405,17 +410,19 @@ export default function LoanApplication() {
 
   const step1Valid = () => validate({ pan_number: 'Required', full_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
   const step2Valid = () => {
-    const base: any = { current_house: 'Required', current_street: 'Required', current_pincode: 'Required', current_state_code: 'Required', current_city_code: 'Required' };
+    // Permanent address is always required (Aadhaar-sourced). Current address
+    // is required only when the user doesn't check "Same as permanent".
+    const base: any = { permanent_house: 'Required', permanent_street: 'Required', permanent_pincode: 'Required', permanent_state_code: 'Required', permanent_city_code: 'Required' };
     if (!formData.same_as_current) {
-      base.permanent_house = 'Required'; base.permanent_street = 'Required';
-      base.permanent_pincode = 'Required'; base.permanent_state_code = 'Required'; base.permanent_city_code = 'Required';
+      base.current_house = 'Required'; base.current_street = 'Required';
+      base.current_pincode = 'Required'; base.current_state_code = 'Required'; base.current_city_code = 'Required';
     }
     const ok = validate(base);
-    if (ok && formData.current_pincode && !/^\d{6}$/.test(formData.current_pincode)) {
-      setErrors((p: any) => ({ ...p, current_pincode: 'Enter valid 6-digit pincode' })); return false;
-    }
-    if (ok && !formData.same_as_current && formData.permanent_pincode && !/^\d{6}$/.test(formData.permanent_pincode)) {
+    if (ok && formData.permanent_pincode && !/^\d{6}$/.test(formData.permanent_pincode)) {
       setErrors((p: any) => ({ ...p, permanent_pincode: 'Enter valid 6-digit pincode' })); return false;
+    }
+    if (ok && !formData.same_as_current && formData.current_pincode && !/^\d{6}$/.test(formData.current_pincode)) {
+      setErrors((p: any) => ({ ...p, current_pincode: 'Enter valid 6-digit pincode' })); return false;
     }
     return ok;
   };
@@ -640,83 +647,85 @@ export default function LoanApplication() {
           {currentStep === 2 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Address Details</h2>
+              {/* Current Address — user-entered, or copied from Permanent via the checkbox */}
               <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Current Address</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Current Address</p>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={formData.same_as_current || false} onChange={e => onChange('same_as_current', e.target.checked)} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
+                    <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Same as permanent</span>
+                  </label>
+                </div>
+                {formData.same_as_current ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 italic">Current address will be the same as permanent address.</p>
+                ) : (<>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="House / Flat No" required error={errors.current_house} fieldName="current_house" fieldSources={formData.field_sources}>
+                  <F label="House / Flat No" required error={errors.current_house}>
                     <input type="text" value={formData.current_house || ''} onChange={e => onChange('current_house', e.target.value)} className={inp(errors.current_house)} placeholder="e.g. 123, Flat B-2" />
                   </F>
-                  <F label="Street / Road" required error={errors.current_street} fieldName="current_street" fieldSources={formData.field_sources}>
+                  <F label="Street / Road" required error={errors.current_street}>
                     <input type="text" value={formData.current_street || ''} onChange={e => onChange('current_street', e.target.value)} className={inp(errors.current_street)} placeholder="e.g. MG Road" />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Landmark" fieldName="current_landmark" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp('')} placeholder="e.g. Near Railway Station" />
-                  </F>
-                  <F label="Locality / Area" fieldName="current_locality" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp('')} placeholder="e.g. Andheri West" />
-                  </F>
+                  <F label="Landmark"><input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp('')} placeholder="e.g. Near Railway Station" /></F>
+                  <F label="Locality / Area"><input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp('')} placeholder="e.g. Andheri West" /></F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                  <F label="Pincode" required error={errors.current_pincode} fieldName="current_pincode" fieldSources={formData.field_sources}>
+                  <F label="Pincode" required error={errors.current_pincode}>
                     <input type="text" value={formData.current_pincode || ''} onChange={e => onChange('current_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.current_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
                   </F>
-                  <F label="State" required error={errors.current_state_code} fieldName="current_state_code" fieldSources={formData.field_sources}>
+                  <F label="State" required error={errors.current_state_code}>
                     <select value={formData.current_state_code || ''} onChange={e => { onChange('current_state_code', e.target.value); onChange('current_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'current'); else setCityOptions([]); }} className={inp(errors.current_state_code)}>
                       <option value="">Select State</option>
                       {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
                     </select>
                   </F>
-                  <F label="City / District" required error={errors.current_city_code} fieldName="current_city_code" fieldSources={formData.field_sources}>
+                  <F label="City / District" required error={errors.current_city_code}>
                     <select value={formData.current_city_code || ''} onChange={e => onChange('current_city_code', e.target.value)} disabled={!formData.current_state_code} className={inp(errors.current_city_code)}>
                       <option value="">{formData.current_state_code ? 'Select City' : 'Select state first'}</option>
                       {cityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
                     </select>
                   </F>
                 </div>
+                </>)}
               </div>
+              {/* Permanent Address — auto-filled from Aadhaar, always shown */}
               <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Permanent Address</p>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={formData.same_as_current || false} onChange={e => onChange('same_as_current', e.target.checked)} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
-                    <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Same as current</span>
-                  </label>
-                </div>
-                {formData.same_as_current ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 italic">Permanent address will be the same as current address.</p>
-                ) : (<>
+                <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Permanent Address</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="House / Flat No" required error={errors.permanent_house}>
+                  <F label="House / Flat No" required error={errors.permanent_house} fieldName="permanent_house" fieldSources={formData.field_sources}>
                     <input type="text" value={formData.permanent_house || ''} onChange={e => onChange('permanent_house', e.target.value)} className={inp(errors.permanent_house)} placeholder="e.g. 456, Block C" />
                   </F>
-                  <F label="Street / Road" required error={errors.permanent_street}>
+                  <F label="Street / Road" required error={errors.permanent_street} fieldName="permanent_street" fieldSources={formData.field_sources}>
                     <input type="text" value={formData.permanent_street || ''} onChange={e => onChange('permanent_street', e.target.value)} className={inp(errors.permanent_street)} placeholder="e.g. Station Road" />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Landmark"><input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp('')} placeholder="Optional" /></F>
-                  <F label="Locality / Area"><input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp('')} placeholder="Optional" /></F>
+                  <F label="Landmark" fieldName="permanent_landmark" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp('')} placeholder="Optional" />
+                  </F>
+                  <F label="Locality / Area" fieldName="permanent_locality" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp('')} placeholder="Optional" />
+                  </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                  <F label="Pincode" required error={errors.permanent_pincode}>
+                  <F label="Pincode" required error={errors.permanent_pincode} fieldName="permanent_pincode" fieldSources={formData.field_sources}>
                     <input type="text" value={formData.permanent_pincode || ''} onChange={e => onChange('permanent_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.permanent_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
                   </F>
-                  <F label="State" required error={errors.permanent_state_code}>
+                  <F label="State" required error={errors.permanent_state_code} fieldName="permanent_state_code" fieldSources={formData.field_sources}>
                     <select value={formData.permanent_state_code || ''} onChange={e => { onChange('permanent_state_code', e.target.value); onChange('permanent_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'permanent'); else setPermCityOptions([]); }} className={inp(errors.permanent_state_code)}>
                       <option value="">Select State</option>
                       {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
                     </select>
                   </F>
-                  <F label="City / District" required error={errors.permanent_city_code}>
+                  <F label="City / District" required error={errors.permanent_city_code} fieldName="permanent_city_code" fieldSources={formData.field_sources}>
                     <select value={formData.permanent_city_code || ''} onChange={e => onChange('permanent_city_code', e.target.value)} disabled={!formData.permanent_state_code} className={inp(errors.permanent_city_code)}>
                       <option value="">{formData.permanent_state_code ? 'Select City' : 'Select state first'}</option>
                       {permCityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
                     </select>
                   </F>
                 </div>
-                </>)}
               </div>
               <Nav onPrev={() => setCurrentStep(1)} onNext={handleNext} />
             </div>
@@ -910,14 +919,14 @@ export default function LoanApplication() {
                 <RR label="Marital Status" value={formData.marital_status} />
               </RS>
               <RS title="Address">
-                <RR label="Current" value={[formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', ') || formData.current_address} />
-                <RR label="Pincode" value={formData.current_pincode} />
-                <RR label="State" value={codeLabel(5, formData.current_state_code)} />
-                <RR label="City" value={codeLabel(6, formData.current_city_code)} />
+                <RR label="Permanent" value={[formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ') || formData.permanent_address} />
+                <RR label="Pincode" value={formData.permanent_pincode} />
+                <RR label="State" value={codeLabel(5, formData.permanent_state_code)} />
+                <RR label="City" value={codeLabel(6, formData.permanent_city_code)} />
                 {formData.same_as_current ? (
-                  <RR label="Permanent" value="Same as current address" />
+                  <RR label="Current" value="Same as permanent address" />
                 ) : (
-                  <RR label="Permanent" value={[formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ') || formData.permanent_address} />
+                  <RR label="Current" value={[formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', ') || formData.current_address} />
                 )}
               </RS>
               <RS title="Occupation">

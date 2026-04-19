@@ -3032,21 +3032,26 @@ def build_api_payload(app_data: dict) -> dict:
     # Take the last 10 digits — lstrip("91") treats it as a char set, not a prefix.
     _digits = ''.join(c for c in (app_data.get("phone") or "") if c.isdigit())
     phone = _digits[-10:] if len(_digits) >= 10 else _digits
-    # Concatenate address parts for API
-    cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
-                 app_data.get("current_landmark", ""), app_data.get("current_locality", "")]
-    current_addr = ", ".join([p for p in cur_parts if p and str(p).strip()])
+    # Concatenate address parts for API.  Permanent is the source-of-truth
+    # (auto-filled from Aadhaar); current either mirrors it (when the
+    # legacy-named ``same_as_current`` flag is set, which now semantically
+    # means "current == permanent") or is user-entered.
+    per_parts = [app_data.get("permanent_house", ""), app_data.get("permanent_street", ""),
+                 app_data.get("permanent_landmark", ""), app_data.get("permanent_locality", "")]
+    perm_addr = ", ".join([p for p in per_parts if p and str(p).strip()])
+    per_state = app_data.get("permanent_state_code", "")
+    per_city = app_data.get("permanent_city_code", "")
     is_same = app_data.get("same_as_current", False)
     if is_same:
-        perm_addr = current_addr
-        per_state = app_data.get("current_state_code", "")
-        per_city = app_data.get("current_city_code", "")
+        current_addr = perm_addr
+        curr_state = per_state
+        curr_city = per_city
     else:
-        per_parts = [app_data.get("permanent_house", ""), app_data.get("permanent_street", ""),
-                     app_data.get("permanent_landmark", ""), app_data.get("permanent_locality", "")]
-        perm_addr = ", ".join([p for p in per_parts if p and str(p).strip()])
-        per_state = app_data.get("permanent_state_code", "")
-        per_city = app_data.get("permanent_city_code", "")
+        cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
+                     app_data.get("current_landmark", ""), app_data.get("current_locality", "")]
+        current_addr = ", ".join([p for p in cur_parts if p and str(p).strip()])
+        curr_state = app_data.get("current_state_code", "")
+        curr_city = app_data.get("current_city_code", "")
     # Repayment period: years → months
     years = app_data.get("repayment_period_years")
     months = str(int(float(years) * 12)) if years else ""
@@ -3061,9 +3066,9 @@ def build_api_payload(app_data: dict) -> dict:
         "maritalStatus": app_data.get("marital_status", ""),
         "enqId": app_data.get("loan_id", ""),
         "currentAddress1": current_addr or app_data.get("current_address", ""),
-        "pinCode": app_data.get("current_pincode", ""),
-        "curr_state": app_data.get("current_state_code", ""),
-        "curr_city": app_data.get("current_city_code", ""),
+        "pinCode": (app_data.get("permanent_pincode", "") if is_same else app_data.get("current_pincode", "")),
+        "curr_state": curr_state,
+        "curr_city": curr_city,
         "curr_country": "1",
         "permanentAddress1": perm_addr or app_data.get("permanent_address", ""),
         "per_state": per_state,

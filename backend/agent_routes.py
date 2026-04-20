@@ -1829,6 +1829,7 @@ async def send_whatsapp_form(request: Request):
         f"{form_url}\n"
         f"An OTP will be sent to your WhatsApp automatically."
     )
+    print(f"[AiSensy Form] notification for {customer_name} ({phone_norm}) -> {form_url}", flush=True)
     logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 
     aisensy_ok = False
@@ -1852,6 +1853,9 @@ async def send_whatsapp_form(request: Request):
             "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
             "paramsFallbackValue": {"FirstName": "Customer"},
         }
+        # ── Print the outbound payload (minus the API key) so we can debug in journalctl ──
+        _debug_payload = {k: ("<redacted>" if k == "apiKey" else v) for k, v in payload.items()}
+        print(f"[AiSensy Form] POST campaign={AISENSY_CAMPAIGN_NAME} dest={wa_phone} payload={_debug_payload}", flush=True)
         try:
             async with aiohttp.ClientSession() as http:
                 async with http.post(
@@ -1860,9 +1864,13 @@ async def send_whatsapp_form(request: Request):
                 ) as resp:
                     aisensy_ok = resp.status == 200
                     body = await resp.text()
+                    print(f"[AiSensy Form] response status={resp.status} body={body}", flush=True)
                     logger.info(f"AiSensy {wa_phone}: {resp.status} | {body}")
         except Exception as e:
+            print(f"[AiSensy Form] EXCEPTION: {type(e).__name__}: {e}", flush=True)
             logger.error(f"AiSensy failed: {e}")
+    else:
+        print(f"[AiSensy Form] SKIPPED — api_key_set={bool(AISENSY_API_KEY)} phone_set={bool(phone_norm)}", flush=True)
 
     # ── 5. Update agent_calls ──
     if call_uuid:

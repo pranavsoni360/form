@@ -1,0 +1,44 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+
+# Database
+asyncpg
+
+# Security & Authentication
+bcrypt
+PyJWT
+python-jose[cryptography]
+
+# HTTP client
+httpx
+
+# Environment variables
+python-dotenv
+
+# Data validation
+pydantic
+email-validator
+
+# PDF generation
+fpdf2
+
+# Scheduling (agent batch runner)
+apscheduler
+
+# Date/Time
+python-dateutil
+pytz
+
+# Utilities
+phonenumbers
+
+# Agent module (voice calling, batch processing, post-call analysis)
+# Without these the /api/agent/* routes are disabled at startup
+aiohttp
+pandas
+livekit-api
+livekit-agents
+google-genai

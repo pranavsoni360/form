@@ -1,0 +1,19 @@
+backend/.env
+frontend/.env.local
+frontend/node_modules/
+frontend/.next/
+backend/venv/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+*.log
+uploads/
+# Reference code (intern submissions, not part of main codebase)
+reference/
+agent/.env
+agent/.env.local
+agent/venv/
+# Generated docs
+*.pdf
+incident_report*

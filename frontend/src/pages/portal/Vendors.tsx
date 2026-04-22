@@ -6,14 +6,12 @@ import { useAuth } from '../../contexts/AuthContext'
 import { Button } from '../../components/Field'
 import { StatusBadge } from '../../components/StatusBadge'
 import { VendorFormModal } from '../../components/modals/VendorFormModal'
-import { UserCreateModal } from '../../components/modals/UserCreateModal'
 
 export default function PortalVendors() {
   const { user } = useAuth()
   const [data, setData] = useState<{ vendors: any[]; vendor_limit: number; vendor_count: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
-  const [addingUser, setAddingUser] = useState<any | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -65,16 +63,16 @@ export default function PortalVendors() {
             <tbody className="divide-y divide-[var(--color-line)]">
               {data.vendors.map((v) => (
                 <tr key={v.id} className="hover:bg-[var(--color-faint)]">
-                  <td className="px-4 py-3 font-medium">{v.name}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <Link to={`/portal/vendors/${v.id}`} className="hover:text-[var(--color-brand)]">{v.name}</Link>
+                  </td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">{v.code}</td>
                   <td className="px-4 py-3">{v.category || '—'}</td>
                   <td className="px-4 py-3">{v.active_user_count ?? 0}</td>
                   <td className="px-4 py-3">{v.application_count ?? 0}</td>
                   <td className="px-4 py-3"><StatusBadge status={v.status} /></td>
-                  <td className="px-4 py-3">
-                    <button onClick={() => setAddingUser(v)} className="text-xs text-[var(--color-brand)] hover:underline">
-                      + User
-                    </button>
+                  <td className="px-4 py-3 text-xs">
+                    <Link to={`/portal/vendors/${v.id}`} className="text-[var(--color-brand)] hover:underline">Manage</Link>
                   </td>
                 </tr>
               ))}
@@ -89,16 +87,6 @@ export default function PortalVendors() {
         onSaved={load}
         createFn={(v) => portalApi.createVendor(v)}
       />
-      {addingUser && (
-        <UserCreateModal
-          open={!!addingUser}
-          onClose={() => setAddingUser(null)}
-          onCreated={load}
-          title={`Create user for ${addingUser.name}`}
-          description="One shared account for vendor staff."
-          createFn={(u) => portalApi.createVendorUser(addingUser.id, u)}
-        />
-      )}
     </div>
   )
 }

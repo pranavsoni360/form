@@ -16,6 +16,7 @@ import PortalDashboard from './pages/portal/Dashboard'
 import PortalApplications from './pages/portal/Applications'
 import PortalApplicationDetail from './pages/portal/ApplicationDetail'
 import PortalVendors from './pages/portal/Vendors'
+import PortalVendorDetail from './pages/portal/VendorDetail'
 import PortalCalls from './pages/portal/Calls'
 import PortalCallNew from './pages/portal/CallNew'
 import PortalCallDetail from './pages/portal/CallDetail'
@@ -56,6 +57,7 @@ function AppRoutes() {
         <Route path="applications" element={<PortalApplications />} />
         <Route path="applications/:id" element={<PortalApplicationDetail />} />
         <Route path="vendors" element={<PortalVendors />} />
+        <Route path="vendors/:id" element={<PortalVendorDetail />} />
         <Route path="calls" element={<PortalCalls />} />
         <Route path="calls/new" element={<PortalCallNew />} />
         <Route path="calls/:id" element={<PortalCallDetail />} />

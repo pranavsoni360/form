@@ -533,14 +533,15 @@ CREATE TRIGGER tr_agent_calls_updated_at        BEFORE UPDATE ON agent_calls    
 
 -- ============================================================
 -- 13. BOOTSTRAP ADMIN USER
--- Default: admin@bank.com / admin123
+-- Default: admin / Virtual%09
 -- Regenerate the hash (bcrypt.hashpw(b'<pw>', bcrypt.gensalt())) before production.
+-- This is the only seeded row — everything else (banks, vendors, users, apps)
+-- is created through the UI by the admin and bank.
 -- ============================================================
-INSERT INTO users (username, password_hash, full_name, email, role)
+INSERT INTO users (username, password_hash, full_name, role)
 VALUES (
-    'admin@bank.com',
-    '$2b$12$Zp4vdD8oK2agzp6uzj0.COU5izxfP0lubq9iUrXe7omrVYgNVGVsK',
+    'admin',
+    '$2b$12$AcemEqxxO5A0qJuoMuzSceuUSAnpgwQEbd46z8lIJl54qvc/GYG3G',
     'System Administrator',
-    'admin@bank.com',
     'admin'
 );

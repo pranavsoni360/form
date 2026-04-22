@@ -110,14 +110,14 @@ export default function LoginPage({ mode = 'portal' }: { mode?: 'portal' | 'admi
             <form onSubmit={onSubmit} className="mt-6 space-y-4">
               <label className="block">
                 <span className="text-xs font-medium text-[var(--color-muted)] uppercase tracking-wide">
-                  {isAdmin ? 'Email' : customerDisabled ? 'Phone' : 'Username'}
+                  {customerDisabled ? 'Phone' : 'Username'}
                 </span>
                 <input
-                  type={isAdmin ? 'email' : 'text'}
+                  type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={customerDisabled}
-                  placeholder={isAdmin ? 'admin@bank.com' : customerDisabled ? '+91 99999 99999' : 'your-username'}
+                  placeholder={isAdmin ? 'admin' : customerDisabled ? '+91 99999 99999' : 'your-username'}
                   className="mt-1 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-input)] px-3 py-2.5 text-[var(--color-heading)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] disabled:opacity-50"
                   autoComplete="username"
                   required={!customerDisabled}

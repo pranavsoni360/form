@@ -1,6 +1,8 @@
 // Unified API client for LOS v3 portals.
 // - Access tokens live in-memory only (XSS-safe).
 // - Refresh tokens travel as httpOnly cookies via /api/auth/refresh.
+// - A per-tab sessionStorage marker gates silent refresh so opening a new tab
+//   does NOT inherit the previous session (Vaani's pattern).
 
 let accessToken: string | null = null
 let refreshPromise: Promise<string | null> | null = null
@@ -11,6 +13,21 @@ export const API_URL = (() => {
   return import.meta.env.VITE_API_URL || ''
 })()
 
+export type SessionRole = 'admin' | 'bank' | 'vendor'
+const SESSION_TYPE_KEY = 'los-session-type'
+
+export function getSessionRole(): SessionRole | null {
+  if (typeof sessionStorage === 'undefined') return null
+  const v = sessionStorage.getItem(SESSION_TYPE_KEY)
+  return v === 'admin' || v === 'bank' || v === 'vendor' ? v : null
+}
+
+export function setSessionRole(role: SessionRole | null) {
+  if (typeof sessionStorage === 'undefined') return
+  if (role) sessionStorage.setItem(SESSION_TYPE_KEY, role)
+  else sessionStorage.removeItem(SESSION_TYPE_KEY)
+}
+
 export function setAccessToken(token: string | null) {
   accessToken = token
 }
@@ -18,15 +35,21 @@ export function getAccessToken() {
   return accessToken
 }
 
-async function silentRefresh(): Promise<string | null> {
+async function silentRefresh(roleHint?: SessionRole | null): Promise<string | null> {
+  const role = roleHint ?? getSessionRole()
+  if (!role) return null  // no tab-scoped session → do not restore anything
   if (refreshPromise) return refreshPromise
   refreshPromise = (async () => {
     try {
-      const resp = await fetch(`${API_URL}/api/auth/refresh`, {
+      const resp = await fetch(`${API_URL}/api/auth/refresh?role=${role}`, {
         method: 'POST',
         credentials: 'include',
       })
-      if (!resp.ok) return null
+      if (!resp.ok) {
+        // Invalid/expired — clear marker so next mount doesn't retry.
+        setSessionRole(null)
+        return null
+      }
       const data = await resp.json()
       accessToken = data.token || null
       return accessToken
@@ -54,7 +77,7 @@ export async function apiFetch<T = unknown>(
 
   let resp = await doFetch(accessToken)
   if (resp.status === 401 && accessToken) {
-    const fresh = await silentRefresh()
+    const fresh = await silentRefresh(getSessionRole())
     if (fresh) resp = await doFetch(fresh)
   }
   if (!resp.ok) {
@@ -87,12 +110,13 @@ export type User = {
   vendor_code?: string
 }
 
-export async function adminLogin(email: string, password: string) {
+export async function adminLogin(username: string, password: string) {
   const data = await apiFetch<{ token: string; user: User }>('/api/auth/admin-login', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ username, password }),
   })
   accessToken = data.token
+  setSessionRole('admin')
   return data
 }
 
@@ -102,6 +126,7 @@ export async function portalLogin(username: string, password: string, portal: 'b
     body: JSON.stringify({ username, password, portal }),
   })
   accessToken = data.token
+  setSessionRole(portal)
   return data
 }
 
@@ -110,12 +135,23 @@ export async function fetchMe() {
 }
 
 export async function logout() {
-  try { await apiFetch('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ }
+  const role = getSessionRole()
+  try {
+    await fetch(`${API_URL}/api/auth/logout${role ? `?role=${role}` : ''}`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+  } catch { /* ignore */ }
   accessToken = null
+  setSessionRole(null)
 }
 
 export async function restoreSession(): Promise<User | null> {
-  const token = await silentRefresh()
+  // Only restore if this tab was signed in before. sessionStorage is per-tab,
+  // so opening a brand-new tab returns null here.
+  const role = getSessionRole()
+  if (!role) return null
+  const token = await silentRefresh(role)
   if (!token) return null
   try {
     return await fetchMe()
@@ -131,14 +167,18 @@ export const adminApi = {
   stats:          () => apiFetch<any>('/api/admin/stats'),
   banks:          () => apiFetch<{ banks: any[] }>('/api/admin/banks'),
   bank:           (id: string) => apiFetch<{ bank: any }>(`/api/admin/banks/${id}`),
-  createBank:     (b: any) => apiFetch<{ bank: any }>('/api/admin/banks', { method: 'POST', body: JSON.stringify(b) }),
+  createBank:     (b: any) => apiFetch<{ bank: any; user: any }>('/api/admin/banks', { method: 'POST', body: JSON.stringify(b) }),
   updateBank:     (id: string, b: any) => apiFetch<{ bank: any }>(`/api/admin/banks/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
   createBankUser: (bankId: string, u: any) => apiFetch<{ user: any }>(`/api/admin/banks/${bankId}/users`, { method: 'POST', body: JSON.stringify(u) }),
   updateUser:     (id: string, u: any) => apiFetch<{ user: any }>(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(u) }),
   deactivateUser: (id: string) => apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' }),
+  resetUserPassword: (id: string, password?: string) =>
+    apiFetch<{ username: string; new_password: string }>(`/api/admin/users/${id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ password: password || null }),
+    }),
   vendors:        (bankId?: string) => apiFetch<{ vendors: any[] }>(`/api/admin/vendors${bankId ? `?bank_id=${bankId}` : ''}`),
   vendor:         (id: string) => apiFetch<{ vendor: any }>(`/api/admin/vendors/${id}`),
-  createVendor:   (v: any) => apiFetch<{ vendor: any }>('/api/admin/vendors', { method: 'POST', body: JSON.stringify(v) }),
+  createVendor:   (v: any) => apiFetch<{ vendor: any; user: any }>('/api/admin/vendors', { method: 'POST', body: JSON.stringify(v) }),
   updateVendor:   (id: string, v: any) => apiFetch<{ vendor: any }>(`/api/admin/vendors/${id}`, { method: 'PUT', body: JSON.stringify(v) }),
   deactivateVendor: (id: string) => apiFetch(`/api/admin/vendors/${id}`, { method: 'DELETE' }),
   createVendorUser: (vendorId: string, u: any) => apiFetch<{ user: any }>(`/api/admin/vendors/${vendorId}/users`, { method: 'POST', body: JSON.stringify(u) }),
@@ -147,7 +187,6 @@ export const adminApi = {
     return apiFetch<{ applications: any[] }>(`/api/admin/applications${qs ? `?${qs}` : ''}`)
   },
   application:    (id: string) => apiFetch<{ application: any; timeline: any[] }>(`/api/admin/applications/${id}`),
-  seedMockData:   () => apiFetch<any>('/api/admin/seed-mock-data', { method: 'POST' }),
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -171,10 +210,14 @@ export const portalApi = {
   // Bank-only vendor management
   vendors:         () => apiFetch<{ vendors: any[]; vendor_limit: number; vendor_count: number }>('/api/portal/vendors'),
   vendor:          (id: string) => apiFetch<{ vendor: any }>(`/api/portal/vendors/${id}`),
-  createVendor:    (v: any) => apiFetch<{ vendor: any }>('/api/portal/vendors', { method: 'POST', body: JSON.stringify(v) }),
+  createVendor:    (v: any) => apiFetch<{ vendor: any; user: any }>('/api/portal/vendors', { method: 'POST', body: JSON.stringify(v) }),
   updateVendor:    (id: string, v: any) => apiFetch<{ vendor: any }>(`/api/portal/vendors/${id}`, { method: 'PUT', body: JSON.stringify(v) }),
   deactivateVendor:(id: string) => apiFetch(`/api/portal/vendors/${id}`, { method: 'DELETE' }),
   createVendorUser:(vendorId: string, u: any) => apiFetch<{ user: any }>(`/api/portal/vendors/${vendorId}/users`, { method: 'POST', body: JSON.stringify(u) }),
+  resetUserPassword: (userId: string, password?: string) =>
+    apiFetch<{ username: string; new_password: string }>(`/api/portal/users/${userId}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ password: password || null }),
+    }),
 
   // Calls
   calls:           (status?: string) => {

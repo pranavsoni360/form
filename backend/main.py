@@ -556,7 +556,7 @@ class FormStepData(BaseModel):
     data: dict
 
 class AdminLogin(BaseModel):
-    email: EmailStr
+    username: str
     password: str
 
 class PortalLogin(BaseModel):
@@ -567,12 +567,16 @@ class PortalLogin(BaseModel):
 
 class BankCreate(BaseModel):
     name: str
-    code: str
+    code: Optional[str] = None  # auto-generated from name slug if omitted
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     logo_url: Optional[str] = None
     vendor_limit: int = 5
+    # Owner account for the bank's first login. username is what the admin
+    # hands off to the bank; full_name defaults to the bank name.
+    owner_username: Optional[str] = None
+    owner_full_name: Optional[str] = None
 
 class BankUpdate(BaseModel):
     name: Optional[str] = None
@@ -594,6 +598,9 @@ class VendorCreate(BaseModel):
     address: Optional[str] = None
     # Admin may target a specific bank; bank_user uses their own bank_id
     bank_id: Optional[str] = None
+    # Optional — if omitted, we auto-generate.
+    owner_username: Optional[str] = None
+    owner_full_name: Optional[str] = None
 
 class VendorUpdate(BaseModel):
     name: Optional[str] = None
@@ -615,6 +622,11 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class PasswordResetRequest(BaseModel):
+    """If `password` is omitted, a fresh random password is generated and returned."""
+    password: Optional[str] = None
 
 class ReviewRequest(BaseModel):
     notes: Optional[str] = None
@@ -898,6 +910,54 @@ async def root():
 # AUTH ENDPOINTS
 # ============================================
 
+async def _allocate_username(base: str) -> str:
+    """Find a username starting from `base` that isn't taken, appending numeric
+    suffixes as needed (matches Vaani's pattern)."""
+    base = (base or "user").strip().lower()
+    base = re.sub(r"[^a-z0-9._-]+", "", base) or "user"
+    candidate = base
+    suffix = 1
+    while True:
+        row = await db_pool.fetchrow("SELECT 1 FROM users WHERE username = $1", candidate)
+        if not row:
+            return candidate
+        suffix += 1
+        candidate = f"{base}{suffix}"
+        if suffix > 999:
+            # Extremely unlikely fallback
+            candidate = f"{base}_{secrets.token_hex(3)}"
+            return candidate
+
+
+async def _provision_portal_user(
+    *,
+    role: str,                  # 'bank_user' | 'vendor_user'
+    bank_id: uuid.UUID,
+    vendor_id: Optional[uuid.UUID],
+    base_username: str,
+    requested_username: Optional[str],
+    full_name: str,
+    email: Optional[str] = None,
+) -> tuple[dict, str]:
+    """Create the first login account for a bank or vendor. Returns (user_row_dict, plaintext_password)."""
+    if requested_username:
+        existing = await db_pool.fetchrow("SELECT 1 FROM users WHERE username = $1", requested_username)
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Username '{requested_username}' already exists")
+        username = requested_username
+    else:
+        username = await _allocate_username(base_username)
+    password = generate_random_password()
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    row = await db_pool.fetchrow(
+        """INSERT INTO users (username, email, password_hash, full_name, role, bank_id, vendor_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, username, email, full_name, role, bank_id, vendor_id, is_active, created_at""",
+        username, email, password_hash, full_name, role, bank_id, vendor_id,
+    )
+    return _row_to_dict(row), password
+
+
 def _user_public(row: dict, bank: Optional[dict] = None, vendor: Optional[dict] = None) -> dict:
     out = {
         "id": str(row["id"]),
@@ -922,16 +982,16 @@ def _user_public(row: dict, bank: Optional[dict] = None, vendor: Optional[dict] 
 
 @app.post("/api/auth/admin-login")
 async def auth_admin_login(payload: AdminLogin):
-    """Admin login — email + password. Sets httpOnly refresh cookie."""
-    await _check_lockout(payload.email)
+    """Admin login — username + password. Sets httpOnly refresh cookie."""
+    await _check_lockout(payload.username)
     row = await db_pool.fetchrow(
         "SELECT * FROM users WHERE username = $1 AND role = 'admin'",
-        payload.email,
+        payload.username,
     )
     if not row or not row["password_hash"] or not bcrypt.checkpw(
         payload.password.encode("utf-8"), row["password_hash"].encode("utf-8")
     ):
-        attempts, locked = await _record_failed_login(payload.email)
+        attempts, locked = await _record_failed_login(payload.username)
         if locked:
             raise HTTPException(423, f"Account locked after {MAX_LOGIN_ATTEMPTS} failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
@@ -940,7 +1000,7 @@ async def auth_admin_login(payload: AdminLogin):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not row["is_active"]:
         raise HTTPException(status_code=403, detail="Account deactivated")
-    await _clear_failed_logins(payload.email)
+    await _clear_failed_logins(payload.username)
     user_id = str(row["id"])
     access_token = create_access_token(user_id=user_id, role="admin")
     refresh_token, jti = create_refresh_token(user_id=user_id, role="admin")
@@ -1008,14 +1068,28 @@ async def auth_portal_login(payload: PortalLogin):
     return resp
 
 
+_ROLE_COOKIE = {
+    "admin": "los_refresh_admin",
+    "bank": "los_refresh_bank",
+    "vendor": "los_refresh_vendor",
+}
+
+
 @app.post("/api/auth/refresh")
-async def auth_refresh(request: Request):
-    """Silent token refresh via httpOnly cookie. Returns a new access token."""
-    refresh_jwt = (
-        request.cookies.get("los_refresh_admin")
-        or request.cookies.get("los_refresh_bank")
-        or request.cookies.get("los_refresh_vendor")
-    )
+async def auth_refresh(request: Request, role: Optional[str] = None):
+    """Silent token refresh via httpOnly cookie. Caller must pass ?role=admin|bank|vendor
+    so we read only that role's cookie — this is what gives each browser tab its own
+    independent session instead of inheriting whichever session was last active."""
+    cookie_name = _ROLE_COOKIE.get(role) if role else None
+    refresh_jwt = request.cookies.get(cookie_name) if cookie_name else None
+    if not cookie_name and not refresh_jwt:
+        # Backward-compat fallback — try each cookie. Frontend should always pass ?role=.
+        for name in _ROLE_COOKIE.values():
+            val = request.cookies.get(name)
+            if val:
+                refresh_jwt = val
+                cookie_name = name
+                break
     if not refresh_jwt:
         raise HTTPException(status_code=401, detail="No refresh token")
     try:
@@ -1029,6 +1103,12 @@ async def auth_refresh(request: Request):
     stored = await db_pool.fetchrow("SELECT * FROM refresh_tokens WHERE jti = $1", payload["jti"])
     if not stored:
         raise HTTPException(status_code=401, detail="Token revoked")
+    # If a role hint was passed, refuse cross-role restores.
+    if role:
+        token_role = payload.get("role")
+        expected = {"admin": "admin", "bank": "bank_user", "vendor": "vendor_user"}.get(role)
+        if expected and token_role != expected:
+            raise HTTPException(status_code=401, detail="Role mismatch")
     access_token = create_access_token(
         user_id=payload["user_id"],
         role=payload["role"],
@@ -1039,16 +1119,18 @@ async def auth_refresh(request: Request):
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(request: Request):
-    """Revoke refresh token and clear the matching cookie."""
-    cookie_name = None
-    refresh_jwt = None
-    for name in ("los_refresh_admin", "los_refresh_bank", "los_refresh_vendor"):
-        val = request.cookies.get(name)
-        if val:
-            refresh_jwt = val
-            cookie_name = name
-            break
+async def auth_logout(request: Request, role: Optional[str] = None):
+    """Revoke refresh token and clear the role-scoped cookie. Pass ?role= so we only
+    nuke the current tab's session — leaving other roles' cookies intact."""
+    cookie_name = _ROLE_COOKIE.get(role) if role else None
+    refresh_jwt = request.cookies.get(cookie_name) if cookie_name else None
+    if not cookie_name and not refresh_jwt:
+        for name in _ROLE_COOKIE.values():
+            val = request.cookies.get(name)
+            if val:
+                refresh_jwt = val
+                cookie_name = name
+                break
     if refresh_jwt:
         try:
             payload = jwt.decode(refresh_jwt, JWT_SECRET, algorithms=["HS256"])
@@ -1090,20 +1172,63 @@ async def admin_list_banks(_: dict = Depends(require_admin)):
     return {"banks": _rows_to_list(rows)}
 
 
+async def _allocate_bank_code(base: str) -> str:
+    """Pick a unique bank.code from a slugified base, appending numeric suffixes if needed."""
+    base = (base or "bank").strip().lower()
+    base = re.sub(r"[^a-z0-9]+", "", base) or "bank"
+    base = base[:40]
+    candidate = base
+    suffix = 1
+    while True:
+        row = await db_pool.fetchrow("SELECT 1 FROM banks WHERE code = $1", candidate)
+        if not row:
+            return candidate
+        suffix += 1
+        candidate = f"{base}{suffix}"
+        if suffix > 999:
+            candidate = f"{base}_{secrets.token_hex(3)}"
+            return candidate
+
+
 @app.post("/api/admin/banks")
 async def admin_create_bank(bank: BankCreate, _: dict = Depends(require_admin)):
+    """Create a bank AND its first bank_user account. Only `name`, `owner_username`,
+    and `vendor_limit` are required from the UI; code and any other fields are auto
+    or optional. Returns the bank plus generated login credentials (shown once)."""
     if bank.vendor_limit < 0:
         raise HTTPException(status_code=400, detail="vendor_limit must be >= 0")
-    existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", bank.code)
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Bank with code '{bank.code}' already exists")
+
+    # Bank code — either explicit (if provided) or auto-derived from the name.
+    if bank.code:
+        existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", bank.code)
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Bank with code '{bank.code}' already exists")
+        code = bank.code
+    else:
+        code = await _allocate_bank_code(bank.name)
+
+    if bank.owner_username:
+        clash = await db_pool.fetchrow("SELECT 1 FROM users WHERE username = $1", bank.owner_username)
+        if clash:
+            raise HTTPException(status_code=400, detail=f"Username '{bank.owner_username}' already exists")
+
     row = await db_pool.fetchrow(
         """INSERT INTO banks (name, code, contact_email, contact_phone, address, logo_url, vendor_limit)
            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *""",
-        bank.name, bank.code, bank.contact_email, bank.contact_phone,
+        bank.name, code, bank.contact_email, bank.contact_phone,
         bank.address, bank.logo_url, bank.vendor_limit,
     )
-    return {"bank": _row_to_dict(row)}
+    user_row, password = await _provision_portal_user(
+        role="bank_user",
+        bank_id=row["id"],
+        vendor_id=None,
+        base_username=code,
+        requested_username=bank.owner_username,
+        full_name=bank.owner_full_name or bank.name,
+        email=bank.contact_email,
+    )
+    user_row["generated_password"] = password
+    return {"bank": _row_to_dict(row), "user": user_row}
 
 
 @app.put("/api/admin/banks/{bank_id}")
@@ -1221,6 +1346,38 @@ async def admin_deactivate_user(user_id: str, _: dict = Depends(require_admin)):
     return {"status": "deactivated", "message": f"User {existing['username']} deactivated"}
 
 
+async def _reset_user_password(user_row: dict, custom: Optional[str]) -> str:
+    """Hash and write a new password. Returns the plaintext for one-time reveal."""
+    plain = (custom or "").strip() or generate_random_password()
+    if len(plain) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    pw_hash = bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    await db_pool.execute(
+        "UPDATE users SET password_hash = $1 WHERE id = $2",
+        pw_hash, user_row["id"],
+    )
+    # Invalidate any outstanding refresh tokens so old sessions are kicked out.
+    await db_pool.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_row["id"])
+    return plain
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+async def admin_reset_user_password(
+    user_id: str,
+    payload: PasswordResetRequest,
+    _: dict = Depends(require_admin),
+):
+    """Admin can reset the password of any non-admin user. Returns the new plaintext
+    password once — caller must hand it off to the user."""
+    row = await db_pool.fetchrow("SELECT id, username, role FROM users WHERE id = $1", uuid.UUID(user_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row["role"] == "admin":
+        raise HTTPException(status_code=400, detail="Admin passwords cannot be reset via this endpoint")
+    plain = await _reset_user_password(dict(row), payload.password)
+    return {"username": row["username"], "new_password": plain}
+
+
 # ---------- Vendors (admin) ----------
 
 async def _assert_vendor_within_limit(bank_id: uuid.UUID):
@@ -1253,6 +1410,7 @@ async def admin_list_vendors(bank_id: Optional[str] = None, _: dict = Depends(re
 
 @app.post("/api/admin/vendors")
 async def admin_create_vendor(payload: VendorCreate, admin: dict = Depends(require_admin)):
+    """Create a vendor AND its shared vendor_user login. Returns vendor + credentials."""
     if not payload.bank_id:
         raise HTTPException(status_code=400, detail="bank_id is required")
     bank_uuid = uuid.UUID(payload.bank_id)
@@ -1262,6 +1420,11 @@ async def admin_create_vendor(payload: VendorCreate, admin: dict = Depends(requi
     )
     if dup:
         raise HTTPException(status_code=400, detail=f"Vendor code '{payload.code}' already exists in this bank")
+    if payload.owner_username:
+        clash = await db_pool.fetchrow("SELECT 1 FROM users WHERE username = $1", payload.owner_username)
+        if clash:
+            raise HTTPException(status_code=400, detail=f"Username '{payload.owner_username}' already exists")
+    bank = await db_pool.fetchrow("SELECT code FROM banks WHERE id = $1", bank_uuid)
     row = await db_pool.fetchrow(
         """INSERT INTO vendors (bank_id, name, code, category, contact_name, contact_email, contact_phone, address, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *""",
@@ -1269,7 +1432,17 @@ async def admin_create_vendor(payload: VendorCreate, admin: dict = Depends(requi
         payload.contact_name, payload.contact_email, payload.contact_phone, payload.address,
         uuid.UUID(admin["id"]),
     )
-    return {"vendor": _row_to_dict(row)}
+    user_row, password = await _provision_portal_user(
+        role="vendor_user",
+        bank_id=bank_uuid,
+        vendor_id=row["id"],
+        base_username=f"{bank['code']}_{payload.code}" if bank else payload.code,
+        requested_username=payload.owner_username,
+        full_name=payload.owner_full_name or f"{payload.name} Staff",
+        email=payload.contact_email,
+    )
+    user_row["generated_password"] = password
+    return {"vendor": _row_to_dict(row), "user": user_row}
 
 
 @app.get("/api/admin/vendors/{vendor_id}")
@@ -1665,6 +1838,7 @@ async def portal_list_vendors(user: dict = Depends(require_bank_user)):
 
 @app.post("/api/portal/vendors")
 async def portal_create_vendor(payload: VendorCreate, user: dict = Depends(require_bank_user)):
+    """Bank creates a vendor. Auto-provisions the vendor_user account and returns credentials."""
     bank_uuid = uuid.UUID(user["bank_id"])
     await _assert_vendor_within_limit(bank_uuid)
     dup = await db_pool.fetchrow(
@@ -1672,6 +1846,11 @@ async def portal_create_vendor(payload: VendorCreate, user: dict = Depends(requi
     )
     if dup:
         raise HTTPException(status_code=400, detail=f"Vendor code '{payload.code}' already exists")
+    if payload.owner_username:
+        clash = await db_pool.fetchrow("SELECT 1 FROM users WHERE username = $1", payload.owner_username)
+        if clash:
+            raise HTTPException(status_code=400, detail=f"Username '{payload.owner_username}' already exists")
+    bank = await db_pool.fetchrow("SELECT code FROM banks WHERE id = $1", bank_uuid)
     row = await db_pool.fetchrow(
         """INSERT INTO vendors (bank_id, name, code, category, contact_name, contact_email, contact_phone, address, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *""",
@@ -1679,7 +1858,17 @@ async def portal_create_vendor(payload: VendorCreate, user: dict = Depends(requi
         payload.contact_name, payload.contact_email, payload.contact_phone, payload.address,
         uuid.UUID(user["id"]),
     )
-    return {"vendor": _row_to_dict(row)}
+    user_row, password = await _provision_portal_user(
+        role="vendor_user",
+        bank_id=bank_uuid,
+        vendor_id=row["id"],
+        base_username=f"{bank['code']}_{payload.code}" if bank else payload.code,
+        requested_username=payload.owner_username,
+        full_name=payload.owner_full_name or f"{payload.name} Staff",
+        email=payload.contact_email,
+    )
+    user_row["generated_password"] = password
+    return {"vendor": _row_to_dict(row), "user": user_row}
 
 
 @app.get("/api/portal/vendors/{vendor_id}")
@@ -1773,6 +1962,29 @@ async def portal_create_vendor_user(vendor_id: str, user_payload: UserCreate, us
     out = _row_to_dict(row)
     out["generated_password"] = password
     return {"user": out}
+
+
+@app.post("/api/portal/users/{user_id}/reset-password")
+async def portal_reset_vendor_user_password(
+    user_id: str,
+    payload: PasswordResetRequest,
+    user: dict = Depends(require_bank_user),
+):
+    """Bank can reset the password of a vendor_user that belongs to its bank.
+    Returns the new plaintext password once."""
+    row = await db_pool.fetchrow(
+        "SELECT id, username, role, bank_id FROM users WHERE id = $1",
+        uuid.UUID(user_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row["role"] != "vendor_user":
+        raise HTTPException(status_code=403, detail="Only vendor user passwords can be reset from the bank portal")
+    if str(row["bank_id"]) != user["bank_id"]:
+        raise HTTPException(status_code=403, detail="User is not under your bank")
+    plain = await _reset_user_password(dict(row), payload.password)
+    return {"username": row["username"], "new_password": plain}
+
 
 # ============================================================
 # CALLS — portal + admin + live transcript SSE
@@ -3012,286 +3224,6 @@ async def submit_form_session(session_token: str, request: Request):
         await send_whatsapp_message(app_row["phone"], message)
     return {"status": "submitted", "message": "Application submitted successfully", "loan_id": app_row["loan_id"]}
 
-# ============================================
-# MOCK DATA SEEDER
-# ============================================
-
-@app.post("/api/admin/seed-mock-data")
-async def seed_mock_data(_: dict = Depends(require_admin)):
-    """Seed v3 demo data: 3 banks (vendor_limit=5), 2 bank_users per bank,
-    2 vendors per bank (1 vendor_user each), 15 applications, 20 calls.
-    Idempotent: existing rows are left alone."""
-    from datetime import date as _date
-
-    mock_banks = [
-        {"name": "Buldhana Urban Co-op Bank", "code": "BUCB", "contact_email": "admin@buldhanabank.com", "contact_phone": "+912025551001", "address": "Main Branch, Buldhana, Maharashtra"},
-        {"name": "State Finance Bank",       "code": "SFB",  "contact_email": "admin@statefinance.com", "contact_phone": "+912025552002", "address": "CBD Belapur, Navi Mumbai, Maharashtra"},
-        {"name": "National Rural Credit Bank","code": "NRCB", "contact_email": "admin@nrcbank.com",     "contact_phone": "+912025553003", "address": "FC Road, Pune, Maharashtra"},
-    ]
-    mock_vendors = [
-        [
-            {"name": "ElectroHub Electronics", "code": "EH01", "category": "Electronics", "contact_name": "Rahul Mehta",   "contact_phone": "+918888800001"},
-            {"name": "HomeStyle Furniture",    "code": "HS02", "category": "Furniture",   "contact_name": "Anjali Singh",  "contact_phone": "+918888800002"},
-        ],
-        [
-            {"name": "Gadget Galaxy",          "code": "GG01", "category": "Electronics", "contact_name": "Vivek Shah",    "contact_phone": "+918888800003"},
-            {"name": "PrimePhone Mart",        "code": "PP02", "category": "Mobile",      "contact_name": "Sneha Kapoor",  "contact_phone": "+918888800004"},
-        ],
-        [
-            {"name": "Rural Appliances Co",    "code": "RA01", "category": "Appliances",  "contact_name": "Dinesh Patil",  "contact_phone": "+918888800005"},
-            {"name": "FarmTech Tools",         "code": "FT02", "category": "Agri",        "contact_name": "Meena Kulkarni","contact_phone": "+918888800006"},
-        ],
-    ]
-
-    created_banks: list[dict] = []
-    created_bank_users: list[dict] = []
-    created_vendors: list[dict] = []
-    created_vendor_users: list[dict] = []
-    created_apps: list[dict] = []
-
-    # --- 1) Banks ---
-    for bank_data in mock_banks:
-        existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", bank_data["code"])
-        if existing:
-            bank_id = existing["id"]
-        else:
-            row = await db_pool.fetchrow(
-                """INSERT INTO banks (name, code, contact_email, contact_phone, address, vendor_limit)
-                   VALUES ($1, $2, $3, $4, $5, 5) RETURNING id""",
-                bank_data["name"], bank_data["code"], bank_data["contact_email"],
-                bank_data["contact_phone"], bank_data["address"],
-            )
-            bank_id = row["id"]
-        created_banks.append({"id": str(bank_id), "name": bank_data["name"], "code": bank_data["code"]})
-
-        # --- 2) Bank users (2 per bank, same role) ---
-        for idx in (1, 2):
-            username = f"{bank_data['code'].lower()}_user{idx}"
-            existing_u = await db_pool.fetchrow("SELECT id FROM users WHERE username = $1", username)
-            if existing_u:
-                created_bank_users.append({"username": username, "password": "(existed)", "bank": bank_data["code"]})
-                continue
-            password = f"{bank_data['code']}@user{idx}123"
-            pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-            full_name = f"{bank_data['name'].split()[0]} User {idx}"
-            email = f"{username}@{bank_data['code'].lower()}.mock"
-            await db_pool.execute(
-                """INSERT INTO users (username, email, password_hash, full_name, role, bank_id)
-                   VALUES ($1, $2, $3, $4, 'bank_user', $5)""",
-                username, email, pw_hash, full_name, bank_id,
-            )
-            created_bank_users.append({"username": username, "password": password, "bank": bank_data["code"]})
-
-    # --- 3) Vendors + vendor users ---
-    for bank_idx, bank in enumerate(created_banks):
-        bank_uuid = uuid.UUID(bank["id"])
-        for v in mock_vendors[bank_idx]:
-            existing_v = await db_pool.fetchrow(
-                "SELECT id FROM vendors WHERE bank_id = $1 AND code = $2", bank_uuid, v["code"],
-            )
-            if existing_v:
-                vendor_id = existing_v["id"]
-            else:
-                row = await db_pool.fetchrow(
-                    """INSERT INTO vendors (bank_id, name, code, category, contact_name, contact_phone)
-                       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id""",
-                    bank_uuid, v["name"], v["code"], v["category"], v["contact_name"], v["contact_phone"],
-                )
-                vendor_id = row["id"]
-            created_vendors.append({
-                "id": str(vendor_id), "bank": bank["code"], "name": v["name"], "code": v["code"],
-            })
-            # One vendor user per vendor
-            vendor_username = f"{bank['code'].lower()}_{v['code'].lower()}"
-            existing_vu = await db_pool.fetchrow("SELECT id FROM users WHERE username = $1", vendor_username)
-            if existing_vu:
-                created_vendor_users.append({"username": vendor_username, "password": "(existed)", "vendor": v["code"]})
-                continue
-            password = f"{v['code']}@vendor123"
-            pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-            await db_pool.execute(
-                """INSERT INTO users (username, email, password_hash, full_name, role, bank_id, vendor_id)
-                   VALUES ($1, $2, $3, $4, 'vendor_user', $5, $6)""",
-                vendor_username, f"{vendor_username}@vendor.mock", pw_hash, f"{v['name']} Staff",
-                bank_uuid, vendor_id,
-            )
-            created_vendor_users.append({"username": vendor_username, "password": password, "vendor": v["code"]})
-
-    # --- 4) Applications (15 total: 5 per bank; 2 of those 5 are vendor-originated) ---
-    mock_names = [
-        "Rajesh Kumar Sharma", "Priya Suresh Patil", "Amit Vijay Deshmukh", "Sunita Ramesh Jadhav", "Vikas Mohan Kulkarni",
-        "Neha Ashok Bhosle",   "Manoj Prakash Chavan","Kavita Sanjay Pawar","Sunil Deepak Joshi",  "Anita Rahul Deshpande",
-        "Ramesh Anil Sawant",  "Pooja Nitin Gaikwad", "Siddharth Ajay More","Rekha Suresh Thakur", "Ganesh Mahesh Shinde",
-    ]
-    mock_phones = [f"+9198{random.randint(10000000, 99999999)}" for _ in range(15)]
-    mock_loan_types = ["Personal Loan", "Home Loan", "Vehicle Loan", "Education Loan", "Business Loan"]
-    # Simplified v3 statuses
-    mock_statuses = [
-        "submitted",  "system_reviewed", "system_reviewed", "approved",       "rejected",
-        "submitted",  "system_reviewed", "approved",        "documents_requested", "documents_submitted",
-        "submitted",  "system_reviewed", "approved",        "disbursed",      "rejected",
-    ]
-    mock_system_suggestions = ["approve","approve","review","approve","deny",
-                               "approve","approve","approve","approve","approve",
-                               "review","approve","approve","approve","deny"]
-    mock_scores = [82, 78, 55, 91, 28, 65, 85, 88, 90, 76, 48, 79, 87, 93, 31]
-    mock_reasons = [
-        "Strong income-to-loan ratio, stable employment history",
-        "Good credit indicators, low existing EMI burden",
-        "Moderate risk — recent job change, verify income",
-        "Excellent financial profile, property-backed collateral",
-        "High debt-to-income ratio, multiple existing loans",
-        "Moderate risk, adequate income for requested amount",
-        "Strong savings pattern, long employment tenure",
-        "Good repayment capacity, clear credit history",
-        "Stable government employment, adequate income",
-        "Good business revenue, consistent tax filings",
-        "Low income relative to loan amount, no collateral",
-        "Strong co-applicant profile, good combined income",
-        "Verified employment, strong salary credentials",
-        "Excellent credit score, minimal existing obligations",
-        "Insufficient documentation, multiple red flags",
-    ]
-    mock_amounts = [500000, 2500000, 800000, 1200000, 350000,
-                    750000, 1500000, 3000000, 600000, 1000000,
-                    450000, 900000, 2000000, 1800000, 700000]
-    mock_emails = [
-        "rajesh.sharma@gmail.com", "priya.patil@yahoo.com", "amit.deshmukh@gmail.com",
-        "sunita.jadhav@hotmail.com", "vikas.kulkarni@gmail.com", "neha.bhosle@gmail.com",
-        "manoj.chavan@yahoo.com", "kavita.pawar@gmail.com", "sunil.joshi@outlook.com",
-        "anita.deshpande@gmail.com", "ramesh.sawant@gmail.com", "pooja.gaikwad@yahoo.com",
-        "siddharth.more@gmail.com", "rekha.thakur@gmail.com", "ganesh.shinde@gmail.com",
-    ]
-    mock_genders = ["Male","Female","Male","Female","Male","Female","Male","Female","Male","Female","Male","Female","Male","Female","Male"]
-    mock_dobs = ["1990-05-15","1985-11-20","1992-03-08","1988-07-12","1995-01-25",
-                 "1991-09-30","1987-06-18","1993-12-05","1989-04-22","1994-08-14",
-                 "1986-02-28","1996-10-10","1990-07-07","1984-03-15","1991-11-01"]
-    mock_employment = ["Salaried","Salaried","Business","Salaried","Self-employed",
-                       "Salaried","Business","Salaried","Salaried","Self-employed",
-                       "Salaried","Salaried","Business","Salaried","Self-employed"]
-    mock_employers = ["TCS","Infosys","Own Business","Wipro","Freelance",
-                      "HCL Tech","Shop Owner","Cognizant","SBI","Consultant",
-                      "L&T","Tech Mahindra","Transport","HDFC Bank","Agriculture"]
-    mock_incomes = [65000,85000,120000,55000,45000,75000,90000,60000,50000,70000,
-                    80000,55000,100000,72000,40000]
-    mock_pans = ["ABCDE1234F","FGHIJ5678K","KLMNO9012P","PQRST3456U","UVWXY7890Z",
-                 "ABCFG1234H","DEFHI5678J","GHJKL9012M","JKLMN3456O","MNOPQ7890R",
-                 "OPQRS1234T","RSTUV5678W","TUVWX9012Y","WXYZA3456B","ZABCD7890E"]
-    mock_addresses = [
-        "Flat 12, Shivaji Nagar, Pune", "House 45, MG Road, Mumbai", "Plot 78, MIDC, Nagpur",
-        "Room 3, Bajaj Colony, Aurangabad", "204 Lake View, Nashik", "B-12 Harmony, Thane",
-        "15 Gandhi Chowk, Satara", "67 Tilak Road, Kolhapur", "89 Station Road, Solapur",
-        "22 Civil Lines, Amravati", "34 Peth Area, Sangli", "56 Market Yard, Jalgaon",
-        "78 Industrial Area, Akola", "90 Cantonment, Ahmednagar", "11 Main Road, Latur",
-    ]
-
-    vendors_by_bank: dict[str, list[str]] = {}
-    for v in created_vendors:
-        vendors_by_bank.setdefault(v["bank"], []).append(v["id"])
-
-    for i in range(15):
-        bank_idx = i // 5
-        bank = created_banks[bank_idx]
-        bank_uuid = uuid.UUID(bank["id"])
-        # First 2 of each bank's 5 apps are vendor-originated (round-robin across its vendors)
-        slot = i % 5
-        vendor_id = None
-        if slot < 2 and vendors_by_bank.get(bank["code"]):
-            vendor_id = uuid.UUID(vendors_by_bank[bank["code"]][slot])
-        loan_id = f"MOCK-{bank['code']}-2026{(i+1):04d}"
-        existing = await db_pool.fetchrow("SELECT id FROM loan_applications WHERE loan_id = $1", loan_id)
-        if existing:
-            created_apps.append({"loan_id": loan_id, "status": "(existed)"})
-            continue
-
-        status = mock_statuses[i]
-        submitted_at = now_utc() - timedelta(days=random.randint(1, 14))
-        system_reviewed_at = submitted_at + timedelta(hours=random.randint(1, 4)) if status != "submitted" else None
-        reviewed_at = (system_reviewed_at or submitted_at) + timedelta(hours=random.randint(2, 24)) \
-            if status in ("approved", "rejected", "documents_requested", "documents_submitted", "disbursed") else None
-        documents_requested_at = reviewed_at if status in ("documents_requested", "documents_submitted", "disbursed") else None
-        approved_at = reviewed_at if status in ("approved", "documents_requested", "documents_submitted", "disbursed") else None
-        disbursed_at = (reviewed_at + timedelta(days=random.randint(1, 3))) if status == "disbursed" else None
-
-        dob_val = _date.fromisoformat(mock_dobs[i])
-        await db_pool.execute(
-            """INSERT INTO loan_applications (
-                customer_name, phone, loan_id, bank_id, vendor_id, status, is_complete, submitted_at,
-                email, date_of_birth, gender, marital_status, current_address,
-                employment_type, employer_name, monthly_gross_income, monthly_net_income,
-                loan_amount_requested, purpose_of_loan,
-                pan_number, pan_verified, aadhaar_verified, aadhaar_last4,
-                system_suggestion, system_suggestion_reason, system_score, system_reviewed_at,
-                reviewed_at, review_notes, rejection_reason,
-                documents_requested_at, approved_at, disbursed_at,
-                current_step, highest_step, last_saved_at, created_at
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, TRUE, $7,
-                $8, $9, $10, $11, $12,
-                $13, $14, $15, $16,
-                $17, $18,
-                $19, TRUE, TRUE, $20,
-                $21, $22, $23, $24,
-                $25, $26, $27,
-                $28, $29, $30,
-                6, 6, $31, $32
-            )""",
-            mock_names[i], mock_phones[i], loan_id, bank_uuid, vendor_id, status, submitted_at,
-            mock_emails[i], dob_val, mock_genders[i], random.choice(["Single", "Married"]), mock_addresses[i],
-            mock_employment[i], mock_employers[i], float(mock_incomes[i]), float(mock_incomes[i] * 0.75),
-            float(mock_amounts[i]), mock_loan_types[i % len(mock_loan_types)],
-            mock_pans[i], str(random.randint(1000, 9999)),
-            mock_system_suggestions[i], mock_reasons[i], mock_scores[i], system_reviewed_at,
-            reviewed_at, "System review" if reviewed_at else None,
-            "High debt-to-income ratio" if status == "rejected" else None,
-            documents_requested_at, approved_at, disbursed_at,
-            now_utc(), submitted_at - timedelta(days=1),
-        )
-        created_apps.append({
-            "loan_id": loan_id, "name": mock_names[i], "status": status,
-            "bank": bank["code"], "vendor": next((v["code"] for v in created_vendors if v["id"] == str(vendor_id)), None),
-        })
-
-    # --- 5) Calls (20 mixed) ---
-    call_statuses = [
-        "completed", "completed", "completed", "in_progress", "queued",
-        "failed",    "not_answered", "completed", "completed", "in_progress",
-        "completed", "completed", "failed",       "queued",    "completed",
-        "completed", "not_answered", "completed", "dialing",   "completed",
-    ]
-    for i in range(20):
-        bank = created_banks[i % 3]
-        bank_uuid = uuid.UUID(bank["id"])
-        vendor_id = None
-        if i % 4 == 0 and vendors_by_bank.get(bank["code"]):
-            vendor_id = uuid.UUID(vendors_by_bank[bank["code"]][0])
-        phone = f"+9198{random.randint(10000000, 99999999)}"
-        name = f"Call Lead {i+1}"
-        status = call_statuses[i]
-        started = now_utc() - timedelta(hours=random.randint(1, 72))
-        ended = started + timedelta(minutes=random.randint(1, 6)) if status in ("completed", "failed", "not_answered") else None
-        duration = int((ended - started).total_seconds()) if ended else 0
-        await db_pool.execute(
-            """INSERT INTO agent_calls (bank_id, vendor_id, customer_name, phone, loan_type, loan_amount, language,
-                                         status, call_duration, interested, form_sent, category, started_at, ended_at)
-               VALUES ($1, $2, $3, $4, $5, $6, 'hindi', $7, $8, $9, $10, $11, $12, $13)""",
-            bank_uuid, vendor_id, name, phone,
-            random.choice(mock_loan_types), str(random.randint(50, 3000) * 1000),
-            status, duration, status == "completed", status == "completed" and i % 3 != 0,
-            random.choice(["Hot Lead", "Warm Lead", "Cold Lead", "Uncategorized"]),
-            started, ended,
-        )
-
-    return {
-        "status": "success",
-        "message": "v3 mock data seeded.",
-        "banks": created_banks,
-        "bank_users": created_bank_users,
-        "vendors": created_vendors,
-        "vendor_users": created_vendor_users,
-        "applications": created_apps,
-        "note": "Login patterns: admin=admin@bank.com/admin123; bank user=<code>_user1/<CODE>@user1123; vendor user=<bank>_<vcode>/<VCODE>@vendor123",
-    }
 
 # ============================================
 # API PAYLOAD BUILDER (lrsAnalysisSummary)

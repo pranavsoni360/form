@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { adminApi } from '../../services/api'
-import { Button } from '../../components/Field'
 
 type Stats = {
   total_applications: number
@@ -17,22 +16,8 @@ type Stats = {
 export default function AdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [seeding, setSeeding] = useState(false)
 
-  const load = () => adminApi.stats().then(setStats).catch((e) => setError(String(e)))
-  useEffect(() => { void load() }, [])
-
-  const seed = async () => {
-    setSeeding(true)
-    try {
-      await adminApi.seedMockData()
-      await load()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setSeeding(false)
-    }
-  }
+  useEffect(() => { adminApi.stats().then(setStats).catch((e) => setError(String(e))) }, [])
 
   if (error) return <div className="rounded-lg border border-red-400/40 bg-red-500/10 p-4 text-sm text-red-500">{error}</div>
   if (!stats) return <div className="text-sm text-[var(--color-muted)]">Loading stats…</div>
@@ -48,14 +33,9 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-[var(--color-heading)]">Overview</h1>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">System-wide metrics across every tenant.</p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={seed} disabled={seeding}>
-          {seeding ? 'Seeding…' : 'Seed mock data'}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold text-[var(--color-heading)]">Overview</h1>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">System-wide metrics across every tenant.</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -74,7 +54,11 @@ export default function AdminDashboard() {
           <span className="text-xs text-[var(--color-muted)]">{stats.bank_counts.length} banks</span>
         </div>
         <div className="divide-y divide-[var(--color-line)]">
-          {stats.bank_counts.map((b) => (
+          {stats.bank_counts.length === 0 ? (
+            <div className="p-8 text-center text-sm text-[var(--color-muted)]">
+              No banks yet. Create one from the Banks page to get started.
+            </div>
+          ) : stats.bank_counts.map((b) => (
             <div key={b.bank_id} className="flex items-center justify-between p-4">
               <div>
                 <div className="font-medium text-[var(--color-heading)]">{b.bank_name}</div>
@@ -95,17 +79,19 @@ export default function AdminDashboard() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-elevated)] p-4">
-        <h2 className="text-sm font-semibold text-[var(--color-heading)] mb-3">Applications by status</h2>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(stats.status_counts).map(([status, count]) => (
-            <span key={status} className="inline-flex items-center gap-2 rounded-full border border-[var(--color-line)] bg-[var(--color-faint)] px-3 py-1 text-xs">
-              <span className="text-[var(--color-muted)]">{status.replace(/_/g, ' ')}</span>
-              <span className="font-semibold text-[var(--color-heading)]">{count}</span>
-            </span>
-          ))}
-        </div>
-      </section>
+      {Object.keys(stats.status_counts).length > 0 && (
+        <section className="rounded-xl border border-[var(--color-line)] bg-[var(--color-elevated)] p-4">
+          <h2 className="text-sm font-semibold text-[var(--color-heading)] mb-3">Applications by status</h2>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(stats.status_counts).map(([status, count]) => (
+              <span key={status} className="inline-flex items-center gap-2 rounded-full border border-[var(--color-line)] bg-[var(--color-faint)] px-3 py-1 text-xs">
+                <span className="text-[var(--color-muted)]">{status.replace(/_/g, ' ')}</span>
+                <span className="font-semibold text-[var(--color-heading)]">{count}</span>
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

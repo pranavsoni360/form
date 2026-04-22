@@ -6,6 +6,7 @@ import { StatusBadge } from '../../components/StatusBadge'
 import { BankFormModal } from '../../components/modals/BankFormModal'
 import { UserCreateModal } from '../../components/modals/UserCreateModal'
 import { VendorFormModal } from '../../components/modals/VendorFormModal'
+import { ResetPasswordModal } from '../../components/modals/ResetPasswordModal'
 
 export default function BankDetail() {
   const { id } = useParams<{ id: string }>()
@@ -14,6 +15,7 @@ export default function BankDetail() {
   const [editing, setEditing] = useState(false)
   const [creatingUser, setCreatingUser] = useState(false)
   const [creatingVendor, setCreatingVendor] = useState(false)
+  const [resetUser, setResetUser] = useState<{ id: string; username: string; full_name?: string } | null>(null)
 
   const load = () => {
     if (!id) return
@@ -100,17 +102,27 @@ export default function BankDetail() {
                       <StatusBadge status={u.is_active ? 'active' : 'inactive'} />
                     </td>
                     <td className="px-4 py-3">
-                      {u.is_active && (
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`Deactivate ${u.username}?`)) return
-                            await adminApi.deactivateUser(u.id); load()
-                          }}
-                          className="text-xs text-red-500 hover:underline"
-                        >
-                          Deactivate
-                        </button>
-                      )}
+                      <div className="flex items-center gap-3">
+                        {u.is_active && (
+                          <>
+                            <button
+                              onClick={() => setResetUser({ id: u.id, username: u.username, full_name: u.full_name })}
+                              className="text-xs text-[var(--color-brand)] hover:underline"
+                            >
+                              Reset password
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Deactivate ${u.username}?`)) return
+                                await adminApi.deactivateUser(u.id); load()
+                              }}
+                              className="text-xs text-red-500 hover:underline"
+                            >
+                              Deactivate
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -167,6 +179,16 @@ export default function BankDetail() {
         bankId={bank.id}
         createFn={(v) => adminApi.createVendor(v)}
       />
+      {resetUser && (
+        <ResetPasswordModal
+          open={!!resetUser}
+          onClose={() => setResetUser(null)}
+          username={resetUser.username}
+          displayName={resetUser.full_name}
+          resetFn={(pw) => adminApi.resetUserPassword(resetUser.id, pw)}
+          onDone={load}
+        />
+      )}
     </div>
   )
 }

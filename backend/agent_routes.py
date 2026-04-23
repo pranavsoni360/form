@@ -1789,9 +1789,12 @@ async def send_whatsapp_form(request: Request):
 
     # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
     app_id = None
-    # Append phone as query param so the OTP page auto-fills and auto-sends
-    bare_phone = phone_norm.lstrip('+').lstrip('91') if phone_norm else ''
-    form_url = f"{FORM_BASE_URL}?phone={bare_phone}" if bare_phone else FORM_BASE_URL
+    # Append phone as query param so the OTP page auto-fills and auto-sends.
+    # Take the last 10 digits — handles +91/91 prefixes without the str.lstrip
+    # character-class footgun (lstrip("91") strips any leading 9s and 1s).
+    _digits = ''.join(c for c in (phone_norm or '') if c.isdigit())
+    bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
+    form_url = f"{FORM_BASE_URL}/loan-form?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/loan-form"
 
     if phone_norm:
         # Check if application already exists for this phone
@@ -1901,6 +1904,7 @@ async def send_whatsapp_form(request: Request):
         f"{form_url}\n"
         f"An OTP will be sent to your WhatsApp automatically."
     )
+    print(f"[AiSensy Form] notification for {customer_name} ({phone_norm}) -> {form_url}", flush=True)
     logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 
     aisensy_ok = False
@@ -1910,28 +1914,38 @@ async def send_whatsapp_form(request: Request):
             wa_phone = f"91{wa_phone}"
 
         first_name = customer_name.strip().split()[0] if customer_name else "Customer"
+        # 3rd param = bare_phone so the AiSensy template can render a URL button
+        # like https://virtualvaani.vgipl.com/?phone={{3}} for auto-OTP flow.
+        # Harmless until the template is updated; AiSensy silently ignores extras.
         payload = {
             "apiKey": AISENSY_API_KEY,
             "campaignName": AISENSY_CAMPAIGN_NAME,
             "destination": wa_phone,
             "userName": AISENSY_USERNAME,
-            "templateParams": [first_name, first_name],
+            "templateParams": [first_name, bare_phone or ""],
             "source": "loan-voice-agent",
             "media": {"url": AISENSY_IMAGE_URL, "filename": "loan_form"},
             "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
             "paramsFallbackValue": {"FirstName": "Customer"},
         }
+        # ── Print the outbound payload (minus the API key) so we can debug in journalctl ──
+        _debug_payload = {k: ("<redacted>" if k == "apiKey" else v) for k, v in payload.items()}
+        print(f"[AiSensy Form] POST campaign={AISENSY_CAMPAIGN_NAME} dest={wa_phone} payload={_debug_payload}", flush=True)
         try:
             async with aiohttp.ClientSession() as http:
                 async with http.post(
-                    "https://backend.aisensy.com/campaign/t1/api/v2",
+                    "https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2",
                     json=payload, timeout=aiohttp.ClientTimeout(total=10), ssl=False,
                 ) as resp:
                     aisensy_ok = resp.status == 200
                     body = await resp.text()
+                    print(f"[AiSensy Form] response status={resp.status} body={body}", flush=True)
                     logger.info(f"AiSensy {wa_phone}: {resp.status} | {body}")
         except Exception as e:
+            print(f"[AiSensy Form] EXCEPTION: {type(e).__name__}: {e}", flush=True)
             logger.error(f"AiSensy failed: {e}")
+    else:
+        print(f"[AiSensy Form] SKIPPED — api_key_set={bool(AISENSY_API_KEY)} phone_set={bool(phone_norm)}", flush=True)
 
     # ── 5. Update agent_calls ──
     if call_uuid:

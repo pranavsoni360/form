@@ -40,6 +40,8 @@ app.add_middleware(
         "http://localhost:3001",
         "https://virtualvaani.vgipl.com:3001",
         "https://virtualvaani.vgipl.com",
+        # Extra origins via env var: comma-separated. Useful for dev on LAN/hotspot.
+        *[o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()],
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -59,8 +61,24 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001")
 
+# ── Network switch ──
+# APP_NETWORK=internal (default) uses office-LAN IPs (fast path for deployed
+# server + devs on office WiFi). APP_NETWORK=public routes upstream API calls
+# through the public internet-reachable URLs (for devs on hotspot/home WiFi).
+# An explicit VG_API_BASE / CODE_LIST_API_URL env var always wins.
+APP_NETWORK = os.getenv("APP_NETWORK", "internal").lower()
+
+_VG_API_BASE_DEFAULT = (
+    "https://galaxypay.in:9005/VGDocverify/VGKVerify.asmx"
+    if APP_NETWORK == "public"
+    else "http://10.200.10.43/VGDocverify/VGKVerify.asmx"
+)
+# Code List API has no known public mirror yet — on public network the
+# hardcoded _CODE_LIST_FALLBACKS serves dropdowns.
+_CODE_LIST_API_URL_DEFAULT = "http://10.200.10.83:5020"
+
 # ── VG DocVerify API Configuration ──
-VG_API_BASE = os.getenv("VG_API_BASE", "http://10.200.10.43/VGDocverify/VGKVerify.asmx")
+VG_API_BASE = os.getenv("VG_API_BASE", _VG_API_BASE_DEFAULT)
 VG_USER_ID = os.getenv("VG_USER_ID", "33")
 VG_KEY = os.getenv("VG_KEY", "")
 VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VGIL")
@@ -68,9 +86,11 @@ VG_BANK_NAME = os.getenv("VG_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
 VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "true" only when needed for testing without VG API access
 
 # ── Code List API (lrsAnalysisSummary dropdown codes) ──
-CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", "http://10.200.10.83:5020")
+CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", _CODE_LIST_API_URL_DEFAULT)
+print(f"[config] APP_NETWORK={APP_NETWORK} VG_API_BASE={VG_API_BASE} CODE_LIST_API_URL={CODE_LIST_API_URL}")
 _code_list_cache: dict[str, tuple[float, list]] = {}  # cache_key -> (expiry_timestamp, data)
-CODE_LIST_CACHE_TTL = 3600  # 1 hour
+CODE_LIST_CACHE_TTL = 3600  # 1 hour — successful bank API responses
+CODE_LIST_FALLBACK_TTL = 120  # 2 min — cache fallback so we don't re-eat the timeout every request
 
 # ── Auth Configuration ──
 ACCESS_TOKEN_MINUTES = int(os.getenv("LOS_ACCESS_TOKEN_MINUTES", "30"))
@@ -712,7 +732,7 @@ async def send_otp_via_aisensy(phone: str, otp: str) -> dict:
     }
     async with httpx.AsyncClient(verify=False, timeout=10) as client:
         try:
-            response = await client.post("https://backend.aisensy.com/campaign/t1/api/v2", json=payload)
+            response = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
             print(f"[AiSensy OTP] {phone_formatted} -> {response.status_code}")
             return response.json() if response.text else {"status": "sent"}
         except Exception as e:
@@ -736,7 +756,7 @@ async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params:
     }
     async with httpx.AsyncClient(verify=False) as client:
         try:
-            response = await client.post("https://backend.aisensy.com/campaign/t1/api/v2", json=payload)
+            response = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
             return response.json() if response.text else {"status": "sent"}
         except Exception as e:
             return {"status": "failed", "error": str(e)}
@@ -836,7 +856,7 @@ def scope_where_for_user(user: dict, table_alias: str = "") -> tuple[str, list, 
 # TYPE COERCION FOR DB COLUMNS
 # ============================================
 DATE_COLUMNS = {"date_of_birth"}
-BOOLEAN_COLUMNS = {"criminal_records", "same_as_current", "highest_step", "same_as_current", "pan_verified", "aadhaar_verified"}
+BOOLEAN_COLUMNS = {"criminal_records", "same_as_current", "pan_verified", "aadhaar_verified"}
 DECIMAL_COLUMNS = {
     "loan_amount_requested", "monthly_gross_income", "monthly_deductions",
     "monthly_emi_existing", "monthly_net_income",
@@ -2888,57 +2908,304 @@ async def send_campaign_bulk(request: Request):
 
 import time as _time
 
-# Hardcoded fallbacks when the code list API is unreachable
+# ── Translation: internal shorthand IDs (used by the front-end) → real bank API
+# (sqlMstId, fixed_param).  For Cities (internal 6) the caller supplies the
+# state code as param; the map supplies an empty default so the caller's value
+# is used as-is.
+_CODE_LIST_ID_MAP: dict[int, tuple[int, str]] = {
+    5:  (22,   "1"),         # States      — sqlMstId=22, param="1"
+    6:  (22,   ""),          # Cities      — sqlMstId=22, param=<state_code_mst_id>
+    7:  (1,    "28"),        # Qualification
+    8:  (1,    "6"),         # Occupation
+    9:  (1,    "260475"),    # Employment Type
+    10: (1,    "260467"),    # Industry Type
+    11: (1,    "260511"),    # Residential Status
+    12: (1,    "260520"),    # Tenure Stability
+    13: (1050, "102"),       # Purpose of Loan
+    # Additional lists present in API spec (not yet wired to front-end)
+    14: (1,    "2"),         # Religion
+    15: (1,    "8"),         # Category
+    16: (3313, "''0''~C"),   # Country
+}
+
+# Fallbacks used when the bank API is unreachable (local dev without VPN).
+# Keyed by the INTERNAL shorthand ID (same key the front-end passes in).
+# All code_mst_id values are strings to match front-end === comparisons.
+# Source of truth: docs/API Details.docx
 _CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
-    5: [  # States (partial — common ones)
-        {"code_mst_id": "269", "code_desc": "Maharashtra"},
-        {"code_mst_id": "258", "code_desc": "Gujarat"},
-        {"code_mst_id": "264", "code_desc": "Karnataka"},
-        {"code_mst_id": "286", "code_desc": "Tamil Nadu"},
-        {"code_mst_id": "262", "code_desc": "Delhi"},
-        {"code_mst_id": "289", "code_desc": "Uttar Pradesh"},
-        {"code_mst_id": "280", "code_desc": "Rajasthan"},
+    5: [  # States — full list from API spec (sqlMstId=22, param="1")
+        {"code_mst_id": "289", "code_desc": "Andaman And Nicobar"},
+        {"code_mst_id": "258", "code_desc": "Andhra Pradesh"},
+        {"code_mst_id": "260", "code_desc": "Arunachal Pradesh"},
+        {"code_mst_id": "915", "code_desc": "Assam"},
+        {"code_mst_id": "262", "code_desc": "Bihar"},
+        {"code_mst_id": "288", "code_desc": "Chandigarh"},
+        {"code_mst_id": "292", "code_desc": "Chattisgarh"},
+        {"code_mst_id": "287", "code_desc": "Dadra And Nagar"},
+        {"code_mst_id": "286", "code_desc": "Daman And Diu"},
+        {"code_mst_id": "282", "code_desc": "Delhi"},
+        {"code_mst_id": "283", "code_desc": "Goa"},
+        {"code_mst_id": "261", "code_desc": "Gujrat"},
+        {"code_mst_id": "263", "code_desc": "Haryana"},
+        {"code_mst_id": "264", "code_desc": "Himachal Pradesh"},
+        {"code_mst_id": "265", "code_desc": "Jammu And Kashmir"},
+        {"code_mst_id": "291", "code_desc": "Jharkhand"},
+        {"code_mst_id": "266", "code_desc": "Karnataka"},
+        {"code_mst_id": "267", "code_desc": "Kerala"},
+        {"code_mst_id": "285", "code_desc": "Lakshdweep"},
         {"code_mst_id": "268", "code_desc": "Madhya Pradesh"},
-        {"code_mst_id": "291", "code_desc": "West Bengal"},
-        {"code_mst_id": "285", "code_desc": "Telangana"},
-        {"code_mst_id": "255", "code_desc": "Andhra Pradesh"},
-        {"code_mst_id": "265", "code_desc": "Kerala"},
-        {"code_mst_id": "278", "code_desc": "Punjab"},
-        {"code_mst_id": "259", "code_desc": "Haryana"},
-        {"code_mst_id": "260", "code_desc": "Himachal Pradesh"},
-        {"code_mst_id": "263", "code_desc": "Goa"},
+        {"code_mst_id": "269", "code_desc": "Maharashtra"},
+        {"code_mst_id": "270", "code_desc": "Manipur"},
+        {"code_mst_id": "271", "code_desc": "Meghalaya"},
+        {"code_mst_id": "272", "code_desc": "Mizoram"},
+        {"code_mst_id": "273", "code_desc": "Nagaland"},
+        {"code_mst_id": "274", "code_desc": "Orissa"},
+        {"code_mst_id": "284", "code_desc": "Pondichery"},
+        {"code_mst_id": "275", "code_desc": "Punjab"},
+        {"code_mst_id": "276", "code_desc": "Rajasthan"},
+        {"code_mst_id": "277", "code_desc": "Sikkim"},
+        {"code_mst_id": "278", "code_desc": "Tamil Nadu"},
+        {"code_mst_id": "279", "code_desc": "Tripura"},
+        {"code_mst_id": "290", "code_desc": "Uttaranchal"},
+        {"code_mst_id": "280", "code_desc": "Uttar Pradesh"},
+        {"code_mst_id": "281", "code_desc": "West Bengal"},
+    ],
+    # 6 (Cities) — see _CITY_LIST_FALLBACKS below (keyed by state code_mst_id).
+    7: [  # Qualification — sqlMstId=1, param="28"
+        {"code_mst_id": "438",    "code_desc": "Ssc"},
+        {"code_mst_id": "439",    "code_desc": "Hsc"},
+        {"code_mst_id": "440",    "code_desc": "Graduation"},
+        {"code_mst_id": "441",    "code_desc": "Postgraduate, Professional Degrees (MBA, CA, MD, PhD, Engineering)"},
+        {"code_mst_id": "260532", "code_desc": "Diploma"},
+    ],
+    8: [  # Occupation — sqlMstId=1, param="6"
+        {"code_mst_id": "131",    "code_desc": "Service"},
+        {"code_mst_id": "132",    "code_desc": "Business"},
+        {"code_mst_id": "133",    "code_desc": "House Wife"},
+        {"code_mst_id": "134",    "code_desc": "Professional"},
+        {"code_mst_id": "135",    "code_desc": "Retired"},
+        {"code_mst_id": "136",    "code_desc": "Student"},
+        {"code_mst_id": "137",    "code_desc": "Other"},
+        {"code_mst_id": "938",    "code_desc": "Penshioner"},
+        {"code_mst_id": "939",    "code_desc": "Ex-service man"},
+        {"code_mst_id": "940",    "code_desc": "Unemployed"},
+        {"code_mst_id": "941",    "code_desc": "Cultivator"},
+        {"code_mst_id": "1071",   "code_desc": "Self Employed"},
+        {"code_mst_id": "1072",   "code_desc": "Defence Personal"},
+        {"code_mst_id": "260135", "code_desc": "Self Employed Professional"},
+        {"code_mst_id": "260134", "code_desc": "Salaried"},
+    ],
+    9: [  # Employment Type — sqlMstId=1, param="260475"
+        {"code_mst_id": "260492", "code_desc": "Salaried (Govt/PSU)"},
+        {"code_mst_id": "260493", "code_desc": "Salaried (Private MNC)"},
+        {"code_mst_id": "260494", "code_desc": "Salaried (Private Small Firm)"},
+        {"code_mst_id": "260495", "code_desc": "Self-Employed (Stable Income)"},
+        {"code_mst_id": "260496", "code_desc": "Self-Employed (Irregular Income)"},
+        {"code_mst_id": "260497", "code_desc": "Freelancer"},
+    ],
+    10: [  # Industry Type — sqlMstId=1, param="260467"
+        {"code_mst_id": "260537", "code_desc": "Other"},
+        {"code_mst_id": "260490", "code_desc": "Retail/Manufacturing"},
+        {"code_mst_id": "260491", "code_desc": "Construction/Tourism"},
+        {"code_mst_id": "260489", "code_desc": "Govt/Healthcare/Banking"},
+        {"code_mst_id": "260470", "code_desc": "IT Sector"},
+    ],
+    11: [  # Residential Status — sqlMstId=1, param="260511"
+        {"code_mst_id": "260512", "code_desc": "Owned House (No Mortgage)"},
+        {"code_mst_id": "260513", "code_desc": "Owned House (With Mortgage)"},
+        {"code_mst_id": "260514", "code_desc": "Rented (Long-Term >3 Years in Same Place)"},
+        {"code_mst_id": "260515", "code_desc": "Rented (Short-Term <3 Years, Frequent Movers)"},
+        {"code_mst_id": "260517", "code_desc": "Paying Guest (PG) / Hostel / Temporary Stay"},
+        {"code_mst_id": "260518", "code_desc": "Homeless / Unknown Address"},
+        {"code_mst_id": "260516", "code_desc": "Living with Family"},
+    ],
+    12: [  # Tenure Stability — sqlMstId=1, param="260520"
+        {"code_mst_id": "260521", "code_desc": "years_at_address > 3"},
+        {"code_mst_id": "260522", "code_desc": "1 <= years_at_address <= 3"},
+        {"code_mst_id": "260523", "code_desc": "years_at_address < 1"},
+    ],
+    13: [  # Purpose of Loan — sqlMstId=1050, param="102"
+        # Real API returns purpose_id/purpose_name; normalized to code_mst_id/code_desc.
+        {"code_mst_id": "1021", "code_desc": "Computer/ Laptop Purchase"},
+        {"code_mst_id": "1022", "code_desc": "Medical Treatment"},
+        {"code_mst_id": "1023", "code_desc": "Marriage"},
+        {"code_mst_id": "1359", "code_desc": "Purchase Of TV"},
+        {"code_mst_id": "1360", "code_desc": "Purchase of Phone"},
+        {"code_mst_id": "1361", "code_desc": "Other"},
+    ],
+    14: [  # Religion — sqlMstId=1, param="2"
+        {"code_mst_id": "102", "code_desc": "Hindu"},
+        {"code_mst_id": "942", "code_desc": "Jain"},
+        {"code_mst_id": "103", "code_desc": "Muslim"},
+        {"code_mst_id": "104", "code_desc": "Christian"},
+        {"code_mst_id": "105", "code_desc": "Budhha"},
+        {"code_mst_id": "106", "code_desc": "Sikha"},
+        {"code_mst_id": "107", "code_desc": "Parsi"},
+        {"code_mst_id": "108", "code_desc": "Yahudi"},
+        {"code_mst_id": "109", "code_desc": "Zoroistrian"},
+    ],
+    15: [  # Category — sqlMstId=1, param="8"
+        {"code_mst_id": "146", "code_desc": "SC"},
+        {"code_mst_id": "147", "code_desc": "ST"},
+        {"code_mst_id": "148", "code_desc": "OBC"},
+        {"code_mst_id": "149", "code_desc": "NT"},
+        {"code_mst_id": "150", "code_desc": "General"},
+        {"code_mst_id": "151", "code_desc": "Other"},
+    ],
+    16: [  # Country — sqlMstId=3313, param="''0''~C"
+        {"code_mst_id": "1", "code_desc": "India"},
+    ],
+}
+
+# City fallbacks keyed by state code_mst_id string (the param the front-end
+# passes when calling internal ID 6).  Only states whose district list appears
+# in docs/API Details.docx are populated; others return [] so the dropdown
+# stays blank rather than showing stale data.
+_CITY_LIST_FALLBACKS: dict[str, list[dict]] = {
+    "269": [  # Maharashtra — sqlMstId=22, param="269"
+        {"code_mst_id": "549", "code_desc": "Aurangabad"},
+        {"code_mst_id": "550", "code_desc": "Mumbai Suburban"},
+        {"code_mst_id": "551", "code_desc": "Nagpur"},
+        {"code_mst_id": "552", "code_desc": "Pune"},
+        {"code_mst_id": "553", "code_desc": "Akola"},
+        {"code_mst_id": "554", "code_desc": "Chandrapur"},
+        {"code_mst_id": "555", "code_desc": "Jalgaon"},
+        {"code_mst_id": "556", "code_desc": "Parbhani"},
+        {"code_mst_id": "558", "code_desc": "Thane"},
+        {"code_mst_id": "559", "code_desc": "Latur"},
+        {"code_mst_id": "560", "code_desc": "Mumbai-City"},
+        {"code_mst_id": "561", "code_desc": "Buldana"},
+        {"code_mst_id": "562", "code_desc": "Dhule"},
+        {"code_mst_id": "563", "code_desc": "Kolhpur"},
+        {"code_mst_id": "564", "code_desc": "Nanded"},
+        {"code_mst_id": "566", "code_desc": "Amravati"},
+        {"code_mst_id": "567", "code_desc": "Nashik"},
+        {"code_mst_id": "568", "code_desc": "Wardha"},
+        {"code_mst_id": "569", "code_desc": "Ahmednagar"},
+        {"code_mst_id": "570", "code_desc": "Beed"},
+        {"code_mst_id": "571", "code_desc": "Bhandara"},
+        {"code_mst_id": "572", "code_desc": "Gadchiroli"},
+        {"code_mst_id": "573", "code_desc": "Jalna"},
+        {"code_mst_id": "574", "code_desc": "Osmanabad"},
+        {"code_mst_id": "579", "code_desc": "Yavatmal"},
+        {"code_mst_id": "580", "code_desc": "Nandurbar"},
+        {"code_mst_id": "581", "code_desc": "Washim"},
+        {"code_mst_id": "582", "code_desc": "Gondia"},
+        {"code_mst_id": "583", "code_desc": "Hingoli"},
+        {"code_mst_id": "901", "code_desc": "Palghar"},
     ],
 }
 
 
+# Human-friendly label overrides for codes whose bank-side descriptions are
+# code-speak. Keyed by code_mst_id (as string) → friendly text. Applied to
+# both live API responses and fallback data via _normalize_code_list.
+_CODE_LABEL_OVERRIDES: dict[str, str] = {
+    # Tenure Stability (sqlMstId=1, param=260520) — the API returns raw rule
+    # strings like "years_at_address > 3"; show readable equivalents.
+    "260521": "More than 3 years",
+    "260522": "1 to 3 years",
+    "260523": "Less than 1 year",
+}
+
+
+def _normalize_code_list(raw: list[dict]) -> list[dict]:
+    """Normalize heterogeneous bank API responses to a uniform {code_mst_id, code_desc} shape.
+
+    Different endpoints return different field names:
+      • Most endpoints  → code_mst_id (int) + code_desc (str)
+      • Purpose of Loan → purpose_id  (int) + purpose_name (str)
+      • Country         → code_mst_id (int) + code_description (str)
+    All code_mst_id values are cast to str so front-end === comparisons work.
+    _CODE_LABEL_OVERRIDES rewrites code-speak descriptions to user-friendly text.
+    """
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        mst_id = item.get("code_mst_id") or item.get("purpose_id")
+        desc = (
+            item.get("code_desc")
+            or item.get("purpose_name")
+            or item.get("code_description")
+        )
+        if mst_id is None or desc is None:
+            out.append(item)  # pass through if shape is unexpected
+            continue
+        mst_id_str = str(mst_id)
+        friendly_desc = _CODE_LABEL_OVERRIDES.get(mst_id_str, str(desc))
+        out.append({"code_mst_id": mst_id_str, "code_desc": friendly_desc})
+    return out
+
+
 async def _fetch_code_list(sql_mst_id: int, param: str = "") -> list[dict]:
-    """Fetch code list from API with caching."""
-    cache_key = f"{sql_mst_id}:{param}"
+    """Fetch a code list from the bank API with in-memory caching.
+
+    ``sql_mst_id`` may be an internal shorthand ID (5–16) used by the
+    front-end, or a real bank API sqlMstId.  Shorthand IDs are translated to
+    the correct (sqlMstId, param) pair via ``_CODE_LIST_ID_MAP``; if the
+    caller also supplies a param it takes precedence (used for cities where the
+    caller passes the state code_mst_id as the param).
+    """
+    internal_id = sql_mst_id
+
+    if sql_mst_id in _CODE_LIST_ID_MAP:
+        real_sql_mst_id, default_param = _CODE_LIST_ID_MAP[sql_mst_id]
+        real_param = param if param else default_param
+    else:
+        real_sql_mst_id = sql_mst_id
+        real_param = param
+
+    cache_key = f"{real_sql_mst_id}:{real_param}"
     cached = _code_list_cache.get(cache_key)
     if cached and cached[0] > _time.time():
         return cached[1]
 
     try:
-        body: dict = {"sqlMstId": sql_mst_id}
-        if param:
-            body["param"] = param
-        async with httpx.AsyncClient(timeout=10) as client:
+        body: dict = {"sqlMstId": str(real_sql_mst_id)}
+        if real_param:
+            body["param"] = real_param
+        # Short timeout: the office LAN API responds in <500ms; anything slower
+        # means we're off-LAN and should fall back immediately rather than make
+        # the dropdown spin for 10s.
+        async with httpx.AsyncClient(timeout=2.5) as client:
             resp = await client.post(f"{CODE_LIST_API_URL}/api/getCodeList/", json=body)
             resp.raise_for_status()
             data = resp.json()
-        result = data if isinstance(data, list) else data.get("data", data.get("result", []))
+        raw = data if isinstance(data, list) else data.get("data", data.get("result", []))
+        result = _normalize_code_list(raw)
         _code_list_cache[cache_key] = (_time.time() + CODE_LIST_CACHE_TTL, result)
         return result
     except Exception as e:
-        print(f"[CodeList] Failed to fetch sqlMstId={sql_mst_id}: {e}")
-        return _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+        print(f"[CodeList] Failed to fetch sqlMstId={real_sql_mst_id} param={real_param}: {e}")
+        if internal_id == 6:
+            # Cities are state-scoped: look up by the state code_mst_id (real_param)
+            raw_fallback = _CITY_LIST_FALLBACKS.get(real_param, [])
+        else:
+            raw_fallback = _CODE_LIST_FALLBACKS.get(internal_id, [])
+        # Run fallback through the same normalization so _CODE_LABEL_OVERRIDES
+        # apply uniformly whether data came from the API or the in-repo fallback.
+        fallback = _normalize_code_list(raw_fallback)
+        # Cache the fallback too, with a short TTL, so subsequent requests
+        # don't re-eat the timeout. The TTL is short enough that the bank API
+        # gets retried periodically in case it becomes reachable.
+        if fallback:
+            _code_list_cache[cache_key] = (_time.time() + CODE_LIST_FALLBACK_TTL, fallback)
+        return fallback
 
 
 @app.get("/api/code-list/{sql_mst_id}")
 async def get_code_list(sql_mst_id: int, param: str = ""):
     """Proxy for getCodeList API — returns dropdown options with code_mst_id + code_desc."""
     data = await _fetch_code_list(sql_mst_id, param)
-    fallback = len(data) > 0 and data == _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+    # Determine whether the response came from a fallback. Both sides must be
+    # normalized since live API data and fallback data both pass through
+    # _normalize_code_list now.
+    if sql_mst_id == 6:
+        raw_fb = _CITY_LIST_FALLBACKS.get(param, [])
+    else:
+        raw_fb = _CODE_LIST_FALLBACKS.get(sql_mst_id, [])
+    fallback = len(data) > 0 and data == _normalize_code_list(raw_fb)
     return {"status": "success", "data": data, "fallback": fallback}
 
 
@@ -3264,6 +3531,88 @@ def build_api_payload(app_data: dict) -> dict:
         "pinCode": app_data.get("current_pincode", ""),
         "curr_state": app_data.get("current_state_code", ""),
         "curr_city": app_data.get("current_city_code", ""),
+        "curr_country": "1",
+        "permanentAddress1": perm_addr or app_data.get("permanent_address", ""),
+        "per_state": per_state,
+        "per_city": per_city,
+        "per_country": "1",
+        "qualification": app_data.get("qualification", ""),
+        "occupation": app_data.get("occupation", ""),
+        "industryType": app_data.get("industry_type", ""),
+        "employmentType": app_data.get("employment_type", ""),
+        "employerName": app_data.get("employer_name", ""),
+        "designation": app_data.get("designation", ""),
+        "totalWorkExp": str(app_data.get("total_work_experience", "")),
+        "totalWorkExpCurOrg": str(app_data.get("experience_current_org", "")),
+        "residentialStatus": app_data.get("residential_status", ""),
+        "tenureStatbility": app_data.get("tenure_stability", ""),
+        "employerAddress": app_data.get("employer_address", ""),
+        "requestedLoanAmt": str(app_data.get("loan_amount_requested", "")),
+        "loanRepaymentPeriod": months,
+        "purposeOfLoan": app_data.get("purpose_of_loan", ""),
+        "scheme": app_data.get("scheme", ""),
+        "monthlyGrossIncome": str(app_data.get("monthly_gross_income", "")),
+        "monthlyDeduction": str(app_data.get("monthly_deductions", "")),
+        "monthlyEMI": str(app_data.get("monthly_emi_existing", "")),
+        "monthlyNetIncome": str(app_data.get("monthly_net_income", "")),
+        "salarySlip": app_data.get("salary_slips_url", ""),
+        "itrDocument": app_data.get("itr_form16_url", ""),
+        "bankStatementDocument": app_data.get("bank_statements_url", ""),
+        "itrJsonData": {},
+        "bankStatementJsonData": {},
+    }
+
+
+# ============================================
+# API PAYLOAD BUILDER (lrsAnalysisSummary)
+# ============================================
+# TODO(lrs-integration): wire this into a background task fired on form submission
+# once the bank provides the public lrsAnalysisSummary endpoint URL. The response
+# should populate system_suggestion / system_score / system_suggestion_reason on
+# the loan_applications row. Not called from any route yet.
+
+def build_api_payload(app_data: dict) -> dict:
+    """Convert loan_applications row → lrsAnalysisSummary API payload (42 fields)."""
+    # Take the last 10 digits — lstrip("91") treats it as a char set, not a prefix.
+    _digits = ''.join(c for c in (app_data.get("phone") or "") if c.isdigit())
+    phone = _digits[-10:] if len(_digits) >= 10 else _digits
+    # Concatenate address parts for API.  Permanent is the source-of-truth
+    # (auto-filled from Aadhaar); current either mirrors it (when the
+    # legacy-named ``same_as_current`` flag is set, which now semantically
+    # means "current == permanent") or is user-entered.
+    per_parts = [app_data.get("permanent_house", ""), app_data.get("permanent_street", ""),
+                 app_data.get("permanent_landmark", ""), app_data.get("permanent_locality", "")]
+    perm_addr = ", ".join([p for p in per_parts if p and str(p).strip()])
+    per_state = app_data.get("permanent_state_code", "")
+    per_city = app_data.get("permanent_city_code", "")
+    is_same = app_data.get("same_as_current", False)
+    if is_same:
+        current_addr = perm_addr
+        curr_state = per_state
+        curr_city = per_city
+    else:
+        cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
+                     app_data.get("current_landmark", ""), app_data.get("current_locality", "")]
+        current_addr = ", ".join([p for p in cur_parts if p and str(p).strip()])
+        curr_state = app_data.get("current_state_code", "")
+        curr_city = app_data.get("current_city_code", "")
+    # Repayment period: years → months
+    years = app_data.get("repayment_period_years")
+    months = str(int(float(years) * 12)) if years else ""
+    return {
+        "panNo": app_data.get("pan_number", ""),
+        "firstName": app_data.get("first_name", ""),
+        "middleName": app_data.get("middle_name", ""),
+        "lastName": app_data.get("last_name", ""),
+        "dateOfBirth": app_data.get("date_of_birth", ""),
+        "phoneNo": phone,
+        "gender": app_data.get("gender", ""),
+        "maritalStatus": app_data.get("marital_status", ""),
+        "enqId": app_data.get("loan_id", ""),
+        "currentAddress1": current_addr or app_data.get("current_address", ""),
+        "pinCode": (app_data.get("permanent_pincode", "") if is_same else app_data.get("current_pincode", "")),
+        "curr_state": curr_state,
+        "curr_city": curr_city,
         "curr_country": "1",
         "permanentAddress1": perm_addr or app_data.get("permanent_address", ""),
         "per_state": per_state,

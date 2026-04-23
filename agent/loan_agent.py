@@ -399,6 +399,28 @@ async def end_call(context: RunContext, reason: str) -> str:
     session.call_outcome = reason
     logger.info(f"📞 END CALL: {reason}")
 
+    # Send WhatsApp form link if customer was interested
+    if reason == "interested" and not session.form_link_sent:
+        try:
+            async with aiohttp.ClientSession() as http:
+                await http.post(
+                    f"{BACKEND_URL}/api/agent/send-whatsapp-form",
+                    json={
+                        "phone": session.phone,
+                        "customer_name": session.customer_name,
+                        "customer_type": session.customer_type,
+                        "call_id": session.call_id,
+                        "loan_type": session.loan_type or "personal",
+                        "estimated_amount": session.loan_amount or 0,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    ssl=False,
+                )
+            session.form_link_sent = True
+            logger.info(f"📲 WhatsApp form link sent to {session.phone}")
+        except Exception as e:
+            logger.error(f"❌ WhatsApp send failed: {e}")
+
     # Schedule graceful disconnect with extra time for final speech
     asyncio.create_task(session.save_and_disconnect(delay=8.0))
 

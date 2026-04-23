@@ -2020,35 +2020,18 @@ async def portal_reset_vendor_user_password(
 # ============================================================
 
 import asyncio as _asyncio
-_call_subscribers: dict[str, list["_asyncio.Queue"]] = {}
-_ended_calls: set[str] = set()
 
+# ---------- Call (live-transcript) SSE pub/sub ----------
+# Lives in a dedicated `call_pubsub` module — see that file for why.
+# Same pattern we use for batches.
+import call_pubsub as _call_pubsub
 
-async def publish_to_call(call_id: str, payload: dict):
-    queues = _call_subscribers.get(call_id, [])
-    for q in list(queues):
-        try:
-            q.put_nowait(payload)
-        except Exception:
-            pass
-
-
-def _subscribe_call(call_id: str) -> "_asyncio.Queue":
-    q: _asyncio.Queue = _asyncio.Queue(maxsize=256)
-    _call_subscribers.setdefault(call_id, []).append(q)
-    return q
-
-
-def _unsubscribe_call(call_id: str, q: "_asyncio.Queue") -> None:
-    queues = _call_subscribers.get(call_id, [])
-    if q in queues:
-        queues.remove(q)
-    if not queues:
-        _call_subscribers.pop(call_id, None)
-
-
-def mark_call_ended(call_id: str):
-    _ended_calls.add(call_id)
+# Back-compat shims so references elsewhere keep working; the real state lives
+# in _call_pubsub._subscribers / _call_pubsub._ended.
+publish_to_call = _call_pubsub.publish
+_subscribe_call = _call_pubsub.subscribe
+_unsubscribe_call = _call_pubsub.unsubscribe
+mark_call_ended = _call_pubsub.mark_ended
 
 
 # ---------- Batch SSE pub/sub ----------
@@ -2653,7 +2636,7 @@ async def live_transcript_stream(
                 try:
                     evt = await _asyncio.wait_for(queue.get(), timeout=25)
                     yield _sse("transcript", evt)
-                    if call_id in _ended_calls:
+                    if _call_pubsub.is_ended(call_id):
                         yield _sse("done", {"call_id": call_id})
                         break
                 except _asyncio.TimeoutError:

@@ -1650,8 +1650,8 @@ async def save_transcript_chunk(data: TranscriptChunkPayload):
         return {"status": "error", "message": "call not identified"}
 
     try:
-        from main import publish_to_call
-        await publish_to_call(str(call_uuid), {
+        import call_pubsub
+        await call_pubsub.publish(str(call_uuid), {
             "role": data.role,
             "text": data.text,
             "language": data.language,
@@ -1767,10 +1767,10 @@ async def save_transcript(data: TranscriptPayload):
     # Publish each transcript entry so SSE subscribers see the full conversation
     # and mark the call as ended so live streams terminate cleanly.
     try:
-        from main import publish_to_call, mark_call_ended  # lazy import to avoid cycle at module load
+        import call_pubsub
         for entry in transcript:
-            await publish_to_call(str(actual_uuid), entry)
-        mark_call_ended(str(actual_uuid))
+            await call_pubsub.publish(str(actual_uuid), entry)
+        call_pubsub.mark_ended(str(actual_uuid))
     except Exception:
         pass
 

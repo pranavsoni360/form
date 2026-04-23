@@ -1719,7 +1719,7 @@ async def send_whatsapp_form(request: Request):
     # character-class footgun (lstrip("91") strips any leading 9s and 1s).
     _digits = ''.join(c for c in (phone_norm or '') if c.isdigit())
     bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
-    form_url = f"{FORM_BASE_URL}?phone={bare_phone}" if bare_phone else FORM_BASE_URL
+    form_url = f"{FORM_BASE_URL}/loan-form?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/loan-form"
 
     if phone_norm:
         # Check if application already exists for this phone
@@ -1847,7 +1847,7 @@ async def send_whatsapp_form(request: Request):
             "campaignName": AISENSY_CAMPAIGN_NAME,
             "destination": wa_phone,
             "userName": AISENSY_USERNAME,
-            "templateParams": [first_name, first_name, bare_phone or ""],
+            "templateParams": [first_name, bare_phone or ""],
             "source": "loan-voice-agent",
             "media": {"url": AISENSY_IMAGE_URL, "filename": "loan_form"},
             "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
@@ -1859,7 +1859,7 @@ async def send_whatsapp_form(request: Request):
         try:
             async with aiohttp.ClientSession() as http:
                 async with http.post(
-                    "https://backend.aisensy.com/campaign/t1/api/v2",
+                    "https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2",
                     json=payload, timeout=aiohttp.ClientTimeout(total=10), ssl=False,
                 ) as resp:
                     aisensy_ok = resp.status == 200

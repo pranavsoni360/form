@@ -623,6 +623,29 @@ async def send_whatsapp_message(phone: str, message: str, token_id: str = None):
 
             return response_data
 
+async def send_otp_via_aisensy(phone: str, otp: str) -> dict:
+    """Send OTP via AiSensy otp_verification WhatsApp campaign."""
+    if not AISENSY_API_KEY:
+        print(f"[AiSensy OTP] Not configured. OTP for {phone}: {otp}")
+        return {"status": "simulated"}
+    phone_formatted = clean_phone(phone)
+    payload = {
+        "apiKey": AISENSY_API_KEY,
+        "campaignName": "otp_verification",
+        "destination": phone_formatted,
+        "userName": AISENSY_USERNAME,
+        "templateParams": [otp],
+        "source": "loan-form-otp",
+        "media": {},
+        "buttons": [{"type": "button", "sub_type": "url", "index": 0, "parameters": [{"type": "text", "text": otp}]}],
+        "carouselCards": [], "location": {}, "attributes": {},
+        "paramsFallbackValue": {"FirstName": "user"},
+    }
+    async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        try:
+            response = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
+            print(f"[AiSensy OTP] {phone_formatted} -> {response.status_code}")
+            return response.json() if response.text else {"status": "sent"}
         except Exception as e:
             print(f"[AiSensy OTP] Error: {e}")
             return {"status": "failed", "error": str(e)}
@@ -654,7 +677,7 @@ async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params:
     }
     async with httpx.AsyncClient(verify=False) as client:
         try:
-            response = await client.post("https://backend.aisensy.com/campaign/t1/api/v2", json=payload)
+            response = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
             return response.json() if response.text else {"status": "sent"}
         except Exception as e:
             return {"status": "failed", "error": str(e)}

@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
 import { StatusBadge, SuggestionBadge } from './StatusBadge'
 
+type FieldSource = { source: string; original?: string; modified?: boolean }
+type FieldSources = Record<string, FieldSource>
+
 export function ApplicationBody({
   app,
   timeline,
@@ -14,6 +17,7 @@ export function ApplicationBody({
 }) {
   const fmtCurrency = (v: any) => v != null ? `₹${Number(v).toLocaleString('en-IN')}` : '—'
   const fmt = (v: any) => v || '—'
+  const sources: FieldSources | undefined = app.field_sources || undefined
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -27,8 +31,8 @@ export function ApplicationBody({
         </Section>
 
         <Section title="Personal">
-          <KV items={[
-            ['Full name', fmt(app.full_name || app.customer_name)],
+          <KV sources={sources} items={[
+            ['Full name', fmt(app.full_name || app.customer_name), 'full_name'],
             ['Date of birth', app.date_of_birth ? new Date(app.date_of_birth).toLocaleDateString() : '—'],
             ['Gender', fmt(app.gender)],
             ['Marital status', fmt(app.marital_status)],
@@ -38,28 +42,28 @@ export function ApplicationBody({
         </Section>
 
         <Section title="Address">
-          <KV items={[
-            ['Current', fmt(app.current_address || [app.current_house, app.current_street, app.current_locality, app.current_pincode].filter(Boolean).join(', '))],
+          <KV sources={sources} items={[
+            ['Current', fmt(app.current_address || [app.current_house, app.current_street, app.current_locality, app.current_pincode].filter(Boolean).join(', ')), 'current_address'],
             ['Permanent', fmt(app.permanent_address || [app.permanent_house, app.permanent_street, app.permanent_locality, app.permanent_pincode].filter(Boolean).join(', '))],
           ]} />
         </Section>
 
         <Section title="Employment">
-          <KV items={[
-            ['Type', fmt(app.employment_type)],
-            ['Employer', fmt(app.employer_name)],
-            ['Designation', fmt(app.designation)],
-            ['Industry', fmt(app.industry_type)],
+          <KV sources={sources} items={[
+            ['Type', fmt(app.employment_type), 'employment_type'],
+            ['Employer', fmt(app.employer_name), 'employer_name'],
+            ['Designation', fmt(app.designation), 'designation'],
+            ['Industry', fmt(app.industry_type), 'industry_type'],
             ['Experience (total)', fmt(app.total_work_experience)],
             ['Experience (current org)', fmt(app.experience_current_org)],
           ]} />
         </Section>
 
         <Section title="Financial">
-          <KV items={[
-            ['Gross income', fmtCurrency(app.monthly_gross_income)],
+          <KV sources={sources} items={[
+            ['Gross income', fmtCurrency(app.monthly_gross_income), 'monthly_gross_income'],
             ['Net income', fmtCurrency(app.monthly_net_income)],
-            ['Existing EMI', fmtCurrency(app.monthly_emi_existing)],
+            ['Existing EMI', fmtCurrency(app.monthly_emi_existing), 'monthly_emi_existing'],
             ['Deductions', fmtCurrency(app.monthly_deductions)],
           ]} />
         </Section>
@@ -72,10 +76,10 @@ export function ApplicationBody({
         </Section>
 
         <Section title="Loan">
-          <KV items={[
-            ['Amount requested', fmtCurrency(app.loan_amount_requested)],
+          <KV sources={sources} items={[
+            ['Amount requested', fmtCurrency(app.loan_amount_requested), 'loan_amount_requested'],
             ['Tenure (years)', fmt(app.repayment_period_years)],
-            ['Purpose', fmt(app.purpose_of_loan || app.loan_purpose)],
+            ['Purpose', fmt(app.purpose_of_loan || app.loan_purpose), 'purpose_of_loan'],
             ['Scheme', fmt(app.scheme)],
           ]} />
         </Section>
@@ -134,15 +138,50 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function KV({ items }: { items: [string, string][] }) {
+type KVItem = [label: string, value: ReactNode, fieldKey?: string]
+
+function KV({ items, sources }: { items: KVItem[]; sources?: FieldSources }) {
   return (
     <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
-      {items.map(([label, value]) => (
+      {items.map(([label, value, key]) => (
         <div key={label}>
-          <dt className="text-xs text-[var(--color-muted)]">{label}</dt>
+          <dt className="text-xs text-[var(--color-muted)] inline-flex items-center flex-wrap gap-1">
+            <span>{label}</span>
+            {key && sources ? <SourceBadge src={sources[key]} /> : null}
+          </dt>
           <dd className="mt-0.5 text-sm text-[var(--color-heading)]">{value}</dd>
         </div>
       ))}
     </dl>
+  )
+}
+
+function SourceBadge({ src }: { src: FieldSource | null | undefined }) {
+  if (!src) return null
+  const modified = !!src.modified
+  const label = modified
+    ? 'Modified'
+    : src.source === 'pan'
+      ? 'PAN'
+      : src.source === 'aadhaar'
+        ? 'Aadhaar'
+        : src.source === 'agent_call'
+          ? 'Voice Call'
+          : src.source
+  const cls = modified
+    ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
+    : src.source === 'agent_call'
+      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+  const tip = modified
+    ? `Original from ${String(src.source).toUpperCase()}${src.original ? `: ${src.original}` : ''}`
+    : `${src.source === 'agent_call' ? 'Collected during voice call' : `Fetched from ${String(src.source).toUpperCase()}`}${src.original ? ` · ${src.original}` : ''}`
+  return (
+    <span
+      title={tip}
+      className={`px-1.5 py-0.5 text-[9px] font-medium rounded inline-flex items-center ${cls}`}
+    >
+      {label}
+    </span>
   )
 }

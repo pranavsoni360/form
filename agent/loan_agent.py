@@ -129,19 +129,52 @@ class LoanEnquirySession:
 
         logger.info(f"🏦 Session: {self.customer_name} | Type: {self.customer_type.upper()} | Lang: {self.language} | Memory: {'YES' if self.memory else 'NO'}")
 
+    async def _post_chunk(self, role: str, text: str) -> None:
+        """Fire-and-forget POST of one transcript entry to /api/agent/transcript-chunk.
+
+        Powers the /api/live-transcript/{call_id} SSE stream so the admin/portal
+        CallDetail page sees utterances as they happen, not just at call end.
+        Best-effort: 2s timeout, exceptions swallowed. Dropped chunks are harmless
+        because the final /transcript webhook still persists the canonical array.
+        """
+        try:
+            payload = {
+                "call_id":   self.call_id,         # may be None early; room is fallback
+                "room":      self.room_name,
+                "role":      role,
+                "text":      text,
+                "language":  self.language,
+                "timestamp": now_ist(),
+                "final":     True,
+            }
+            timeout = aiohttp.ClientTimeout(total=2)
+            async with aiohttp.ClientSession(timeout=timeout) as http:
+                async with http.post(
+                    f"{BACKEND_URL}/api/agent/transcript-chunk",
+                    json=payload,
+                    ssl=False,
+                ):
+                    pass  # body not needed
+        except Exception as e:
+            logger.warning(f"⚠️ transcript-chunk post failed (non-fatal): {e}")
+
     def add_user_message(self, text: str):
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "user", "text": text.strip(), "timestamp": now_ist()})
-        logger.info(f"👤 USER: {text}")
+        cleaned = text.strip()
+        self.transcript.append({"role": "user", "text": cleaned, "timestamp": now_ist()})
+        logger.info(f"👤 USER: {cleaned}")
+        asyncio.create_task(self._post_chunk("user", cleaned))
 
     def add_agent_message(self, text: str):
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "agent", "text": text.strip(), "timestamp": now_ist()})
-        logger.info(f"🤖 AGENT: {text}")
+        cleaned = text.strip()
+        self.transcript.append({"role": "agent", "text": cleaned, "timestamp": now_ist()})
+        logger.info(f"🤖 AGENT: {cleaned}")
+        asyncio.create_task(self._post_chunk("agent", cleaned))
 
     def set_lead_quality(self, interest: bool, reason: str = ""):
         self.customer_interested = interest

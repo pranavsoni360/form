@@ -691,7 +691,7 @@ async def send_otp_via_aisensy(phone: str, otp: str) -> dict:
     }
     async with httpx.AsyncClient(verify=False, timeout=10) as client:
         try:
-            response = await client.post("https://backend.aisensy.com/campaign/t1/api/v2", json=payload)
+            response = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
             print(f"[AiSensy OTP] {phone_formatted} -> {response.status_code}")
             return response.json() if response.text else {"status": "sent"}
         except Exception as e:
@@ -715,7 +715,7 @@ async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params:
     }
     async with httpx.AsyncClient(verify=False) as client:
         try:
-            response = await client.post("https://backend.aisensy.com/campaign/t1/api/v2", json=payload)
+            response = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
             return response.json() if response.text else {"status": "sent"}
         except Exception as e:
             return {"status": "failed", "error": str(e)}

@@ -18,7 +18,10 @@ export default function PortalCalls() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Calls</h1>
-        <Button onClick={() => navigate('/portal/calls/new')}>+ New call</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => navigate('/portal/calls/bulk')}>+ Bulk upload</Button>
+          <Button onClick={() => navigate('/portal/calls/new')}>+ New call</Button>
+        </div>
       </div>
       {loading ? (
         <div className="text-sm text-[var(--color-muted)]">Loading…</div>

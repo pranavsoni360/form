@@ -227,6 +227,15 @@ export const portalApi = {
   call:            (id: string) => apiFetch<{ call: any }>(`/api/portal/calls/${id}`),
   initiateCall:    (payload: { customer_name: string; phone: string; loan_type?: string; loan_amount?: string; language?: string }) =>
     apiFetch<{ call: any }>('/api/portal/calls/single', { method: 'POST', body: JSON.stringify(payload) }),
+  uploadBulk:      (formData: FormData) =>
+    apiFetch<{ batch_id: string; batch_uuid?: string; total_records?: number; inserted_count?: number }>(
+      '/api/portal/calls/bulk',
+      { method: 'POST', body: formData },
+    ),
+  batches:         (status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+    return apiFetch<{ batches: any[] }>(`/api/portal/batches${qs}`)
+  },
 }
 
 // Admin calls
@@ -236,6 +245,31 @@ export const adminCallsApi = {
     return apiFetch<{ calls: any[] }>(`/api/admin/calls${qs ? `?${qs}` : ''}`)
   },
   get:  (id: string) => apiFetch<{ call: any }>(`/api/admin/calls/${id}`),
+  initiateCall: (payload: {
+    customer_name: string
+    phone: string
+    loan_type?: string
+    loan_amount?: string
+    language?: string
+    bank_id: string
+    vendor_id?: string | null
+  }) => apiFetch<{ call: any }>('/api/admin/calls/single', { method: 'POST', body: JSON.stringify(payload) }),
+  uploadBulk: (formData: FormData) =>
+    apiFetch<{ batch_id: string; batch_uuid?: string; total_records?: number; inserted_count?: number }>(
+      '/api/admin/calls/bulk',
+      { method: 'POST', body: formData },
+    ),
+  listBatches: (filters: { status?: string; bank_id?: string } = {}) => {
+    const qs = new URLSearchParams(filters as any).toString()
+    return apiFetch<{ batches: any[] }>(`/api/admin/batches${qs ? `?${qs}` : ''}`)
+  },
+}
+
+// Shared batch lifecycle (admin + bank + vendor — scope is enforced server-side)
+export const batchApi = {
+  get:    (id: string) => apiFetch<{ batch: any; counts: Record<string, number>; calls: any[] }>(`/api/calls/batch/${id}`),
+  start:  (id: string) => apiFetch<{ status: string }>(`/api/calls/batch/${id}/start`, { method: 'POST' }),
+  cancel: (id: string) => apiFetch<{ status: string }>(`/api/calls/batch/${id}/cancel`, { method: 'POST' }),
 }
 
 // Live transcript — uses fetch+ReadableStream to keep Bearer auth

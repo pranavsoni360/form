@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { adminCallsApi } from '../../services/api'
 import { Placeholder } from '../../components/Placeholder'
 import { StatusBadge } from '../../components/StatusBadge'
+import { Button } from '../../components/Field'
 
 export default function AdminCalls() {
   const [calls, setCalls] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string | undefined>()
+  const navigate = useNavigate()
 
   useEffect(() => {
     setLoading(true)
@@ -18,9 +20,15 @@ export default function AdminCalls() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Calls</h1>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">All call logs across banks and vendors.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Calls</h1>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">All call logs across banks and vendors.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => navigate('/admin/calls/bulk')}>+ Bulk upload</Button>
+          <Button onClick={() => navigate('/admin/calls/new')}>+ New call</Button>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <Pill active={filter === undefined} onClick={() => setFilter(undefined)}>All</Pill>

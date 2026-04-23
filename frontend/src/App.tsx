@@ -12,6 +12,8 @@ import AdminApplicationsList from './pages/admin/ApplicationsList'
 import AdminApplicationDetail from './pages/admin/ApplicationDetail'
 import AdminCalls from './pages/admin/Calls'
 import AdminCallDetail from './pages/admin/CallDetail'
+import AdminCallNew from './pages/admin/CallNew'
+import AdminCallBulk from './pages/admin/CallBulk'
 import PortalDashboard from './pages/portal/Dashboard'
 import PortalApplications from './pages/portal/Applications'
 import PortalApplicationDetail from './pages/portal/ApplicationDetail'
@@ -19,6 +21,7 @@ import PortalVendors from './pages/portal/Vendors'
 import PortalVendorDetail from './pages/portal/VendorDetail'
 import PortalCalls from './pages/portal/Calls'
 import PortalCallNew from './pages/portal/CallNew'
+import PortalCallBulk from './pages/portal/CallBulk'
 import PortalCallDetail from './pages/portal/CallDetail'
 
 function RequireAuth({ role, children }: { role: 'admin' | 'portal'; children: React.ReactNode }) {
@@ -48,6 +51,8 @@ function AppRoutes() {
         <Route path="applications" element={<AdminApplicationsList />} />
         <Route path="applications/:id" element={<AdminApplicationDetail />} />
         <Route path="calls" element={<AdminCalls />} />
+        <Route path="calls/new" element={<AdminCallNew />} />
+        <Route path="calls/bulk" element={<AdminCallBulk />} />
         <Route path="calls/:id" element={<AdminCallDetail />} />
       </Route>
 
@@ -60,6 +65,7 @@ function AppRoutes() {
         <Route path="vendors/:id" element={<PortalVendorDetail />} />
         <Route path="calls" element={<PortalCalls />} />
         <Route path="calls/new" element={<PortalCallNew />} />
+        <Route path="calls/bulk" element={<PortalCallBulk />} />
         <Route path="calls/:id" element={<PortalCallDetail />} />
       </Route>
 

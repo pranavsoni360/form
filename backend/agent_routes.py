@@ -419,6 +419,33 @@ async def get_current_bank_user(
     }
 
 
+async def require_admin_local(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    """Admin-only dependency for legacy /api/agent/* endpoints.
+
+    Duplicates main.py's require_admin locally to avoid a circular import
+    (main.py imports agent_routes at module top-level). Auth is enforced
+    strictly — no operator fallback like get_current_bank_user has.
+    """
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Admin authentication required")
+    try:
+        payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {
+        "user_id": payload["user_id"],
+        "role": "admin",
+        "bank_id": None,
+        "vendor_id": None,
+    }
+
+
 def _bank_uuid(user: dict):
     """Bank scope UUID: admin/operator see all; bank/vendor users are bank-scoped."""
     bid = user.get("bank_id")
@@ -618,6 +645,181 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
     return _row_to_dict(row)
 
 
+async def _publish_batch_update(call: dict) -> None:
+    """If the call belongs to a batch, publish a status update to SSE subscribers.
+    Uses the shared `batch_pubsub` singleton (NOT `from main import ...`) so the
+    subscriber dict is the same one the SSE endpoint writes to even when main.py
+    runs as __main__. Swallows any errors — batch SSE is best-effort."""
+    batch_id = call.get("batch_id")
+    if not batch_id:
+        return
+    try:
+        import batch_pubsub
+        await batch_pubsub.publish(str(batch_id), {
+            "call_id": str(call.get("id", "")),
+            "status": call.get("status"),
+            "customer_name": call.get("customer_name"),
+            "phone": call.get("phone"),
+        })
+    except Exception as e:
+        logger.debug(f"publish_to_batch skipped: {e}")
+
+
+async def dispatch_call(call_id: str, wait_for_completion: bool = True) -> dict:
+    """LiveKit room + SIP participant + agent dispatch for a single agent_calls row.
+
+    Shared by the batch runner (wait_for_completion=True so we know when to dial
+    the next one) and the admin/portal single-call endpoints (wait_for_completion
+    =False — agent reports status back via /api/agent/transcript).
+
+    Returns a summary dict with keys: status, room_name?, error?, outcome?"""
+    call_uuid = uuid.UUID(call_id)
+    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    if not row:
+        return {"status": "not_found"}
+    call = _row_to_dict(row)
+    name = call.get("customer_name") or "Customer"
+    phone = (call.get("phone") or "").strip()
+
+    # Phone validation
+    if not phone or len(phone) < 10:
+        await db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Invalid Phone', retry_count = retry_count + 1, updated_at = $1
+               WHERE id = $2""",
+            now_ist(), call_uuid,
+        )
+        call["status"] = "Invalid Phone"
+        await _publish_batch_update(call)
+        return {"status": "invalid_phone"}
+
+    call_start = now_ist()
+    try:
+        await db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Calling', started_at = $1, updated_at = $1
+               WHERE id = $2""",
+            call_start, call_uuid,
+        )
+        call["status"] = "Calling"
+        await _publish_batch_update(call)
+
+        if DEMO_MODE:
+            room_name = f"demo_{secrets.token_hex(6)}_{int(time.time())}"
+            await db_pool.execute(
+                "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
+                room_name, call_uuid,
+            )
+            await asyncio.sleep(3)
+
+            import random as rng
+            interested = rng.choice([True, True, False])
+            loan_type = rng.choice(["personal", "business", "education"])
+            status = "Called - Interested" if interested else "Called - Not Interested"
+            lead_quality = "hot" if interested else "cold"
+            demo_transcript = [
+                {"role": "agent", "text": f"Hello, am I speaking with {name}?", "timestamp": now_ist_str()},
+                {"role": "user", "text": "Yes, speaking.", "timestamp": now_ist_str()},
+            ]
+            call_end = now_ist()
+            duration_seconds = int((call_end - call_start).total_seconds())
+            category = "Very Interested - Form Sent" if interested else "Not Interested - No Need Currently"
+
+            await db_pool.execute(
+                """UPDATE agent_calls SET
+                    transcript = $1, status = $2, call_duration = $3,
+                    ended_at = $4, updated_at = $4,
+                    interested = $5, loan_type = $6,
+                    category = $7,
+                    call_analysis = $8,
+                    collected_data = $9
+                   WHERE id = $10""",
+                json.dumps(demo_transcript),
+                status,
+                duration_seconds,
+                call_end,
+                interested,
+                loan_type if interested else None,
+                category,
+                json.dumps({"lead_quality": lead_quality, "follow_up_needed": "Yes" if interested else "No"}),
+                json.dumps({"loan_type": loan_type}) if interested else None,
+                call_uuid,
+            )
+            call["status"] = status
+            await _publish_batch_update(call)
+            return {"status": "completed", "outcome": status, "room_name": room_name}
+
+        # --- Real LiveKit + SIP call ---
+        room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
+        lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+
+        bank_id_val = call.get("bank_id")
+        await lk.room.create_room(api.CreateRoomRequest(
+            name=room_name, empty_timeout=300, max_participants=3,
+            metadata=json.dumps({
+                "customer_name": name,
+                "phone": phone,
+                "call_id": str(call_uuid),
+                "bank_id": str(bank_id_val) if bank_id_val else "",
+                "language": call.get("language", "hindi"),
+            }),
+        ))
+        await db_pool.execute(
+            "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
+            room_name, call_uuid,
+        )
+
+        sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
+        await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
+            room_name=room_name,
+            sip_trunk_id=SIP_TRUNK_ID,
+            sip_call_to=sip_phone,
+            participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
+            participant_name=name,
+            play_ringtone=True,
+        ))
+        await asyncio.sleep(1.0)
+        await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
+            room=room_name, agent_name=AGENT_NAME,
+        ))
+        await lk.aclose()
+
+        if wait_for_completion:
+            result = await wait_for_call_completion(str(call_uuid), room_name)
+            if result:
+                fs = result.get("status", "Unknown")
+                call["status"] = fs
+                await _publish_batch_update(call)
+                if fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested"):
+                    return {"status": "completed", "outcome": fs, "room_name": room_name}
+                return {"status": "failed", "outcome": fs, "room_name": room_name}
+            return {"status": "failed", "room_name": room_name}
+        else:
+            # Fire-and-forget path for single-call endpoints; completion is
+            # reported via /api/agent/transcript from the agent runtime.
+            return {"status": "dispatched", "room_name": room_name}
+
+    except Exception as e:
+        logger.error(f"dispatch_call error for {name}: {e}")
+        await db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Failed', error_message = $1,
+                   ended_at = $2, updated_at = $2,
+                   retry_count = retry_count + 1
+               WHERE id = $3""",
+            str(e), now_ist(), call_uuid,
+        )
+        call["status"] = "Failed"
+        await _publish_batch_update(call)
+        return {"status": "failed", "error": str(e)}
+
+
+# Global concurrency clamp for batch dispatch. For now fixed at 1 (sequential);
+# set MAX_BATCH_CONCURRENCY=N to allow more — requires also revisiting the
+# inter-call sleep below.
+MAX_BATCH_CONCURRENCY = int(os.getenv("MAX_BATCH_CONCURRENCY", "1"))
+
+
 async def process_batch_run(batch_uuid_str: str = None):
     """Batch-based processing — only processes calls belonging to a batch in 'running' state.
     If batch_uuid_str is provided, process that specific batch.
@@ -653,7 +855,9 @@ async def process_batch_run(batch_uuid_str: str = None):
 
         batch = _row_to_dict(batch_row)
         batch_id = batch["id"]
-        logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')})")
+        # Clamp per-batch concurrency against the global env ceiling.
+        batch_max_conc = max(1, min(int(batch.get("max_concurrent") or 1), MAX_BATCH_CONCURRENCY))
+        logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')}) | concurrency={batch_max_conc}")
 
         # Get pending calls for THIS batch only (using the string batch_id that links calls to batches)
         call_batch_id = batch.get("batch_id") or batch_id
@@ -679,9 +883,14 @@ async def process_batch_run(batch_uuid_str: str = None):
         logger.info(f"Batch {batch_id} | {total} pending calls")
 
         for idx, call in enumerate(pending, 1):
-            call_uuid = uuid.UUID(call["id"])
-            name = call.get("customer_name") or "Customer"
-            phone = call.get("phone") or ""
+            # Cancellation check — set by POST /api/calls/batch/{id}/cancel
+            cancelled_at = await db_pool.fetchval(
+                "SELECT cancelled_at FROM agent_batches WHERE id = $1",
+                uuid.UUID(batch_id),
+            )
+            if cancelled_at:
+                logger.info(f"Batch {batch_id} cancelled at {cancelled_at} — halting")
+                break
 
             if await is_emergency_stop_active():
                 logger.warning("EMERGENCY STOP active -- halting batch")
@@ -690,128 +899,13 @@ async def process_batch_run(batch_uuid_str: str = None):
                 logger.info("Calling hours ended -- stopping batch")
                 break
 
-            # Validate phone
-            if not phone or len(phone) < 10:
-                await db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Invalid Phone', retry_count = retry_count + 1, updated_at = $1
-                       WHERE id = $2""",
-                    now_ist(), call_uuid,
-                )
+            result = await dispatch_call(str(call["id"]), wait_for_completion=True)
+            rs = result.get("status")
+            if rs == "completed":
+                successful += 1
+            else:
                 failed += 1
-                continue
-
-            try:
-                call_start = now_ist()
-                await db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Calling', started_at = $1, updated_at = $1
-                       WHERE id = $2""",
-                    call_start, call_uuid,
-                )
-
-                if DEMO_MODE:
-                    # --- Demo simulation ---
-                    room_name = f"demo_{secrets.token_hex(6)}_{int(time.time())}"
-                    await db_pool.execute(
-                        "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
-                        room_name, call_uuid,
-                    )
-                    await asyncio.sleep(3)
-
-                    import random as rng
-                    interested = rng.choice([True, True, False])
-                    loan_type = rng.choice(["personal", "business", "education"])
-                    status = "Called - Interested" if interested else "Called - Not Interested"
-                    lead_quality = "hot" if interested else "cold"
-                    demo_transcript = [
-                        {"role": "agent", "text": f"Hello, am I speaking with {name}?", "timestamp": now_ist_str()},
-                        {"role": "user", "text": "Yes, speaking.", "timestamp": now_ist_str()},
-                    ]
-                    call_end = now_ist()
-                    duration_seconds = int((call_end - call_start).total_seconds())
-                    category = "Very Interested - Form Sent" if interested else "Not Interested - No Need Currently"
-
-                    await db_pool.execute(
-                        """UPDATE agent_calls SET
-                            transcript = $1, status = $2, call_duration = $3,
-                            ended_at = $4, updated_at = $4,
-                            interested = $5, loan_type = $6,
-                            category = $7,
-                            call_analysis = $8,
-                            collected_data = $9
-                           WHERE id = $10""",
-                        json.dumps(demo_transcript),
-                        status,
-                        duration_seconds,
-                        call_end,
-                        interested,
-                        loan_type if interested else None,
-                        category,
-                        json.dumps({"lead_quality": lead_quality, "follow_up_needed": "Yes" if interested else "No"}),
-                        json.dumps({"loan_type": loan_type}) if interested else None,
-                        call_uuid,
-                    )
-                    successful += 1
-                    completed += 1
-                else:
-                    # --- Real LiveKit + SIP call ---
-                    room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
-                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-
-                    await lk.room.create_room(api.CreateRoomRequest(
-                        name=room_name, empty_timeout=300, max_participants=3,
-                        metadata=json.dumps({
-                            "customer_name": name,
-                            "phone": phone,
-                            "call_id": str(call_uuid),
-                            "bank_id": call.get("bank_id", ""),
-                            "language": call.get("language", "hindi"),
-                        }),
-                    ))
-                    await db_pool.execute(
-                        "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
-                        room_name, call_uuid,
-                    )
-
-                    sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
-                    await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-                        room_name=room_name,
-                        sip_trunk_id=SIP_TRUNK_ID,
-                        sip_call_to=sip_phone,
-                        participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
-                        participant_name=name,
-                        play_ringtone=True,
-                    ))
-                    await asyncio.sleep(1.0)
-                    await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
-                        room=room_name, agent_name=AGENT_NAME,
-                    ))
-                    await lk.aclose()
-
-                    result = await wait_for_call_completion(str(call_uuid), room_name)
-                    if result:
-                        fs = result.get("status", "Unknown")
-                        if fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested"):
-                            successful += 1
-                        else:
-                            failed += 1
-                    else:
-                        failed += 1
-                    completed += 1
-
-            except Exception as e:
-                logger.error(f"Call error for {name}: {e}")
-                await db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Failed', error_message = $1,
-                           ended_at = $2, updated_at = $2,
-                           retry_count = retry_count + 1
-                       WHERE id = $3""",
-                    str(e), now_ist(), call_uuid,
-                )
-                failed += 1
-                completed += 1
+            completed += 1
 
             await asyncio.sleep(10)  # pause between calls
 
@@ -894,7 +988,7 @@ async def upload_excel(
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
     background_tasks: BackgroundTasks = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Upload Excel/CSV with customer data for batch calling."""
     bank_id = None  # operator — no bank scoping
@@ -1016,7 +1110,7 @@ async def upload_excel(
 async def trigger_batch(
     background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Start batch calling. Sets the most recent 'pending' batch to 'running' so the cron picks it up.
     Optionally specify a batch_id to start a specific batch."""
@@ -1053,7 +1147,7 @@ async def trigger_batch(
 @router.get("/batch-status")
 async def batch_status(
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Check batch completion progress."""
     bank_uuid = None  # operator — no bank scoping
@@ -1093,7 +1187,7 @@ async def batch_status(
 async def trigger_batch_retry(
     background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Retry failed/not-answered calls in a specific batch (or most recent completed batch).
     Resets failed calls to 'Pending' (if retry_count < MAX_RETRIES) and sets batch back to 'running'."""

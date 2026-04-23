@@ -1,5 +1,5 @@
 # main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
-from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +24,9 @@ import json
 import base64 as b64mod
 from fpdf import FPDF
 import tempfile
+import io
+import time as _t
+import pandas as pd
 
 load_dotenv()
 
@@ -661,6 +664,12 @@ class SingleCallRequest(BaseModel):
     loan_type: Optional[str] = None
     loan_amount: Optional[str] = None
     language: str = "hindi"
+
+
+class AdminSingleCallRequest(SingleCallRequest):
+    """Admin must attribute every call to a bank (and optionally a vendor under it)."""
+    bank_id: str
+    vendor_id: Optional[str] = None
 
 class GenerateFormLinksRequest(BaseModel):
     customers: List[CustomerData]
@@ -2042,6 +2051,21 @@ def mark_call_ended(call_id: str):
     _ended_calls.add(call_id)
 
 
+# ---------- Batch SSE pub/sub ----------
+# Lives in a dedicated `batch_pubsub` module so both the SSE endpoint here and
+# dispatch_call in agent_routes share ONE subscriber dict. Keeping it here
+# would break when main.py is run as __main__ (python main.py): other modules
+# doing `from main import ...` re-import main under a different module name,
+# ending up with two copies of any module-level dict.
+import batch_pubsub as _batch_pubsub
+
+# Back-compat shims so references elsewhere keep working; the real state lives
+# in _batch_pubsub._subscribers.
+publish_to_batch = _batch_pubsub.publish
+_subscribe_batch = _batch_pubsub.subscribe
+_unsubscribe_batch = _batch_pubsub.unsubscribe
+
+
 def _calls_scope_where(user: dict, table_alias: str = "c") -> tuple[str, list]:
     prefix = f"{table_alias}." if table_alias else ""
     role = user["role"]
@@ -2096,10 +2120,12 @@ async def portal_get_call(call_id: str, user: dict = Depends(require_bank_or_ven
 @app.post("/api/portal/calls/single")
 async def portal_initiate_single_call(
     payload: SingleCallRequest,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_bank_or_vendor),
 ):
-    """Create an agent_calls row in 'queued' status. Voice-agent dispatch happens
-    separately (the LiveKit worker picks queued rows up)."""
+    """Create an agent_calls row in 'queued' status and schedule immediate dispatch.
+    The voice agent picks up the LiveKit room and reports completion back via
+    /api/agent/transcript."""
     bank_id = uuid.UUID(user["bank_id"])
     vendor_id = uuid.UUID(user["vendor_id"]) if user.get("vendor_id") else None
     room_name = f"los_{secrets.token_hex(6)}_{int(datetime.now().timestamp())}"
@@ -2114,6 +2140,8 @@ async def portal_initiate_single_call(
         payload.loan_type or None, payload.loan_amount or None,
         payload.language, room_name,
     )
+    from agent_routes import dispatch_call  # lazy to avoid cycle at module load
+    background_tasks.add_task(dispatch_call, str(row["id"]), False)
     return {"call": _row_to_dict(row)}
 
 
@@ -2158,6 +2186,420 @@ async def admin_get_call(call_id: str, _: dict = Depends(require_admin)):
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     return {"call": _row_to_dict(row)}
+
+
+@app.post("/api/admin/calls/single")
+async def admin_initiate_single_call(
+    payload: AdminSingleCallRequest,
+    background_tasks: BackgroundTasks,
+    admin: dict = Depends(require_admin),
+):
+    """Admin initiates a single call attributed to a specific bank (+ optional vendor).
+    The admin JWT has no bank_id, so it's taken from the request body; we validate
+    that the bank exists and, if given, that the vendor belongs to it."""
+    try:
+        bank_uuid = uuid.UUID(payload.bank_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid bank_id")
+    bank_row = await db_pool.fetchrow("SELECT id FROM banks WHERE id = $1", bank_uuid)
+    if not bank_row:
+        raise HTTPException(status_code=404, detail="Bank not found")
+    vendor_uuid = None
+    if payload.vendor_id:
+        try:
+            vendor_uuid = uuid.UUID(payload.vendor_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid vendor_id")
+        v_row = await db_pool.fetchrow(
+            "SELECT id FROM vendors WHERE id = $1 AND bank_id = $2",
+            vendor_uuid, bank_uuid,
+        )
+        if not v_row:
+            raise HTTPException(status_code=404, detail="Vendor not found under this bank")
+
+    room_name = f"los_{secrets.token_hex(6)}_{int(datetime.now().timestamp())}"
+    row = await db_pool.fetchrow(
+        """INSERT INTO agent_calls
+            (bank_id, vendor_id, initiated_by, customer_name, phone,
+             loan_type, loan_amount, language, status, room_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', $9)
+           RETURNING *""",
+        bank_uuid, vendor_uuid, uuid.UUID(admin["id"]),
+        payload.customer_name, payload.phone,
+        payload.loan_type or None, payload.loan_amount or None,
+        payload.language, room_name,
+    )
+    from agent_routes import dispatch_call
+    background_tasks.add_task(dispatch_call, str(row["id"]), False)
+    return {"call": _row_to_dict(row)}
+
+
+# ============================================================
+# BULK CALLS — admin + portal share CSV parsing and batch state
+# ============================================================
+
+async def _create_batch_from_csv(
+    *, bank_id: uuid.UUID, vendor_id: Optional[uuid.UUID],
+    uploaded_by: uuid.UUID, file: UploadFile,
+    language: str, gender: str,
+) -> dict:
+    """Parse the uploaded CSV/Excel, insert an agent_batches row + N agent_calls
+    rows in status='Pending'. Does NOT start dispatching — caller must hit
+    /api/calls/batch/{id}/start. Returns {batch_uuid, batch_id, total_records}."""
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls")):
+        raise HTTPException(status_code=400, detail="Only CSV/Excel files allowed")
+
+    contents = await file.read()
+    try:
+        if filename.endswith(".csv"):
+            try:
+                df = pd.read_csv(io.StringIO(contents.decode("utf-8-sig")))
+            except Exception:
+                df = pd.read_csv(io.StringIO(contents.decode("latin-1")))
+        else:
+            df = pd.read_excel(io.BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
+
+    column_map = {
+        "Name": "name", "NAME": "name", "Customer_Name": "name", "customer_name": "name",
+        "Mobile_number": "phone", "mobile_number": "phone", "Phone": "phone", "PHONE": "phone",
+        "phone_number": "phone", "Mobile": "phone", "mobile": "phone",
+        "Email": "email", "EMAIL": "email",
+        "Loan_type": "loan_type", "loan_type": "loan_type",
+        "Loan_amount": "loan_amount", "loan_amount": "loan_amount",
+        "Aadhar_number": "aadhar_number", "Pan_number": "pan_number",
+        "Customer_type": "customer_type", "customer_type": "customer_type",
+    }
+    df.rename(columns={k: v for k, v in column_map.items() if k in df.columns}, inplace=True)
+    for c in ("name", "phone"):
+        if c not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required column: {c}. File has: {list(df.columns)}",
+            )
+    records = df.fillna("").to_dict(orient="records")
+    if not records:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    batch_str_id = f"batch_{secrets.token_hex(8)}_{int(_t.time())}"
+    batch_uuid = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    await db_pool.execute(
+        """INSERT INTO agent_batches
+            (id, batch_id, bank_id, vendor_id, filename, total_records,
+             completed, failed, status, uploaded_by, initiated_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 'pending', $7, $7, $8)""",
+        batch_uuid, batch_str_id, bank_id, vendor_id, file.filename,
+        len(records), uploaded_by, now,
+    )
+
+    for r in records:
+        raw_phone = str(r.get("phone", "")).strip()
+        if raw_phone.endswith(".0"):
+            raw_phone = raw_phone[:-2]
+        digits = "".join(ch for ch in raw_phone if ch.isdigit())
+        if len(digits) == 10:
+            phone = f"+91{digits}"
+        elif len(digits) == 12 and digits.startswith("91"):
+            phone = f"+{digits}"
+        else:
+            phone = raw_phone
+
+        loan_amount_raw = r.get("loan_amount")
+        loan_amount_val: Optional[str] = None
+        if loan_amount_raw and str(loan_amount_raw).strip():
+            try:
+                loan_amount_val = str(float(loan_amount_raw))
+            except (ValueError, TypeError):
+                loan_amount_val = str(loan_amount_raw).strip()
+
+        await db_pool.execute(
+            """INSERT INTO agent_calls
+                (bank_id, vendor_id, batch_id, initiated_by, customer_name, phone,
+                 loan_type, loan_amount, language, status, room_name,
+                 collected_data, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                       'Pending', $10, $11, $12, $12)""",
+            bank_id, vendor_id, batch_str_id, uploaded_by,
+            r.get("name", ""), phone,
+            r.get("loan_type", "") or None, loan_amount_val,
+            (language or "hindi").lower().strip(),
+            f"los_{secrets.token_hex(6)}_{int(_t.time())}",
+            json.dumps({
+                "email": r.get("email", ""),
+                "aadhar_number": r.get("aadhar_number", ""),
+                "pan_number": r.get("pan_number", ""),
+                "customer_type": r.get("customer_type", "new"),
+                "gender": (gender or "male").lower().strip(),
+            }),
+            now,
+        )
+
+    return {
+        "batch_uuid": str(batch_uuid),
+        "batch_id": batch_str_id,
+        "total_records": len(records),
+        "filename": file.filename,
+    }
+
+
+@app.post("/api/admin/calls/bulk")
+async def admin_bulk_upload(
+    file: UploadFile = File(...),
+    bank_id: str = Form(...),
+    vendor_id: Optional[str] = Form(None),
+    language: str = Form("hindi"),
+    gender: str = Form("male"),
+    admin: dict = Depends(require_admin),
+):
+    try:
+        bank_uuid = uuid.UUID(bank_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid bank_id")
+    if not await db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", bank_uuid):
+        raise HTTPException(status_code=404, detail="Bank not found")
+    vendor_uuid = None
+    if vendor_id:
+        try:
+            vendor_uuid = uuid.UUID(vendor_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid vendor_id")
+        if not await db_pool.fetchval(
+            "SELECT 1 FROM vendors WHERE id = $1 AND bank_id = $2",
+            vendor_uuid, bank_uuid,
+        ):
+            raise HTTPException(status_code=404, detail="Vendor not found under this bank")
+
+    return await _create_batch_from_csv(
+        bank_id=bank_uuid, vendor_id=vendor_uuid,
+        uploaded_by=uuid.UUID(admin["id"]), file=file,
+        language=language, gender=gender,
+    )
+
+
+@app.post("/api/portal/calls/bulk")
+async def portal_bulk_upload(
+    file: UploadFile = File(...),
+    language: str = Form("hindi"),
+    gender: str = Form("male"),
+    user: dict = Depends(require_bank_or_vendor),
+):
+    bank_uuid = uuid.UUID(user["bank_id"])
+    vendor_uuid = uuid.UUID(user["vendor_id"]) if user.get("vendor_id") else None
+    return await _create_batch_from_csv(
+        bank_id=bank_uuid, vendor_id=vendor_uuid,
+        uploaded_by=uuid.UUID(user["id"]), file=file,
+        language=language, gender=gender,
+    )
+
+
+# ---------- Batch lifecycle (admin + portal share these, scope-checked) ----------
+
+async def _batch_access_for(user: dict, batch_uuid: str) -> dict:
+    """Load an agent_batches row and enforce scope.
+    Admin sees all; bank_user sees own bank; vendor_user sees own vendor."""
+    try:
+        b_uuid = uuid.UUID(batch_uuid)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid batch id")
+    row = await db_pool.fetchrow("SELECT * FROM agent_batches WHERE id = $1", b_uuid)
+    if not row:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    role = user["role"]
+    if role == "admin":
+        return dict(row)
+    if role == "bank_user" and str(row["bank_id"]) == user.get("bank_id"):
+        return dict(row)
+    if role == "vendor_user" and row["vendor_id"] and str(row["vendor_id"]) == user.get("vendor_id"):
+        return dict(row)
+    raise HTTPException(status_code=403, detail="Forbidden")
+
+
+async def _batch_progress_counts(batch_str_id: str) -> dict:
+    """Aggregate per-status counts for a batch."""
+    rows = await db_pool.fetch(
+        "SELECT status, COUNT(*)::int AS n FROM agent_calls WHERE batch_id = $1 GROUP BY status",
+        batch_str_id,
+    )
+    counts: dict = {r["status"]: r["n"] for r in rows}
+    counts["_total"] = sum(counts.values())
+    return counts
+
+
+@app.get("/api/calls/batch/{batch_uuid}")
+async def get_batch_status(batch_uuid: str, user: dict = Depends(require_any_authenticated)):
+    batch = await _batch_access_for(user, batch_uuid)
+    counts = await _batch_progress_counts(batch.get("batch_id") or batch_uuid)
+    call_rows = await db_pool.fetch(
+        """SELECT id, customer_name, phone, status, call_duration,
+                  started_at, ended_at, category
+             FROM agent_calls WHERE batch_id = $1
+            ORDER BY created_at ASC""",
+        batch.get("batch_id") or batch_uuid,
+    )
+    return {
+        "batch": _row_to_dict(batch),
+        "counts": counts,
+        "calls": _rows_to_list(call_rows),
+    }
+
+
+@app.post("/api/calls/batch/{batch_uuid}/start")
+async def start_batch(
+    batch_uuid: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_any_authenticated),
+):
+    batch = await _batch_access_for(user, batch_uuid)
+    if batch.get("cancelled_at"):
+        raise HTTPException(status_code=409, detail="Batch was cancelled")
+    if batch["status"] not in ("pending", "paused"):
+        # Allow re-starting only from pending/paused; completed/running are rejected.
+        raise HTTPException(status_code=409, detail=f"Batch is {batch['status']}, cannot start")
+    await db_pool.execute(
+        "UPDATE agent_batches SET status = 'running' WHERE id = $1",
+        uuid.UUID(batch_uuid),
+    )
+    from agent_routes import process_batch_run
+    background_tasks.add_task(process_batch_run, batch_uuid)
+    return {"status": "started", "batch_uuid": batch_uuid}
+
+
+@app.post("/api/calls/batch/{batch_uuid}/cancel")
+async def cancel_batch(batch_uuid: str, user: dict = Depends(require_any_authenticated)):
+    batch = await _batch_access_for(user, batch_uuid)  # scope check
+    batch_str_id = batch.get("batch_id") or batch_uuid
+    await db_pool.execute(
+        """UPDATE agent_batches
+              SET status = 'cancelled', cancelled_at = NOW()
+            WHERE id = $1""",
+        uuid.UUID(batch_uuid),
+    )
+    # Nudge any listening SSE streams so the terminal-status branch runs
+    # immediately rather than waiting for the 25s keepalive tick.
+    await publish_to_batch(batch_str_id, {
+        "call_id": "",
+        "status": "cancelled",
+        "kind": "batch_status",
+    })
+    return {"status": "cancelled", "batch_uuid": batch_uuid}
+
+
+@app.get("/api/calls/batch/{batch_uuid}/events")
+async def batch_events_stream(
+    batch_uuid: str,
+    request: Request,
+    user: dict = Depends(require_any_authenticated),
+):
+    """SSE: snapshot of current batch state, then live per-call status updates."""
+    batch = await _batch_access_for(user, batch_uuid)
+    batch_str_id = batch.get("batch_id") or batch_uuid
+
+    from fastapi.responses import StreamingResponse
+
+    # IMPORTANT: subscribe BEFORE the generator's first yield and BEFORE the
+    # snapshot DB reads, so any update published during the snapshot window is
+    # queued (not dropped). Key by the string batch_id (matches what
+    # agent_calls.batch_id stores and what dispatch_call publishes with),
+    # NOT the URL UUID param.
+    queue = _subscribe_batch(batch_str_id)
+
+    async def event_stream():
+        try:
+            # Snapshot
+            counts = await _batch_progress_counts(batch_str_id)
+            calls = await db_pool.fetch(
+                """SELECT id, customer_name, phone, status
+                     FROM agent_calls WHERE batch_id = $1
+                    ORDER BY created_at ASC""",
+                batch_str_id,
+            )
+            yield _sse("snapshot", {
+                "batch": _row_to_dict(batch),
+                "counts": counts,
+                "calls": _rows_to_list(calls),
+            })
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    evt = await _asyncio.wait_for(queue.get(), timeout=25)
+                    # Each update: also attach fresh aggregate counts for UI convenience.
+                    counts = await _batch_progress_counts(batch_str_id)
+                    evt["counts"] = counts
+                    yield _sse("update", evt)
+                    # Detect terminal
+                    cur = await db_pool.fetchrow(
+                        "SELECT status FROM agent_batches WHERE id = $1",
+                        uuid.UUID(batch_uuid),
+                    )
+                    if cur and str(cur["status"]) in ("completed", "cancelled"):
+                        yield _sse("done", {"batch_uuid": batch_uuid, "status": cur["status"]})
+                        break
+                except _asyncio.TimeoutError:
+                    yield b": keepalive\n\n"
+                    cur = await db_pool.fetchrow(
+                        "SELECT status FROM agent_batches WHERE id = $1",
+                        uuid.UUID(batch_uuid),
+                    )
+                    if cur and str(cur["status"]) in ("completed", "cancelled"):
+                        yield _sse("done", {"batch_uuid": batch_uuid, "status": cur["status"]})
+                        break
+        finally:
+            _unsubscribe_batch(batch_str_id, queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ---------- Batch listing ----------
+
+@app.get("/api/admin/batches")
+async def admin_list_batches(
+    status: Optional[str] = None,
+    bank_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    conds, params = [], []
+    if status:
+        conds.append(f"b.status = ${len(params)+1}"); params.append(status)
+    if bank_id:
+        conds.append(f"b.bank_id = ${len(params)+1}"); params.append(uuid.UUID(bank_id))
+    where = " AND ".join(conds) if conds else "TRUE"
+    rows = await db_pool.fetch(
+        f"""SELECT b.*, bk.name AS bank_name, bk.code AS bank_code,
+                   v.name AS vendor_name, v.code AS vendor_code
+              FROM agent_batches b
+              LEFT JOIN banks bk  ON bk.id = b.bank_id
+              LEFT JOIN vendors v ON v.id = b.vendor_id
+             WHERE {where}
+             ORDER BY b.created_at DESC LIMIT 200""",
+        *params,
+    )
+    return {"batches": _rows_to_list(rows)}
+
+
+@app.get("/api/portal/batches")
+async def portal_list_batches(
+    status: Optional[str] = None,
+    user: dict = Depends(require_bank_or_vendor),
+):
+    where, params = _calls_scope_where(user, "b")  # same scoping — agent_batches has bank_id/vendor_id
+    if status:
+        where += f" AND b.status = ${len(params)+1}"
+        params.append(status)
+    rows = await db_pool.fetch(
+        f"""SELECT b.*, bk.name AS bank_name, bk.code AS bank_code,
+                   v.name AS vendor_name, v.code AS vendor_code
+              FROM agent_batches b
+              LEFT JOIN banks bk  ON bk.id = b.bank_id
+              LEFT JOIN vendors v ON v.id = b.vendor_id
+             WHERE {where}
+             ORDER BY b.created_at DESC LIMIT 200""",
+        *params,
+    )
+    return {"batches": _rows_to_list(rows)}
 
 
 # ---------- Live transcript SSE ----------

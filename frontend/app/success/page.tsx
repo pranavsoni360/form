@@ -1,15 +1,17 @@
-﻿'use client';
+'use client';
 
+import { Suspense } from 'react';
+import { CheckCircle2, Phone } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 
-export default function SuccessPage() {
+function SuccessContent() {
   const searchParams = useSearchParams();
   const loanId = searchParams.get('loan_id');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
-        <div className="text-6xl mb-4">✅</div>
+        <div className="mb-4"><CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" /></div>
         <h1 className="text-3xl font-bold text-gray-900 mb-4">
           Application Submitted!
         </h1>
@@ -26,15 +28,15 @@ export default function SuccessPage() {
 
         <div className="space-y-3 text-left bg-gray-50 rounded-lg p-4">
           <p className="text-sm text-gray-700 flex items-start gap-2">
-            <span className="text-green-500">✓</span>
+            <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
             <span>Our team will review your application within 24-48 hours</span>
           </p>
           <p className="text-sm text-gray-700 flex items-start gap-2">
-            <span className="text-green-500">✓</span>
+            <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
             <span>You will receive updates on WhatsApp</span>
           </p>
           <p className="text-sm text-gray-700 flex items-start gap-2">
-            <span className="text-green-500">✓</span>
+            <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
             <span>Keep your phone accessible for verification calls</span>
           </p>
         </div>
@@ -49,5 +51,13 @@ export default function SuccessPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SuccessPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <SuccessContent />
+    </Suspense>
   );
 }

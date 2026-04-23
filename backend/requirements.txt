@@ -2,16 +2,15 @@
 fastapi
 uvicorn[standard]
 python-multipart
+aiofiles
 
-# Database & Storage
-supabase
-psycopg2-binary
+# Database
+asyncpg
 
 # Security & Authentication
 bcrypt
 PyJWT
 python-jose[cryptography]
-passlib[bcrypt]
 
 # HTTP client
 httpx
@@ -21,15 +20,25 @@ python-dotenv
 
 # Data validation
 pydantic
-pydantic-settings
 email-validator
+
+# PDF generation
+fpdf2
+
+# Scheduling (agent batch runner)
+apscheduler
 
 # Date/Time
 python-dateutil
+pytz
 
 # Utilities
 phonenumbers
 
-# Development
-pytest
-pytest-asyncio
+# Agent module (voice calling, batch processing, post-call analysis)
+# Without these the /api/agent/* routes are disabled at startup
+aiohttp
+pandas
+livekit-api
+livekit-agents
+google-genai

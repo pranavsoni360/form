@@ -1,4 +1,5 @@
 ﻿'use client';
+import { Check } from 'lucide-react';
 
 interface ProgressBarProps {
   currentStep: number;
@@ -36,7 +37,7 @@ export default function ProgressBar({ currentStep, totalSteps }: ProgressBarProp
                   : 'bg-gray-200 text-gray-500'
               }`}
             >
-              {currentStep > step.number ? '✓' : step.number}
+              {currentStep > step.number ? <Check className="w-4 h-4" /> : step.number}
             </div>
             <span
               className={`text-xs font-medium ${

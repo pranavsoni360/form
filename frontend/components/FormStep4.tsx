@@ -1,4 +1,5 @@
 ﻿'use client';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 import { useState } from 'react';
 import { submitForm, maskAadhaar, maskPAN } from '@/lib/api';
@@ -54,7 +55,7 @@ export default function FormStep4({ data, token, onChange, onPrevious, onSubmit 
       <span className="text-gray-600">{label}:</span>
       {url ? (
         <span className="text-green-600 flex items-center gap-1">
-          ✓ Uploaded
+          Uploaded
         </span>
       ) : (
         <span className="text-red-600">✗ Missing</span>
@@ -139,7 +140,7 @@ export default function FormStep4({ data, token, onChange, onPrevious, onSubmit 
       {/* Important Notice */}
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <p className="text-sm text-yellow-800 font-medium mb-2">
-          ⚠️ Important
+          Important
         </p>
         <ul className="text-sm text-yellow-700 space-y-1 list-disc list-inside">
           <li>Once submitted, you cannot edit this application</li>
@@ -168,7 +169,7 @@ export default function FormStep4({ data, token, onChange, onPrevious, onSubmit 
               Submitting...
             </span>
           ) : (
-            'Submit Application ✓'
+            'Submit Application'
           )}
         </button>
       </div>

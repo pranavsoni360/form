@@ -9,18 +9,43 @@ import { Modal } from '../../components/Modal'
 
 export default function AdminCalls() {
   const [calls, setCalls] = useState<any[]>([])
+  const [maxRetries, setMaxRetries] = useState<number>(1)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string | undefined>()
   const [deleting, setDeleting] = useState<any | null>(null)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
+  const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [retryErr, setRetryErr] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const load = () => {
     setLoading(true)
-    adminCallsApi.list(filter ? { status: filter } : {}).then((d) => setCalls(d.calls)).finally(() => setLoading(false))
+    adminCallsApi.list(filter ? { status: filter } : {})
+      .then((d) => {
+        setCalls(d.calls)
+        setMaxRetries(d.max_retries ?? 1)
+      })
+      .finally(() => setLoading(false))
   }
 
   useEffect(load, [filter])
+
+  const retriableStatuses = new Set(['Failed', 'Not Answered', 'Call Not Connected'])
+  const canRetry = (c: any) => retriableStatuses.has(c.status) && (c.retry_count ?? 0) < maxRetries
+
+  const retry = async (c: any, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRetryingId(c.id)
+    setRetryErr(null)
+    try {
+      await adminCallsApi.retry(c.id)
+      load()
+    } catch (err) {
+      setRetryErr(err instanceof Error ? err.message : 'Retry failed')
+    } finally {
+      setRetryingId(null)
+    }
+  }
 
   const statuses = ['queued', 'dialing', 'in_progress', 'completed', 'failed', 'not_answered']
 
@@ -71,20 +96,44 @@ export default function AdminCalls() {
                   <td className="px-4 py-3">{c.vendor_code || <span className="text-[var(--color-muted)]">Direct</span>}</td>
                   <td className="px-4 py-3">{c.call_duration ? `${Math.floor(c.call_duration / 60)}m ${c.call_duration % 60}s` : '—'}</td>
                   <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
-                  <td className="px-2 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <RowMenu
-                      open={openMenu === c.id}
-                      onOpenChange={(o) => setOpenMenu(o ? c.id : null)}
-                      onDelete={() => {
-                        setDeleting(c)
-                        setOpenMenu(null)
-                      }}
-                    />
+                  <td className="px-2 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <div className="inline-flex items-center gap-1">
+                      {canRetry(c) && (
+                        <button
+                          type="button"
+                          onClick={(e) => retry(c, e)}
+                          disabled={retryingId === c.id}
+                          aria-label="Retry this call"
+                          title={
+                            retryingId === c.id
+                              ? 'Retrying…'
+                              : `Retry (${c.retry_count ?? 0}/${maxRetries} used)`
+                          }
+                          className="rounded p-1.5 text-[var(--color-muted)] hover:bg-[var(--color-faint)] hover:text-[var(--color-brand)] disabled:opacity-50"
+                        >
+                          <RetryIcon spinning={retryingId === c.id} />
+                        </button>
+                      )}
+                      <RowMenu
+                        open={openMenu === c.id}
+                        onOpenChange={(o) => setOpenMenu(o ? c.id : null)}
+                        onDelete={() => {
+                          setDeleting(c)
+                          setOpenMenu(null)
+                        }}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {retryErr && (
+        <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+          {retryErr}
         </div>
       )}
 
@@ -97,6 +146,26 @@ export default function AdminCalls() {
         }}
       />
     </div>
+  )
+}
+
+function RetryIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={spinning ? 'animate-spin' : ''}
+    >
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <polyline points="21 3 21 9 15 9" />
+    </svg>
   )
 }
 

@@ -242,13 +242,18 @@ export const portalApi = {
 export const adminCallsApi = {
   list: (filters: { status?: string; bank_id?: string; vendor_id?: string } = {}) => {
     const qs = new URLSearchParams(filters as any).toString()
-    return apiFetch<{ calls: any[] }>(`/api/admin/calls${qs ? `?${qs}` : ''}`)
+    return apiFetch<{ calls: any[]; max_retries: number }>(`/api/admin/calls${qs ? `?${qs}` : ''}`)
   },
   get:  (id: string) => apiFetch<{ call: any }>(`/api/admin/calls/${id}`),
   remove: (id: string) =>
     apiFetch<{ deleted: boolean; deleted_application_count: number }>(
       `/api/admin/calls/${id}`,
       { method: 'DELETE' },
+    ),
+  retry: (id: string) =>
+    apiFetch<{ retrying: boolean; call_id: string; retry_count: number }>(
+      `/api/admin/calls/${id}/retry`,
+      { method: 'POST' },
     ),
   initiateCall: (payload: {
     customer_name: string

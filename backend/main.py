@@ -2182,7 +2182,10 @@ async def admin_list_calls(
              ORDER BY c.created_at DESC LIMIT 500""",
         *params,
     )
-    return {"calls": _rows_to_list(rows)}
+    return {
+        "calls": _rows_to_list(rows),
+        "max_retries": int(os.getenv("MAX_CALL_RETRIES", "1")),
+    }
 
 
 @app.get("/api/admin/calls/{call_id}")
@@ -2199,6 +2202,55 @@ async def admin_get_call(call_id: str, _: dict = Depends(require_admin)):
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     return {"call": _row_to_dict(row)}
+
+
+@app.post("/api/admin/calls/{call_id}/retry")
+async def admin_retry_call(
+    call_id: str,
+    background_tasks: BackgroundTasks,
+    _: dict = Depends(require_admin),
+):
+    """Re-dispatch a single call that ended in a terminal failure bucket.
+
+    Only allowed when status is in (Failed, Not Answered, Call Not Connected)
+    AND retry_count < MAX_CALL_RETRIES. Resets status to 'Pending', clears
+    ended_at + error_message, and schedules dispatch_call in the background.
+    retry_count is bumped inside dispatch_call's failure path if this attempt
+    also fails; we do NOT pre-increment because a successful retry shouldn't
+    burn the quota.
+    """
+    call_uuid = uuid.UUID(call_id)
+    row = await db_pool.fetchrow(
+        "SELECT id, status, retry_count FROM agent_calls WHERE id = $1", call_uuid
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    retriable = {"Failed", "Not Answered", "Call Not Connected"}
+    if row["status"] not in retriable:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Call status '{row['status']}' is not retriable. Only {sorted(retriable)} rows can be retried.",
+        )
+
+    max_retries = int(os.getenv("MAX_CALL_RETRIES", "1"))
+    if row["retry_count"] >= max_retries:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Call has already been retried {row['retry_count']} times (limit={max_retries}). Bump MAX_CALL_RETRIES to allow more.",
+        )
+
+    await db_pool.execute(
+        """UPDATE agent_calls
+           SET status = 'Pending', ended_at = NULL, error_message = NULL,
+               updated_at = $1
+           WHERE id = $2""",
+        datetime.now(timezone.utc), call_uuid,
+    )
+
+    from agent_routes import dispatch_call
+    background_tasks.add_task(dispatch_call, str(call_uuid))
+    return {"retrying": True, "call_id": str(call_uuid), "retry_count": row["retry_count"]}
 
 
 @app.delete("/api/admin/calls/{call_id}")

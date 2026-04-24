@@ -255,19 +255,33 @@ async def cleanup_stuck_calls():
     """Reset calls stuck at 'Calling' for more than 10 minutes."""
     ten_min_ago = now_ist() - timedelta(minutes=10)
     try:
+        # Fetch-then-update so we can log which specific rows got swept; this
+        # is exactly the evidence you want when diagnosing "why is this call
+        # still Calling?" -- each swept row points at a missed webhook.
+        stuck = await db_pool.fetch(
+            """SELECT id, room_name, customer_name, phone, started_at
+                 FROM agent_calls
+                WHERE status = 'Calling' AND started_at < $1""",
+            ten_min_ago,
+        )
+        if not stuck:
+            return
+        for row in stuck:
+            logger.warning(
+                "[REAPER] sweeping stuck call call_id=%s room=%s customer=%s phone=%s started_at=%s",
+                row["id"], row["room_name"], row["customer_name"], row["phone"], row["started_at"],
+            )
         result = await db_pool.execute(
             """UPDATE agent_calls
-               SET status = 'Failed', error_message = 'Stuck call cleaned up on startup',
+               SET status = 'Failed', error_message = 'Stuck call cleaned up by reaper (>10 min at Calling, no /transcript webhook received)',
                    ended_at = $1, updated_at = $1, retry_count = retry_count + 1
                WHERE status = 'Calling' AND started_at < $2""",
             now_ist(), ten_min_ago,
         )
-        # result is like "UPDATE N"
         count = int(result.split()[-1]) if result else 0
-        if count > 0:
-            logger.warning(f"Cleaned up {count} stuck 'Calling' records (>10 min)")
+        logger.warning("[REAPER] swept %d stuck 'Calling' records (>10 min)", count)
     except Exception as e:
-        logger.error(f"cleanup_stuck_calls error: {e}")
+        logger.error("[REAPER] error: %s", e, exc_info=True)
 
 
 def _serialize_call(c: dict) -> dict:
@@ -811,7 +825,10 @@ async def dispatch_call(call_id: str, wait_for_completion: bool = True) -> dict:
             return {"status": "dispatched", "room_name": room_name}
 
     except Exception as e:
-        logger.error(f"dispatch_call error for {name}: {e}")
+        logger.exception(
+            "[DISPATCH] FAIL call_id=%s name=%s phone=%s err=%s",
+            call_uuid, name, phone, e,
+        )
         await db_pool.execute(
             """UPDATE agent_calls
                SET status = 'Failed', error_message = $1,
@@ -1658,6 +1675,10 @@ async def save_transcript_chunk(data: TranscriptChunkPayload):
         if row:
             call_uuid = row["id"]
     if not call_uuid:
+        logger.warning(
+            "[WEBHOOK] /transcript-chunk NOT_IDENTIFIED call_id=%s room=%s role=%s",
+            data.call_id, data.room, data.role,
+        )
         return {"status": "error", "message": "call not identified"}
 
     try:
@@ -1669,7 +1690,16 @@ async def save_transcript_chunk(data: TranscriptChunkPayload):
             "timestamp": data.timestamp,
             "final": data.final,
         })
+        # Keep per-chunk logs at DEBUG so they don't drown prod logs.
+        logger.debug(
+            "[WEBHOOK] /transcript-chunk call_id=%s role=%s chars=%d",
+            call_uuid, data.role, len(data.text or ""),
+        )
     except Exception as e:
+        logger.error(
+            "[WEBHOOK] /transcript-chunk ERR call_id=%s role=%s err=%s",
+            call_uuid, data.role, e,
+        )
         return {"status": "error", "message": str(e)}
     return {"status": "ok"}
 
@@ -1679,6 +1709,11 @@ async def save_transcript(data: TranscriptPayload):
     """Save transcript from the voice agent. This is a webhook -- no JWT auth."""
     transcript = [item.model_dump() for item in data.transcript]
     room = data.room
+
+    logger.info(
+        "[WEBHOOK] /transcript IN call_id=%s room=%s msgs=%d interested=%s",
+        data.call_id, room, len(transcript), data.customer_interested,
+    )
 
     # Determine query target (prefer call_id)
     call_uuid = None
@@ -1695,7 +1730,10 @@ async def save_transcript(data: TranscriptPayload):
         call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE room_name = $1", room)
 
     if not call_row:
-        logger.warning(f"Transcript webhook: no call found for room={room}, call_id={data.call_id}")
+        logger.warning(
+            "[WEBHOOK] /transcript NOT_FOUND call_id=%s room=%s -- no matching agent_calls row",
+            data.call_id, room,
+        )
         return {"status": "error", "message": "Call not found"}
 
     call = _row_to_dict(call_row)
@@ -1774,6 +1812,10 @@ async def save_transcript(data: TranscriptPayload):
         category,
         actual_uuid,
     )
+    logger.info(
+        "[WEBHOOK] /transcript SAVED call_id=%s room=%s status=%s duration_s=%d msgs=%d",
+        actual_uuid, room, status, duration_seconds, len(transcript),
+    )
 
     # Publish each transcript entry so SSE subscribers see the full conversation
     # and mark the call as ended so live streams terminate cleanly.
@@ -1782,8 +1824,8 @@ async def save_transcript(data: TranscriptPayload):
         for entry in transcript:
             await call_pubsub.publish(str(actual_uuid), entry)
         call_pubsub.mark_ended(str(actual_uuid))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[WEBHOOK] /transcript pubsub publish failed call_id=%s err=%s", actual_uuid, e)
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:

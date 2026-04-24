@@ -25,10 +25,27 @@ import base64 as b64mod
 from fpdf import FPDF
 import tempfile
 import io
+import logging
 import time as _t
 import pandas as pd
 
 load_dotenv()
+
+# ── Logging ──────────────────────────────────────────────────
+# Without this, the 40+ `logger.info(...)` calls in agent_routes.py and
+# elsewhere go nowhere (root logger defaults to WARNING, no handlers).
+# Prefix every line with a short level + logger name so you can grep by
+# [agent-routes] / [dispatch] / [WEBHOOK]. Level is overridable via
+# LOG_LEVEL env var for noisy investigations.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)-5s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# uvicorn has its own handlers; don't double-print access lines.
+logging.getLogger("uvicorn.access").propagate = False
+_log = logging.getLogger("los-backend")
+_log.info("Backend logging configured")
 
 app = FastAPI(
     title="Bank Loan Form API",

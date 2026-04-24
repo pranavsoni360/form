@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { adminCallsApi } from '../../services/api'
 import { Placeholder } from '../../components/Placeholder'
@@ -116,20 +117,42 @@ function RowMenu({
   onOpenChange: (o: boolean) => void
   onDelete: () => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  // Portal-rendered dropdown positioned via fixed coords so the table's
+  // overflow-hidden (needed for rounded header corners) can't clip it.
+  const [coords, setCoords] = useState<{ top: number; right: number } | null>(null)
 
   useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onOpenChange(false)
+    if (!open) {
+      setCoords(null)
+      return
     }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (rect) setCoords({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+
+    const closeIfOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (btnRef.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      onOpenChange(false)
+    }
+    // Close on scroll/resize to avoid the menu floating detached from its row.
+    const closeAll = () => onOpenChange(false)
+    window.addEventListener('mousedown', closeIfOutside)
+    window.addEventListener('scroll', closeAll, true)
+    window.addEventListener('resize', closeAll)
+    return () => {
+      window.removeEventListener('mousedown', closeIfOutside)
+      window.removeEventListener('scroll', closeAll, true)
+      window.removeEventListener('resize', closeAll)
+    }
   }, [open, onOpenChange])
 
   return (
-    <div ref={ref} className="relative inline-block">
+    <>
       <button
+        ref={btnRef}
         type="button"
         onClick={() => onOpenChange(!open)}
         aria-label="Row actions"
@@ -141,8 +164,12 @@ function RowMenu({
           <circle cx="19" cy="12" r="1.7" />
         </svg>
       </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-[var(--color-line)] bg-[var(--color-elevated)] shadow-lg">
+      {open && coords && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: 'fixed', top: coords.top, right: coords.right, zIndex: 50 }}
+          className="w-44 rounded-lg border border-[var(--color-line)] bg-[var(--color-elevated)] shadow-lg"
+        >
           <button
             type="button"
             onClick={onDelete}
@@ -150,9 +177,10 @@ function RowMenu({
           >
             Delete call log
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }
 

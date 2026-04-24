@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { adminApi } from '../../services/api'
 import { Placeholder } from '../../components/Placeholder'
 import { StatusBadge } from '../../components/StatusBadge'
@@ -7,6 +7,7 @@ import { StatusBadge } from '../../components/StatusBadge'
 export default function VendorsList() {
   const [vendors, setVendors] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
 
   useEffect(() => {
     adminApi.vendors().then((d) => setVendors(d.vendors)).finally(() => setLoading(false))
@@ -34,13 +35,21 @@ export default function VendorsList() {
           </thead>
           <tbody className="divide-y divide-[var(--color-line)]">
             {vendors.map((v) => (
-              <tr key={v.id} className="hover:bg-[var(--color-faint)]">
-                <td className="px-4 py-3 font-medium">
-                  <Link to={`/admin/vendors/${v.id}`} className="hover:text-[var(--color-brand)]">{v.name}</Link>
-                </td>
+              <tr
+                key={v.id}
+                onClick={() => navigate(`/admin/vendors/${v.id}`)}
+                className="cursor-pointer hover:bg-[var(--color-faint)] transition-colors"
+              >
+                <td className="px-4 py-3 font-medium text-[var(--color-heading)]">{v.name}</td>
                 <td className="px-4 py-3 text-[var(--color-muted)]">{v.code}</td>
                 <td className="px-4 py-3">
-                  <Link to={`/admin/banks/${v.bank_id}`} className="hover:text-[var(--color-brand)]">{v.bank_name}</Link>
+                  <Link
+                    to={`/admin/banks/${v.bank_id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="hover:text-[var(--color-brand)]"
+                  >
+                    {v.bank_name}
+                  </Link>
                   <span className="ml-1 text-[var(--color-muted)]">({v.bank_code})</span>
                 </td>
                 <td className="px-4 py-3">{v.category || '—'}</td>

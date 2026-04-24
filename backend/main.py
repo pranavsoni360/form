@@ -1325,6 +1325,17 @@ async def admin_create_bank_user(bank_id: str, user: UserCreate, admin: dict = D
     bank = await db_pool.fetchrow("SELECT id FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not bank:
         raise HTTPException(status_code=404, detail="Bank not found")
+    # Policy: exactly one bank_user per bank. If a multi-user model is wanted
+    # later, lift this check into a banks.max_users column and compare counts.
+    existing_active = await db_pool.fetchrow(
+        "SELECT id, username FROM users WHERE bank_id = $1 AND role = 'bank_user' AND is_active = TRUE",
+        uuid.UUID(bank_id),
+    )
+    if existing_active:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bank already has an active user ('{existing_active['username']}'). Deactivate them before creating another.",
+        )
     existing = await db_pool.fetchrow("SELECT id FROM users WHERE username = $1", user.username)
     if existing:
         raise HTTPException(status_code=400, detail=f"Username '{user.username}' already exists")

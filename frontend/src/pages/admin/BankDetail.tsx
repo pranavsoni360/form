@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { adminApi } from '../../services/api'
 import { Button } from '../../components/Field'
 import { StatusBadge } from '../../components/StatusBadge'
@@ -10,6 +10,7 @@ import { ResetPasswordModal } from '../../components/modals/ResetPasswordModal'
 
 export default function BankDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [bank, setBank] = useState<any | null>(null)
   const [tab, setTab] = useState<'users' | 'vendors'>('users')
   const [editing, setEditing] = useState(false)
@@ -67,7 +68,14 @@ export default function BankDetail() {
           </div>
           <div className="py-2">
             {tab === 'users' ? (
-              <Button size="sm" onClick={() => setCreatingUser(true)}>+ Create user</Button>
+              <Button
+                size="sm"
+                onClick={() => setCreatingUser(true)}
+                disabled={bank.users.some((u: any) => u.is_active)}
+                title={bank.users.some((u: any) => u.is_active) ? 'One user per bank. Deactivate the existing user first.' : undefined}
+              >
+                + Create user
+              </Button>
             ) : (
               <Button size="sm" onClick={() => setCreatingVendor(true)} disabled={bank.vendors.length >= bank.vendor_limit}>
                 + Create vendor
@@ -146,10 +154,12 @@ export default function BankDetail() {
               </thead>
               <tbody className="divide-y divide-[var(--color-line)]">
                 {bank.vendors.map((v: any) => (
-                  <tr key={v.id} className="hover:bg-[var(--color-faint)]">
-                    <td className="px-4 py-3 font-medium">
-                      <Link to={`/admin/vendors/${v.id}`} className="hover:text-[var(--color-brand)]">{v.name}</Link>
-                    </td>
+                  <tr
+                    key={v.id}
+                    onClick={() => navigate(`/admin/vendors/${v.id}`)}
+                    className="cursor-pointer hover:bg-[var(--color-faint)] transition-colors"
+                  >
+                    <td className="px-4 py-3 font-medium text-[var(--color-heading)]">{v.name}</td>
                     <td className="px-4 py-3 text-[var(--color-muted)]">{v.code}</td>
                     <td className="px-4 py-3">{v.category || '—'}</td>
                     <td className="px-4 py-3">{v.active_user_count}</td>

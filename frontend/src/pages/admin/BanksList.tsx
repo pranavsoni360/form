@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { adminApi } from '../../services/api'
 import { Placeholder } from '../../components/Placeholder'
 import { Button } from '../../components/Field'
@@ -10,6 +10,7 @@ export default function BanksList() {
   const [banks, setBanks] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const navigate = useNavigate()
 
   const load = () => {
     setLoading(true)
@@ -46,12 +47,12 @@ export default function BanksList() {
             </thead>
             <tbody className="divide-y divide-[var(--color-line)]">
               {banks.map((b) => (
-                <tr key={b.id} className="hover:bg-[var(--color-faint)]">
-                  <td className="px-4 py-3 font-medium">
-                    <Link to={`/admin/banks/${b.id}`} className="text-[var(--color-heading)] hover:text-[var(--color-brand)]">
-                      {b.name}
-                    </Link>
-                  </td>
+                <tr
+                  key={b.id}
+                  onClick={() => navigate(`/admin/banks/${b.id}`)}
+                  className="cursor-pointer hover:bg-[var(--color-faint)] transition-colors"
+                >
+                  <td className="px-4 py-3 font-medium text-[var(--color-heading)]">{b.name}</td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">{b.code}</td>
                   <td className="px-4 py-3">
                     <span className="font-medium">{b.vendor_count}</span> <span className="text-[var(--color-muted)]">/ {b.vendor_limit}</span>

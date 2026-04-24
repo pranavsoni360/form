@@ -12,6 +12,7 @@ export default function LoginPage({ mode = 'portal' }: { mode?: 'portal' | 'admi
   const [tab, setTab] = useState<Tab>('bank')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -127,16 +128,28 @@ export default function LoginPage({ mode = 'portal' }: { mode?: 'portal' | 'admi
                 <span className="text-xs font-medium text-[var(--color-muted)] uppercase tracking-wide">
                   {customerDisabled ? 'OTP (coming soon)' : 'Password'}
                 </span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={customerDisabled}
-                  placeholder="••••••••"
-                  className="mt-1 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-input)] px-3 py-2.5 text-[var(--color-heading)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] disabled:opacity-50"
-                  autoComplete="current-password"
-                  required={!customerDisabled}
-                />
+                <div className="relative mt-1">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={customerDisabled}
+                    placeholder="••••••••"
+                    className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-input)] pl-3 pr-10 py-2.5 text-[var(--color-heading)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] disabled:opacity-50"
+                    autoComplete="current-password"
+                    required={!customerDisabled}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    disabled={customerDisabled}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-[var(--color-muted)] hover:text-[var(--color-heading)] disabled:opacity-50"
+                  >
+                    {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
               </label>
 
               {customerDisabled && (
@@ -170,5 +183,25 @@ export default function LoginPage({ mode = 'portal' }: { mode?: 'portal' | 'admi
         </div>
       </div>
     </div>
+  )
+}
+
+function EyeIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  )
+}
+
+function EyeOffIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.88 9.88A3 3 0 0 0 12 15a3 3 0 0 0 2.12-.88" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
   )
 }

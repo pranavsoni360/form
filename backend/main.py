@@ -2476,8 +2476,9 @@ async def get_batch_status(batch_uuid: str, user: dict = Depends(require_any_aut
     batch = await _batch_access_for(user, batch_uuid)
     counts = await _batch_progress_counts(batch.get("batch_id") or batch_uuid)
     call_rows = await db_pool.fetch(
-        """SELECT id, customer_name, phone, status, call_duration,
-                  started_at, ended_at, category
+        """SELECT id, customer_name, phone, loan_type, loan_amount, language,
+                  status, call_duration, started_at, ended_at, category,
+                  retry_count
              FROM agent_calls WHERE batch_id = $1
             ORDER BY created_at ASC""",
         batch.get("batch_id") or batch_uuid,

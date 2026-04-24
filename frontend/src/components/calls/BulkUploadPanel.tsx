@@ -6,7 +6,7 @@
 // Like SingleCallForm, the only differences between admin and portal modes are
 // (a) whether BankVendorPicker is shown and (b) which endpoint handles the
 // upload. `uploadApi` is injected so pages wire it to the right apiFetch call.
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Field, Input, Button, Select } from '../Field'
 import { BankVendorPicker, type BankVendor } from './BankVendorPicker'
 import { batchApi } from '../../services/api'
@@ -187,6 +187,25 @@ function SelectStep({
 }) {
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [calls, setCalls] = useState<any[] | null>(null)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
+
+  // Pull the actual customer rows so the operator can eyeball names/phones/loan
+  // values before dialing. Avoids accidentally dialing the wrong CSV.
+  useEffect(() => {
+    let cancelled = false
+    batchApi
+      .get(batchUuid)
+      .then((d: any) => {
+        if (!cancelled) setCalls(d.calls || [])
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadErr(err instanceof Error ? err.message : 'Could not load customer list')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [batchUuid])
 
   const start = async () => {
     setStarting(true)
@@ -200,12 +219,14 @@ function SelectStep({
     }
   }
 
+  const fmtAmount = (v: any) => (v != null && v !== '' ? `₹${Number(v).toLocaleString('en-IN')}` : '—')
+
   return (
     <div className="space-y-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-elevated)] p-6">
       <div>
         <h2 className="text-lg font-semibold">Ready to start</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Review the summary and click <strong>Start batch</strong> to begin dialing.
+          Review the customer list below and click <strong>Start batch</strong> to begin dialing.
         </p>
       </div>
       <dl className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
@@ -213,6 +234,61 @@ function SelectStep({
         <Cell label="Customers">{total}</Cell>
         <Cell label="Batch ID" mono>{batchUuid.slice(0, 8)}…</Cell>
       </dl>
+
+      {/* Customer preview — fetched from GET /api/calls/batch/{id} so the operator
+          sees exactly what's about to be dialed, not just a count. */}
+      <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+        <div className="flex items-center justify-between border-b border-[var(--color-line)] px-4 py-2.5">
+          <h3 className="text-sm font-semibold">Customers to call</h3>
+          <span className="text-xs text-[var(--color-muted)]">{calls ? `${calls.length} rows` : 'loading…'}</span>
+        </div>
+        <div className="max-h-[360px] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10 bg-[var(--color-sunken)] text-xs uppercase text-[var(--color-muted)]">
+              <tr>
+                <th className="px-4 py-2 text-left">#</th>
+                <th className="px-4 py-2 text-left">Customer</th>
+                <th className="px-4 py-2 text-left">Phone</th>
+                <th className="px-4 py-2 text-left">Loan type</th>
+                <th className="px-4 py-2 text-right">Amount</th>
+                <th className="px-4 py-2 text-left">Language</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-line)]">
+              {calls === null ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-[var(--color-muted)]">
+                    Loading customers…
+                  </td>
+                </tr>
+              ) : calls.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-[var(--color-muted)]">
+                    No rows parsed from the file.
+                  </td>
+                </tr>
+              ) : (
+                calls.map((c, i) => (
+                  <tr key={c.id}>
+                    <td className="px-4 py-2 text-[var(--color-muted)]">{i + 1}</td>
+                    <td className="px-4 py-2 font-medium text-[var(--color-heading)]">{c.customer_name || '—'}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-[var(--color-muted)]">{c.phone || '—'}</td>
+                    <td className="px-4 py-2 capitalize">{c.loan_type || '—'}</td>
+                    <td className="px-4 py-2 text-right">{fmtAmount(c.loan_amount)}</td>
+                    <td className="px-4 py-2 capitalize">{c.language || '—'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {loadErr && (
+          <div className="border-t border-red-400/30 bg-red-500/10 px-4 py-2 text-sm text-red-500">
+            {loadErr}
+          </div>
+        )}
+      </div>
+
       {error && (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
           {error}

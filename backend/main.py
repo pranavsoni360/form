@@ -2155,7 +2155,9 @@ async def admin_list_calls(
     where = " AND ".join(conds) if conds else "TRUE"
     rows = await db_pool.fetch(
         f"""SELECT c.*, b.name AS bank_name, b.code AS bank_code,
-                   v.name AS vendor_name, v.code AS vendor_code
+                   v.name AS vendor_name, v.code AS vendor_code,
+                   (SELECT COUNT(*) FROM loan_applications la WHERE la.agent_call_id = c.id)
+                     AS linked_application_count
               FROM agent_calls c
               LEFT JOIN banks b   ON b.id = c.bank_id
               LEFT JOIN vendors v ON v.id = c.vendor_id
@@ -2180,6 +2182,36 @@ async def admin_get_call(call_id: str, _: dict = Depends(require_admin)):
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     return {"call": _row_to_dict(row)}
+
+
+@app.delete("/api/admin/calls/{call_id}")
+async def admin_delete_call(call_id: str, _: dict = Depends(require_admin)):
+    """Delete a call log and its linked loan_application (if any).
+
+    Cascades via FK: deleting a loan_application takes status_transitions,
+    form_autosave_log, loan_sessions, documents with it. form_tokens
+    survive (their application_id becomes NULL).
+    """
+    call_uuid = uuid.UUID(call_id)
+    row = await db_pool.fetchrow("SELECT id FROM agent_calls WHERE id = $1", call_uuid)
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    # 1. Delete any loan_applications tied to this call (ON DELETE CASCADE
+    #    handles the dependent tables).
+    deleted_apps = await db_pool.fetch(
+        "DELETE FROM loan_applications WHERE agent_call_id = $1 RETURNING id",
+        call_uuid,
+    )
+
+    # 2. Delete the call itself.
+    await db_pool.execute("DELETE FROM agent_calls WHERE id = $1", call_uuid)
+
+    return {
+        "deleted": True,
+        "call_id": str(call_uuid),
+        "deleted_application_count": len(deleted_apps),
+    }
 
 
 @app.post("/api/admin/calls/single")

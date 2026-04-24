@@ -559,8 +559,19 @@ async def agent_startup():
         id="analytics_runner",
         replace_existing=True,
     )
+    # Stuck-call reaper every 2 minutes. Covers the case where the LiveKit
+    # agent worker never picked up the call (process down, SIP error, etc.) --
+    # without this the row sits at status='Calling' forever because the only
+    # thing that transitions it is the /api/agent/transcript webhook from the
+    # agent itself. 10min threshold matches cleanup_stuck_calls().
+    _scheduler.add_job(
+        cleanup_stuck_calls,
+        CronTrigger(minute="*/2", timezone="Asia/Kolkata"),
+        id="stuck_call_reaper",
+        replace_existing=True,
+    )
     _scheduler.start()
-    logger.info("Agent scheduler started (calls 10AM-midnight, analytics every 2m)")
+    logger.info("Agent scheduler started (calls 10AM-midnight, analytics every 2m, stuck-call reaper every 2m)")
 
 
 async def agent_shutdown():

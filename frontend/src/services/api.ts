@@ -245,6 +245,11 @@ export const adminCallsApi = {
     return apiFetch<{ calls: any[] }>(`/api/admin/calls${qs ? `?${qs}` : ''}`)
   },
   get:  (id: string) => apiFetch<{ call: any }>(`/api/admin/calls/${id}`),
+  remove: (id: string) =>
+    apiFetch<{ deleted: boolean; deleted_application_count: number }>(
+      `/api/admin/calls/${id}`,
+      { method: 'DELETE' },
+    ),
   initiateCall: (payload: {
     customer_name: string
     phone: string

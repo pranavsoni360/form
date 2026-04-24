@@ -5,6 +5,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PIDFILE="$PROJECT_DIR/.los-pids"
 LOGDIR="$PROJECT_DIR/logs"
 BACKEND_VENV="$PROJECT_DIR/backend/venv/bin"
+AGENT_VENV="$PROJECT_DIR/agent/venv/bin"
 BACKEND_PORT=8200
 FRONTEND_PORT=5180
 
@@ -95,11 +96,13 @@ stop_all() {
         done < "$PIDFILE"
         rm -f "$PIDFILE"
     fi
-    local backend_pid frontend_pid
+    local backend_pid frontend_pid agent_pid
     backend_pid=$(lsof -i :${BACKEND_PORT} -t 2>/dev/null || true)
     frontend_pid=$(lsof -i :${FRONTEND_PORT} -t 2>/dev/null || true)
-    [[ -n "$backend_pid" ]] && echo "$backend_pid" | xargs kill -9 2>/dev/null || true
+    agent_pid=$(pgrep -f "agent/venv.*loan_agent.py" 2>/dev/null || true)
+    [[ -n "$backend_pid" ]]  && echo "$backend_pid"  | xargs kill -9 2>/dev/null || true
     [[ -n "$frontend_pid" ]] && echo "$frontend_pid" | xargs kill -9 2>/dev/null || true
+    [[ -n "$agent_pid" ]]    && echo "$agent_pid"    | xargs kill -9 2>/dev/null || true
     sleep 1
 }
 
@@ -115,6 +118,37 @@ ensure_backend_venv() {
         "$BACKEND_VENV/pip" install -q fastapi uvicorn asyncpg bcrypt PyJWT python-dotenv pydantic email-validator httpx python-multipart aiofiles fpdf2
         touch "$marker"
     fi
+}
+
+# ── Agent (LiveKit worker) ───────────────────────────────────
+ensure_agent_venv() {
+    if [[ ! -d "$AGENT_VENV" ]]; then
+        echo -e "${CYAN}[agent]${NC} Creating Python venv..."
+        python3 -m venv "$PROJECT_DIR/agent/venv"
+    fi
+    local marker="$PROJECT_DIR/agent/venv/.deps-installed"
+    if [[ ! -f "$marker" ]] || [[ "$PROJECT_DIR/agent/requirements.txt" -nt "$marker" ]]; then
+        echo -e "${CYAN}[agent]${NC} Installing agent dependencies (this can take a minute)..."
+        "$AGENT_VENV/pip" install -q -r "$PROJECT_DIR/agent/requirements.txt"
+        touch "$marker"
+    fi
+}
+
+start_agent() {
+    if [[ ! -f "$PROJECT_DIR/agent/.env.local" ]]; then
+        echo -e "${RED}[agent]${NC} Missing agent/.env.local (LiveKit creds, STT/TTS keys). Copy agent/.env.example."
+        exit 1
+    fi
+    ensure_agent_venv
+    mkdir -p "$LOGDIR"
+    local agent_pid
+    agent_pid=$(pgrep -f "agent/venv.*loan_agent.py" 2>/dev/null || true)
+    [[ -n "$agent_pid" ]] && { echo -e "${YELLOW}[agent]${NC} Already running (PID $agent_pid) — kill with './run.sh stop' first."; return 0; }
+    cd "$PROJECT_DIR/agent"
+    "$AGENT_VENV/python" loan_agent.py dev > "$LOGDIR/agent.log" 2>&1 &
+    echo $! >> "$PIDFILE"
+    echo -e "${GREEN}[agent]${NC} Agent worker PID $! → logs/agent.log"
+    cd "$PROJECT_DIR"
 }
 
 # ── Frontend (Vite dev) ──────────────────────────────────────
@@ -142,6 +176,15 @@ start_all() {
     echo $! >> "$PIDFILE"
     echo -e "${GREEN}[start]${NC} Frontend PID $! → logs/frontend.log (port ${FRONTEND_PORT})"
     cd "$PROJECT_DIR"
+
+    # Agent worker (optional — only if agent/.env.local exists). Without this
+    # the backend queues calls but no LiveKit worker picks them up, so rows
+    # sit at status='Calling' until the stuck-call reaper sweeps them.
+    if [[ -f "$PROJECT_DIR/agent/.env.local" ]]; then
+        start_agent
+    else
+        echo -e "${YELLOW}[start]${NC} Skipping agent worker — no agent/.env.local. Run './run.sh agent' after adding creds."
+    fi
 }
 
 # ── Trap Ctrl+C ──────────────────────────────────────────────
@@ -164,6 +207,11 @@ case "${1:-start}" in
     logs)
         tail -f "$LOGDIR"/*.log
         ;;
+    agent)
+        ensure_postgres
+        start_agent
+        echo -e "${GREEN}[ready]${NC} Agent worker running. tail -f logs/agent.log"
+        ;;
     build)
         # Production build of the frontend
         ensure_frontend_deps
@@ -183,13 +231,14 @@ case "${1:-start}" in
         wait
         ;;
     *)
-        echo "Usage: ./run.sh [start|stop|build|db|wipe|logs]"
-        echo "  start  - Start Postgres + backend + Vite dev frontend"
-        echo "  stop   - Kill backend & frontend processes"
+        echo "Usage: ./run.sh [start|stop|build|db|wipe|logs|agent]"
+        echo "  start  - Start Postgres + backend + Vite dev frontend (+ agent if .env.local present)"
+        echo "  stop   - Kill backend, frontend, and agent processes"
         echo "  build  - Production-build the Vite frontend"
         echo "  db     - Just ensure Postgres is running"
         echo "  wipe   - DESTRUCTIVE: drop all tables & reapply schema_v3"
-        echo "  logs   - Tail backend and frontend logs"
+        echo "  logs   - Tail backend, frontend, and agent logs"
+        echo "  agent  - Start only the LiveKit agent worker (needs agent/.env.local)"
         exit 1
         ;;
 esac

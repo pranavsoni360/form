@@ -828,35 +828,69 @@ async def dispatch_call(call_id: str, wait_for_completion: bool = True) -> dict:
                 type(sip_err).__name__, sip_status_code, sip_status_text, err_str[:500],
             )
             raise
-        # Brief async poll: catch the first state transition Viva reports
-        # (ringing -> hangup / busy / no answer) so the next time a call dies
-        # silently we have evidence in our own logs, not just the dashboard.
+        # Brief async poll: catch the first state transitions Viva reports
+        # (ringing -> hangup / busy / no answer / answered) so the next time a
+        # call dies silently we have evidence in our own logs, not just the
+        # dashboard. NOTE: we open a SEPARATE LiveKitAPI client here because
+        # the outer `lk` will be aclose()'d before this task runs.
+        target_room = room_name
+        target_call_id = str(call_uuid)
         async def _log_sip_state():
+            from livekit.api import LiveKitAPI
+            from livekit.protocol.room import ListParticipantsRequest
+            poll_lk = LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
             try:
-                from livekit.protocol.room import ListParticipantsRequest
-                for delay in (1.5, 4.0, 9.0):
-                    await asyncio.sleep(delay)
+                deltas = (1.5, 4.0, 9.0, 20.0)
+                t0 = asyncio.get_event_loop().time()
+                last_status = None
+                seen_sip_participant = False
+                for d in deltas:
+                    await asyncio.sleep(max(0.0, t0 + d - asyncio.get_event_loop().time()))
                     try:
-                        parts = await lk.room.list_participants(
-                            ListParticipantsRequest(room=room_name))
-                        for p in parts.participants:
-                            if p.kind == 3:  # SIP participant
-                                attrs = dict(p.attributes)
-                                logger.info(
-                                    "[SIP_STATE] call_id=%s t+%.1fs status=%s code=%s text=%s host=%s",
-                                    call_uuid, delay,
-                                    attrs.get("sip.callStatus"),
-                                    attrs.get("sip.callStatusCode"),
-                                    attrs.get("sip.callStatusText"),
-                                    attrs.get("sip.hostname"),
-                                )
-                                # Stop polling once the call reaches a terminal state.
-                                if attrs.get("sip.callStatus") in ("hangup", "answered", "active"):
-                                    return
+                        parts = await poll_lk.room.list_participants(
+                            ListParticipantsRequest(room=target_room))
+                        sip_parts = [p for p in parts.participants if p.kind == 3]
+                        if not sip_parts:
+                            logger.warning(
+                                "[SIP_STATE] call_id=%s t+%.1fs no_sip_participant_in_room (room may be empty)",
+                                target_call_id, d,
+                            )
+                            continue
+                        for p in sip_parts:
+                            seen_sip_participant = True
+                            attrs = dict(p.attributes)
+                            status = attrs.get("sip.callStatus")
+                            logger.info(
+                                "[SIP_STATE] call_id=%s t+%.1fs status=%s code=%s text=%s host=%s identity=%s state=%s",
+                                target_call_id, d, status,
+                                attrs.get("sip.callStatusCode"),
+                                attrs.get("sip.callStatusText"),
+                                attrs.get("sip.hostname"),
+                                p.identity, p.state,
+                            )
+                            last_status = status
+                            if status in ("hangup", "answered", "active"):
+                                return
                     except Exception as poll_err:
-                        logger.debug("[SIP_STATE] poll err: %s", poll_err)
-            except Exception:
-                pass
+                        logger.warning(
+                            "[SIP_STATE] call_id=%s t+%.1fs poll_err=%s: %s",
+                            target_call_id, d, type(poll_err).__name__, poll_err,
+                        )
+                if not seen_sip_participant:
+                    logger.warning(
+                        "[SIP_STATE] call_id=%s never_saw_sip_participant -- INVITE accepted but Viva or carrier dropped before ringing",
+                        target_call_id,
+                    )
+                elif last_status not in ("hangup", "answered", "active"):
+                    logger.warning(
+                        "[SIP_STATE] call_id=%s final_status=%s (no terminal transition seen in 20s)",
+                        target_call_id, last_status,
+                    )
+            finally:
+                try:
+                    await poll_lk.aclose()
+                except Exception:
+                    pass
         asyncio.create_task(_log_sip_state())
 
         await asyncio.sleep(1.0)

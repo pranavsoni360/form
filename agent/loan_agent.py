@@ -921,13 +921,20 @@ async def entrypoint(ctx: JobContext):
 # ===================================================================
 
 if __name__ == "__main__":
+    # Worker registers under AGENT_NAME -- this MUST match the backend's
+    # AGENT_NAME (backend/agent_routes.py:69) or LiveKit will route dispatches
+    # to a different worker registered under that backend's name. In dev,
+    # always set a unique AGENT_NAME (e.g. via agent/.env.local) so the prod
+    # worker doesn't steal your local dispatches and you can actually see the
+    # /api/agent/transcript-chunk traffic in your local backend.
+    AGENT_NAME = os.getenv("AGENT_NAME", "pusad-bank-loan-enquiry-enhanced")
     while True:
         try:
-            logger.info("🏦 Starting Loan Enquiry Agent Worker...")
+            logger.info(f"🏦 Starting Loan Enquiry Agent Worker (agent_name={AGENT_NAME})...")
             cli.run_app(
                 WorkerOptions(
                     entrypoint_fnc=entrypoint,
-                    agent_name="pusad-bank-loan-enquiry-enhanced",
+                    agent_name=AGENT_NAME,
                 )
             )
         except Exception as e:

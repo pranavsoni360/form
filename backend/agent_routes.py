@@ -795,18 +795,78 @@ async def dispatch_call(call_id: str, wait_for_completion: bool = True) -> dict:
         )
 
         sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
-        await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-            room_name=room_name,
-            sip_trunk_id=SIP_TRUNK_ID,
-            sip_call_to=sip_phone,
-            participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
-            participant_name=name,
-            play_ringtone=True,
-        ))
+        participant_identity = f"customer_{name.replace(' ', '_').replace('/', '_')}"
+        logger.info(
+            "[SIP_DIAL] IN call_id=%s trunk=%s to=%s room=%s identity=%s",
+            call_uuid, SIP_TRUNK_ID, sip_phone, room_name, participant_identity,
+        )
+        try:
+            sip_resp = await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
+                room_name=room_name,
+                sip_trunk_id=SIP_TRUNK_ID,
+                sip_call_to=sip_phone,
+                participant_identity=participant_identity,
+                participant_name=name,
+                play_ringtone=True,
+            ))
+            logger.info(
+                "[SIP_DIAL] OK call_id=%s sip_call_id=%s participant_id=%s identity=%s",
+                call_uuid, sip_resp.sip_call_id, sip_resp.participant_id, sip_resp.participant_identity,
+            )
+        except Exception as sip_err:
+            # Surface every detail Twirp / LiveKit gives us. Viva returns 403
+            # when its auth-failed -- we want the sip_status_code visible here
+            # without grepping for tracebacks.
+            err_str = str(sip_err)
+            sip_status = getattr(sip_err, "metadata", {}) or {}
+            sip_status_code = sip_status.get("sip_status_code") if isinstance(sip_status, dict) else None
+            sip_status_text = sip_status.get("sip_status") if isinstance(sip_status, dict) else None
+            logger.error(
+                "[SIP_DIAL] FAIL call_id=%s trunk=%s to=%s "
+                "exc=%s sip_status_code=%s sip_status=%s err=%s",
+                call_uuid, SIP_TRUNK_ID, sip_phone,
+                type(sip_err).__name__, sip_status_code, sip_status_text, err_str[:500],
+            )
+            raise
+        # Brief async poll: catch the first state transition Viva reports
+        # (ringing -> hangup / busy / no answer) so the next time a call dies
+        # silently we have evidence in our own logs, not just the dashboard.
+        async def _log_sip_state():
+            try:
+                from livekit.protocol.room import ListParticipantsRequest
+                for delay in (1.5, 4.0, 9.0):
+                    await asyncio.sleep(delay)
+                    try:
+                        parts = await lk.room.list_participants(
+                            ListParticipantsRequest(room=room_name))
+                        for p in parts.participants:
+                            if p.kind == 3:  # SIP participant
+                                attrs = dict(p.attributes)
+                                logger.info(
+                                    "[SIP_STATE] call_id=%s t+%.1fs status=%s code=%s text=%s host=%s",
+                                    call_uuid, delay,
+                                    attrs.get("sip.callStatus"),
+                                    attrs.get("sip.callStatusCode"),
+                                    attrs.get("sip.callStatusText"),
+                                    attrs.get("sip.hostname"),
+                                )
+                                # Stop polling once the call reaches a terminal state.
+                                if attrs.get("sip.callStatus") in ("hangup", "answered", "active"):
+                                    return
+                    except Exception as poll_err:
+                        logger.debug("[SIP_STATE] poll err: %s", poll_err)
+            except Exception:
+                pass
+        asyncio.create_task(_log_sip_state())
+
         await asyncio.sleep(1.0)
         await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
             room=room_name, agent_name=AGENT_NAME,
         ))
+        logger.info(
+            "[DISPATCH] OK call_id=%s room=%s agent_name=%s",
+            call_uuid, room_name, AGENT_NAME,
+        )
         await lk.aclose()
 
         if wait_for_completion:

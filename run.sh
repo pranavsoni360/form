@@ -5,8 +5,9 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PIDFILE="$PROJECT_DIR/.los-pids"
 LOGDIR="$PROJECT_DIR/logs"
 BACKEND_VENV="$PROJECT_DIR/backend/venv/bin"
+AGENT_VENV="$PROJECT_DIR/agent/venv/bin"
 BACKEND_PORT=8200
-FRONTEND_PORT=3001
+FRONTEND_PORT=5180
 
 # ── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -62,16 +63,30 @@ ensure_postgres() {
             --restart unless-stopped \
             postgres:16 >/dev/null
         sleep 3
-        echo -e "${CYAN}[db]${NC} Seeding base schema..."
-        docker cp "$PROJECT_DIR/database/schema.sql" "${container}:/tmp/schema.sql" >/dev/null 2>&1
-        docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema.sql >/dev/null 2>&1 || true
+        echo -e "${CYAN}[db]${NC} Applying schema_v3..."
+        docker cp "$PROJECT_DIR/database/schema_v3.sql" "${container}:/tmp/schema_v3.sql"
+        docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema_v3.sql
     fi
 
     apply_migrations "$container"
     echo -e "${GREEN}[db]${NC} Postgres ready on port ${pg_port}"
 }
 
-# MongoDB removed — agent module uses Postgres
+# Wipe all LOS tables and reapply schema_v3 (destructive)
+wipe_db() {
+    local container="los-postgres-dev"
+    if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+        echo -e "${RED}[db]${NC} Postgres container not running. Run './run.sh db' first."
+        exit 1
+    fi
+    echo -e "${YELLOW}[db]${NC} Dropping all LOS tables..."
+    docker cp "$PROJECT_DIR/database/drop_all.sql" "${container}:/tmp/drop_all.sql"
+    docker exec "$container" psql -U los_admin -d los_form -f /tmp/drop_all.sql
+    echo -e "${CYAN}[db]${NC} Applying schema_v3..."
+    docker cp "$PROJECT_DIR/database/schema_v3.sql" "${container}:/tmp/schema_v3.sql"
+    docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema_v3.sql
+    echo -e "${GREEN}[db]${NC} Database wiped and reinitialized with schema_v3."
+}
 
 # ── Kill stale processes ─────────────────────────────────────
 stop_all() {
@@ -81,12 +96,13 @@ stop_all() {
         done < "$PIDFILE"
         rm -f "$PIDFILE"
     fi
-    # Kill by port
-    local backend_pid frontend_pid
+    local backend_pid frontend_pid agent_pid
     backend_pid=$(lsof -i :${BACKEND_PORT} -t 2>/dev/null || true)
     frontend_pid=$(lsof -i :${FRONTEND_PORT} -t 2>/dev/null || true)
-    [[ -n "$backend_pid" ]] && echo "$backend_pid" | xargs kill -9 2>/dev/null || true
+    agent_pid=$(pgrep -f "agent/venv.*loan_agent.py" 2>/dev/null || true)
+    [[ -n "$backend_pid" ]]  && echo "$backend_pid"  | xargs kill -9 2>/dev/null || true
     [[ -n "$frontend_pid" ]] && echo "$frontend_pid" | xargs kill -9 2>/dev/null || true
+    [[ -n "$agent_pid" ]]    && echo "$agent_pid"    | xargs kill -9 2>/dev/null || true
     sleep 1
 }
 
@@ -96,34 +112,82 @@ ensure_backend_venv() {
         echo -e "${CYAN}[backend]${NC} Creating Python venv..."
         python3 -m venv "$PROJECT_DIR/backend/venv"
     fi
-    # Install deps if requirements changed
     local marker="$PROJECT_DIR/backend/venv/.deps-installed"
     if [[ ! -f "$marker" ]] || [[ "$PROJECT_DIR/backend/requirements.txt" -nt "$marker" ]]; then
         echo -e "${CYAN}[backend]${NC} Installing Python dependencies..."
-        "$BACKEND_VENV/pip" install -q fastapi uvicorn asyncpg bcrypt PyJWT python-dotenv pydantic email-validator httpx python-multipart aiofiles
+        "$BACKEND_VENV/pip" install -q fastapi uvicorn asyncpg bcrypt PyJWT python-dotenv pydantic email-validator httpx python-multipart aiofiles fpdf2
         touch "$marker"
     fi
 }
 
-# ── Frontend build ───────────────────────────────────────────
-needs_frontend_build() {
-    local next_dir="$PROJECT_DIR/frontend/.next"
-    [[ ! -d "$next_dir" ]] && return 0
-    # Check if source files are newer than build
-    local newest_src newest_build
-    newest_src=$(find "$PROJECT_DIR/frontend/app" "$PROJECT_DIR/frontend/components" "$PROJECT_DIR/frontend/lib" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
-    newest_build=$(stat -c '%Y' "$next_dir" 2>/dev/null || echo 0)
-    (( $(echo "${newest_src:-0} > $newest_build" | bc) )) && return 0
+# ── Agent (LiveKit worker) ───────────────────────────────────
+# Find a Python interpreter compatible with livekit-agents (needs <3.14 as of
+# 1.5.x). Prefer 3.13, then 3.12, then 3.11, then 3.10. The backend venv can
+# use the system python (whatever version) because it has looser constraints.
+_find_agent_python() {
+    for py in python3.13 python3.12 python3.11 python3.10; do
+        if command -v "$py" >/dev/null 2>&1; then
+            echo "$py"
+            return 0
+        fi
+    done
+    # Last-ditch: use system python3 if it happens to be <3.14.
+    local v
+    v=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")
+    if [[ "$v" =~ ^3\.(1[0-3]|[0-9])$ ]]; then
+        echo "python3"
+        return 0
+    fi
     return 1
 }
 
-build_frontend() {
-    echo -e "${CYAN}[frontend]${NC} Installing npm dependencies..."
-    cd "$PROJECT_DIR/frontend" && npm install --silent 2>/dev/null
-    echo -e "${CYAN}[frontend]${NC} Building Next.js..."
-    npm run build
+ensure_agent_venv() {
+    if [[ ! -d "$AGENT_VENV" ]]; then
+        local py
+        if ! py=$(_find_agent_python); then
+            echo -e "${RED}[agent]${NC} No Python 3.10-3.13 found (livekit-agents requires <3.14)."
+            echo -e "${RED}[agent]${NC} Install with: brew install python@3.13"
+            exit 1
+        fi
+        echo -e "${CYAN}[agent]${NC} Creating Python venv with $py..."
+        "$py" -m venv "$PROJECT_DIR/agent/venv"
+    fi
+    local marker="$PROJECT_DIR/agent/venv/.deps-installed"
+    if [[ ! -f "$marker" ]] || [[ "$PROJECT_DIR/agent/requirements.txt" -nt "$marker" ]]; then
+        echo -e "${CYAN}[agent]${NC} Installing agent dependencies (this can take a minute)..."
+        "$AGENT_VENV/pip" install -q -r "$PROJECT_DIR/agent/requirements.txt"
+        touch "$marker"
+    fi
+}
+
+start_agent() {
+    if [[ ! -f "$PROJECT_DIR/agent/.env.local" ]]; then
+        echo -e "${RED}[agent]${NC} Missing agent/.env.local (LiveKit creds, STT/TTS keys). Copy agent/.env.example."
+        exit 1
+    fi
+    ensure_agent_venv
+    mkdir -p "$LOGDIR"
+    local agent_pid
+    agent_pid=$(pgrep -f "agent/venv.*loan_agent.py" 2>/dev/null || true)
+    [[ -n "$agent_pid" ]] && { echo -e "${YELLOW}[agent]${NC} Already running (PID $agent_pid) — kill with './run.sh stop' first."; return 0; }
+    cd "$PROJECT_DIR/agent"
+    # Workaround for Homebrew openssl@3 3.6.2 TLS 1.3 regression on macOS:
+    # forces Python's ssl module to negotiate TLS 1.2 only. See
+    # agent/openssl-tls12.cnf header for diagnosis. Remove this export once
+    # brew ships a fix or you downgrade openssl@3.
+    OPENSSL_CONF="$PROJECT_DIR/agent/openssl-tls12.cnf" \
+        "$AGENT_VENV/python" loan_agent.py dev > "$LOGDIR/agent.log" 2>&1 &
+    echo $! >> "$PIDFILE"
+    echo -e "${GREEN}[agent]${NC} Agent worker PID $! → logs/agent.log (OPENSSL_CONF=tls12 pin)"
     cd "$PROJECT_DIR"
-    echo -e "${GREEN}[frontend]${NC} Frontend build complete."
+}
+
+# ── Frontend (Vite dev) ──────────────────────────────────────
+ensure_frontend_deps() {
+    if [[ ! -d "$PROJECT_DIR/frontend/node_modules" ]]; then
+        echo -e "${CYAN}[frontend]${NC} Installing npm dependencies (first run)..."
+        (cd "$PROJECT_DIR/frontend" && npm install --silent)
+    fi
 }
 
 # ── Start services ───────────────────────────────────────────
@@ -137,12 +201,21 @@ start_all() {
     echo -e "${GREEN}[start]${NC} Backend PID $! → logs/backend.log (port ${BACKEND_PORT})"
     cd "$PROJECT_DIR"
 
-    # Frontend
+    # Frontend — Vite dev server
     cd "$PROJECT_DIR/frontend"
-    PORT=${FRONTEND_PORT} npx next start -p ${FRONTEND_PORT} > "$LOGDIR/frontend.log" 2>&1 &
+    ./node_modules/.bin/vite --port ${FRONTEND_PORT} --host 0.0.0.0 > "$LOGDIR/frontend.log" 2>&1 &
     echo $! >> "$PIDFILE"
     echo -e "${GREEN}[start]${NC} Frontend PID $! → logs/frontend.log (port ${FRONTEND_PORT})"
     cd "$PROJECT_DIR"
+
+    # Agent worker (optional — only if agent/.env.local exists). Without this
+    # the backend queues calls but no LiveKit worker picks them up, so rows
+    # sit at status='Calling' until the stuck-call reaper sweeps them.
+    if [[ -f "$PROJECT_DIR/agent/.env.local" ]]; then
+        start_agent
+    else
+        echo -e "${YELLOW}[start]${NC} Skipping agent worker — no agent/.env.local. Run './run.sh agent' after adding creds."
+    fi
 }
 
 # ── Trap Ctrl+C ──────────────────────────────────────────────
@@ -154,46 +227,49 @@ case "${1:-start}" in
         stop_all
         echo -e "${YELLOW}[stop]${NC} All processes stopped."
         ;;
-    build)
-        stop_all
-        ensure_postgres
-        ensure_backend_venv
-        build_frontend
-        start_all
-        echo -e "${GREEN}[ready]${NC} LOS Form running. Ctrl+C to stop."
-        echo -e "${GREEN}[ready]${NC} Backend:  http://localhost:${BACKEND_PORT}"
-        echo -e "${GREEN}[ready]${NC} Frontend: http://localhost:${FRONTEND_PORT}"
-        wait
-        ;;
     db)
         ensure_postgres
         echo -e "${GREEN}[db]${NC} Postgres is running."
         ;;
+    wipe)
+        ensure_postgres
+        wipe_db
+        ;;
     logs)
         tail -f "$LOGDIR"/*.log
+        ;;
+    agent)
+        ensure_postgres
+        start_agent
+        echo -e "${GREEN}[ready]${NC} Agent worker running. tail -f logs/agent.log"
+        ;;
+    build)
+        # Production build of the frontend
+        ensure_frontend_deps
+        echo -e "${CYAN}[frontend]${NC} Building Vite bundle..."
+        (cd "$PROJECT_DIR/frontend" && npm run build)
+        echo -e "${GREEN}[frontend]${NC} Build complete → frontend/dist"
         ;;
     start|"")
         stop_all
         ensure_postgres
         ensure_backend_venv
-        if needs_frontend_build; then
-            build_frontend
-        else
-            echo -e "${CYAN}[frontend]${NC} Build up to date, skipping."
-        fi
+        ensure_frontend_deps
         start_all
-        echo -e "${GREEN}[ready]${NC} LOS Form running. Ctrl+C to stop."
+        echo -e "${GREEN}[ready]${NC} LOS running. Ctrl+C to stop."
         echo -e "${GREEN}[ready]${NC} Backend:  http://localhost:${BACKEND_PORT}"
         echo -e "${GREEN}[ready]${NC} Frontend: http://localhost:${FRONTEND_PORT}"
         wait
         ;;
     *)
-        echo "Usage: ./run.sh [start|stop|build|db|logs]"
-        echo "  start  - Start Docker + backend + frontend (auto-build if needed)"
-        echo "  stop   - Kill all LOS processes"
-        echo "  build  - Force rebuild frontend + restart everything"
+        echo "Usage: ./run.sh [start|stop|build|db|wipe|logs|agent]"
+        echo "  start  - Start Postgres + backend + Vite dev frontend (+ agent if .env.local present)"
+        echo "  stop   - Kill backend, frontend, and agent processes"
+        echo "  build  - Production-build the Vite frontend"
         echo "  db     - Just ensure Postgres is running"
-        echo "  logs   - Tail backend and frontend logs"
+        echo "  wipe   - DESTRUCTIVE: drop all tables & reapply schema_v3"
+        echo "  logs   - Tail backend, frontend, and agent logs"
+        echo "  agent  - Start only the LiveKit agent worker (needs agent/.env.local)"
         exit 1
         ;;
 esac

@@ -255,19 +255,33 @@ async def cleanup_stuck_calls():
     """Reset calls stuck at 'Calling' for more than 10 minutes."""
     ten_min_ago = now_ist() - timedelta(minutes=10)
     try:
+        # Fetch-then-update so we can log which specific rows got swept; this
+        # is exactly the evidence you want when diagnosing "why is this call
+        # still Calling?" -- each swept row points at a missed webhook.
+        stuck = await db_pool.fetch(
+            """SELECT id, room_name, customer_name, phone, started_at
+                 FROM agent_calls
+                WHERE status = 'Calling' AND started_at < $1""",
+            ten_min_ago,
+        )
+        if not stuck:
+            return
+        for row in stuck:
+            logger.warning(
+                "[REAPER] sweeping stuck call call_id=%s room=%s customer=%s phone=%s started_at=%s",
+                row["id"], row["room_name"], row["customer_name"], row["phone"], row["started_at"],
+            )
         result = await db_pool.execute(
             """UPDATE agent_calls
-               SET status = 'Failed', error_message = 'Stuck call cleaned up on startup',
+               SET status = 'Failed', error_message = 'Stuck call cleaned up by reaper (>10 min at Calling, no /transcript webhook received)',
                    ended_at = $1, updated_at = $1, retry_count = retry_count + 1
                WHERE status = 'Calling' AND started_at < $2""",
             now_ist(), ten_min_ago,
         )
-        # result is like "UPDATE N"
         count = int(result.split()[-1]) if result else 0
-        if count > 0:
-            logger.warning(f"Cleaned up {count} stuck 'Calling' records (>10 min)")
+        logger.warning("[REAPER] swept %d stuck 'Calling' records (>10 min)", count)
     except Exception as e:
-        logger.error(f"cleanup_stuck_calls error: {e}")
+        logger.error("[REAPER] error: %s", e, exc_info=True)
 
 
 def _serialize_call(c: dict) -> dict:
@@ -392,11 +406,13 @@ security = HTTPBearer(auto_error=False)  # auto_error=False allows unauthenticat
 async def get_current_bank_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
-    """Decode JWT if provided, otherwise return operator-level access (no bank_id filter).
-    Bank officers get bank_id scoping; operators (no auth) see everything."""
+    """Decode JWT and return a scoped user dict. v3 roles: admin / bank_user / vendor_user.
+    Admins see everything (bank_id=None). Bank users get bank-wide scope. Vendor users see
+    only their vendor's rows (bank+vendor filter applied downstream)."""
     if not credentials:
-        # No auth — operator mode (sees all banks)
-        return {"user_id": "operator", "role": "operator", "bank_id": None, "user_type": "operator"}
+        # Backwards compatibility: unauthenticated access is still operator-level so the
+        # LiveKit voice agent (server-to-server) can post transcript updates.
+        return {"user_id": "operator", "role": "operator", "bank_id": None, "vendor_id": None}
 
     try:
         payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
@@ -405,30 +421,78 @@ async def get_current_bank_user(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    if payload.get("user_type") != "bank_user":
-        raise HTTPException(status_code=403, detail="Bank user access required")
-    if payload.get("role") not in ("bank_officer", "bank_supervisor"):
-        raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+    role = payload.get("role")
+    if role not in ("admin", "bank_user", "vendor_user"):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     return {
         "user_id": payload["user_id"],
-        "role": payload["role"],
-        "bank_id": payload.get("bank_id"),
-        "user_type": payload["user_type"],
+        "role": role,
+        "bank_id": payload.get("bank_id") if role != "admin" else None,
+        "vendor_id": payload.get("vendor_id") if role == "vendor_user" else None,
     }
 
+
+async def require_admin_local(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    """Admin-only dependency for legacy /api/agent/* endpoints.
+
+    Duplicates main.py's require_admin locally to avoid a circular import
+    (main.py imports agent_routes at module top-level). Auth is enforced
+    strictly — no operator fallback like get_current_bank_user has.
+    """
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Admin authentication required")
+    try:
+        payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {
+        "user_id": payload["user_id"],
+        "role": "admin",
+        "bank_id": None,
+        "vendor_id": None,
+    }
+
+
 def _bank_uuid(user: dict):
-    """Get bank_id as UUID, or None for operators (no bank scoping)."""
+    """Bank scope UUID: admin/operator see all; bank/vendor users are bank-scoped."""
     bid = user.get("bank_id")
     return uuid.UUID(bid) if bid else None
 
+
+def _vendor_uuid(user: dict):
+    vid = user.get("vendor_id")
+    return uuid.UUID(vid) if vid else None
+
+
 def _bank_filter(bank_uuid, param_idx: int = 1, table_alias: str = "") -> tuple:
     """Build conditional bank_id SQL filter. Returns (condition_str, params_list, next_idx).
-    When bank_uuid is None (operator), returns TRUE (no filter)."""
+    When bank_uuid is None (admin/operator), returns TRUE (no filter)."""
     prefix = f"{table_alias}." if table_alias else ""
     if bank_uuid is None:
         return "TRUE", [], param_idx
     return f"{prefix}bank_id = ${param_idx}", [bank_uuid], param_idx + 1
+
+
+def _scope_filter(user: dict, param_idx: int = 1, table_alias: str = "") -> tuple:
+    """Return (condition, params, next_idx) enforcing bank AND vendor scope as required."""
+    prefix = f"{table_alias}." if table_alias else ""
+    conds: list[str] = []
+    params: list = []
+    idx = param_idx
+    bid = _bank_uuid(user)
+    vid = _vendor_uuid(user)
+    if bid is not None:
+        conds.append(f"{prefix}bank_id = ${idx}"); params.append(bid); idx += 1
+    if vid is not None:
+        conds.append(f"{prefix}vendor_id = ${idx}"); params.append(vid); idx += 1
+    return (" AND ".join(conds) if conds else "TRUE"), params, idx
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -509,8 +573,19 @@ async def agent_startup():
         id="analytics_runner",
         replace_existing=True,
     )
+    # Stuck-call reaper every 2 minutes. Covers the case where the LiveKit
+    # agent worker never picked up the call (process down, SIP error, etc.) --
+    # without this the row sits at status='Calling' forever because the only
+    # thing that transitions it is the /api/agent/transcript webhook from the
+    # agent itself. 10min threshold matches cleanup_stuck_calls().
+    _scheduler.add_job(
+        cleanup_stuck_calls,
+        CronTrigger(minute="*/2", timezone="Asia/Kolkata"),
+        id="stuck_call_reaper",
+        replace_existing=True,
+    )
     _scheduler.start()
-    logger.info("Agent scheduler started (calls 10AM-midnight, analytics every 2m)")
+    logger.info("Agent scheduler started (calls 10AM-midnight, analytics every 2m, stuck-call reaper every 2m)")
 
 
 async def agent_shutdown():
@@ -595,6 +670,278 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
     return _row_to_dict(row)
 
 
+async def _publish_batch_update(call: dict) -> None:
+    """If the call belongs to a batch, publish a status update to SSE subscribers.
+    Uses the shared `batch_pubsub` singleton (NOT `from main import ...`) so the
+    subscriber dict is the same one the SSE endpoint writes to even when main.py
+    runs as __main__. Swallows any errors — batch SSE is best-effort."""
+    batch_id = call.get("batch_id")
+    if not batch_id:
+        return
+    try:
+        import batch_pubsub
+        await batch_pubsub.publish(str(batch_id), {
+            "call_id": str(call.get("id", "")),
+            "status": call.get("status"),
+            "customer_name": call.get("customer_name"),
+            "phone": call.get("phone"),
+        })
+    except Exception as e:
+        logger.debug(f"publish_to_batch skipped: {e}")
+
+
+async def dispatch_call(call_id: str, wait_for_completion: bool = True) -> dict:
+    """LiveKit room + SIP participant + agent dispatch for a single agent_calls row.
+
+    Shared by the batch runner (wait_for_completion=True so we know when to dial
+    the next one) and the admin/portal single-call endpoints (wait_for_completion
+    =False — agent reports status back via /api/agent/transcript).
+
+    Returns a summary dict with keys: status, room_name?, error?, outcome?"""
+    call_uuid = uuid.UUID(call_id)
+    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    if not row:
+        return {"status": "not_found"}
+    call = _row_to_dict(row)
+    name = call.get("customer_name") or "Customer"
+    phone = (call.get("phone") or "").strip()
+
+    # Phone validation
+    if not phone or len(phone) < 10:
+        await db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Invalid Phone', retry_count = retry_count + 1, updated_at = $1
+               WHERE id = $2""",
+            now_ist(), call_uuid,
+        )
+        call["status"] = "Invalid Phone"
+        await _publish_batch_update(call)
+        return {"status": "invalid_phone"}
+
+    call_start = now_ist()
+    try:
+        await db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Calling', started_at = $1, updated_at = $1
+               WHERE id = $2""",
+            call_start, call_uuid,
+        )
+        call["status"] = "Calling"
+        await _publish_batch_update(call)
+
+        if DEMO_MODE:
+            room_name = f"demo_{secrets.token_hex(6)}_{int(time.time())}"
+            await db_pool.execute(
+                "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
+                room_name, call_uuid,
+            )
+            await asyncio.sleep(3)
+
+            import random as rng
+            interested = rng.choice([True, True, False])
+            loan_type = rng.choice(["personal", "business", "education"])
+            status = "Called - Interested" if interested else "Called - Not Interested"
+            lead_quality = "hot" if interested else "cold"
+            demo_transcript = [
+                {"role": "agent", "text": f"Hello, am I speaking with {name}?", "timestamp": now_ist_str()},
+                {"role": "user", "text": "Yes, speaking.", "timestamp": now_ist_str()},
+            ]
+            call_end = now_ist()
+            duration_seconds = int((call_end - call_start).total_seconds())
+            category = "Very Interested - Form Sent" if interested else "Not Interested - No Need Currently"
+
+            await db_pool.execute(
+                """UPDATE agent_calls SET
+                    transcript = $1, status = $2, call_duration = $3,
+                    ended_at = $4, updated_at = $4,
+                    interested = $5, loan_type = $6,
+                    category = $7,
+                    call_analysis = $8,
+                    collected_data = $9
+                   WHERE id = $10""",
+                json.dumps(demo_transcript),
+                status,
+                duration_seconds,
+                call_end,
+                interested,
+                loan_type if interested else None,
+                category,
+                json.dumps({"lead_quality": lead_quality, "follow_up_needed": "Yes" if interested else "No"}),
+                json.dumps({"loan_type": loan_type}) if interested else None,
+                call_uuid,
+            )
+            call["status"] = status
+            await _publish_batch_update(call)
+            return {"status": "completed", "outcome": status, "room_name": room_name}
+
+        # --- Real LiveKit + SIP call ---
+        room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
+        lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+
+        bank_id_val = call.get("bank_id")
+        await lk.room.create_room(api.CreateRoomRequest(
+            name=room_name, empty_timeout=300, max_participants=3,
+            metadata=json.dumps({
+                "customer_name": name,
+                "phone": phone,
+                "call_id": str(call_uuid),
+                "bank_id": str(bank_id_val) if bank_id_val else "",
+                "language": call.get("language", "hindi"),
+            }),
+        ))
+        await db_pool.execute(
+            "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
+            room_name, call_uuid,
+        )
+
+        sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
+        participant_identity = f"customer_{name.replace(' ', '_').replace('/', '_')}"
+        logger.info(
+            "[SIP_DIAL] IN call_id=%s trunk=%s to=%s room=%s identity=%s",
+            call_uuid, SIP_TRUNK_ID, sip_phone, room_name, participant_identity,
+        )
+        try:
+            sip_resp = await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
+                room_name=room_name,
+                sip_trunk_id=SIP_TRUNK_ID,
+                sip_call_to=sip_phone,
+                participant_identity=participant_identity,
+                participant_name=name,
+                play_ringtone=True,
+            ))
+            logger.info(
+                "[SIP_DIAL] OK call_id=%s sip_call_id=%s participant_id=%s identity=%s",
+                call_uuid, sip_resp.sip_call_id, sip_resp.participant_id, sip_resp.participant_identity,
+            )
+        except Exception as sip_err:
+            # Surface every detail Twirp / LiveKit gives us. Viva returns 403
+            # when its auth-failed -- we want the sip_status_code visible here
+            # without grepping for tracebacks.
+            err_str = str(sip_err)
+            sip_status = getattr(sip_err, "metadata", {}) or {}
+            sip_status_code = sip_status.get("sip_status_code") if isinstance(sip_status, dict) else None
+            sip_status_text = sip_status.get("sip_status") if isinstance(sip_status, dict) else None
+            logger.error(
+                "[SIP_DIAL] FAIL call_id=%s trunk=%s to=%s "
+                "exc=%s sip_status_code=%s sip_status=%s err=%s",
+                call_uuid, SIP_TRUNK_ID, sip_phone,
+                type(sip_err).__name__, sip_status_code, sip_status_text, err_str[:500],
+            )
+            raise
+        # Brief async poll: catch the first state transitions Viva reports
+        # (ringing -> hangup / busy / no answer / answered) so the next time a
+        # call dies silently we have evidence in our own logs, not just the
+        # dashboard. NOTE: we open a SEPARATE LiveKitAPI client here because
+        # the outer `lk` will be aclose()'d before this task runs.
+        target_room = room_name
+        target_call_id = str(call_uuid)
+        async def _log_sip_state():
+            from livekit.api import LiveKitAPI
+            from livekit.protocol.room import ListParticipantsRequest
+            poll_lk = LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+            try:
+                deltas = (1.5, 4.0, 9.0, 20.0)
+                t0 = asyncio.get_event_loop().time()
+                last_status = None
+                seen_sip_participant = False
+                for d in deltas:
+                    await asyncio.sleep(max(0.0, t0 + d - asyncio.get_event_loop().time()))
+                    try:
+                        parts = await poll_lk.room.list_participants(
+                            ListParticipantsRequest(room=target_room))
+                        sip_parts = [p for p in parts.participants if p.kind == 3]
+                        if not sip_parts:
+                            logger.warning(
+                                "[SIP_STATE] call_id=%s t+%.1fs no_sip_participant_in_room (room may be empty)",
+                                target_call_id, d,
+                            )
+                            continue
+                        for p in sip_parts:
+                            seen_sip_participant = True
+                            attrs = dict(p.attributes)
+                            status = attrs.get("sip.callStatus")
+                            logger.info(
+                                "[SIP_STATE] call_id=%s t+%.1fs status=%s code=%s text=%s host=%s identity=%s state=%s",
+                                target_call_id, d, status,
+                                attrs.get("sip.callStatusCode"),
+                                attrs.get("sip.callStatusText"),
+                                attrs.get("sip.hostname"),
+                                p.identity, p.state,
+                            )
+                            last_status = status
+                            if status in ("hangup", "answered", "active"):
+                                return
+                    except Exception as poll_err:
+                        logger.warning(
+                            "[SIP_STATE] call_id=%s t+%.1fs poll_err=%s: %s",
+                            target_call_id, d, type(poll_err).__name__, poll_err,
+                        )
+                if not seen_sip_participant:
+                    logger.warning(
+                        "[SIP_STATE] call_id=%s never_saw_sip_participant -- INVITE accepted but Viva or carrier dropped before ringing",
+                        target_call_id,
+                    )
+                elif last_status not in ("hangup", "answered", "active"):
+                    logger.warning(
+                        "[SIP_STATE] call_id=%s final_status=%s (no terminal transition seen in 20s)",
+                        target_call_id, last_status,
+                    )
+            finally:
+                try:
+                    await poll_lk.aclose()
+                except Exception:
+                    pass
+        asyncio.create_task(_log_sip_state())
+
+        await asyncio.sleep(1.0)
+        await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
+            room=room_name, agent_name=AGENT_NAME,
+        ))
+        logger.info(
+            "[DISPATCH] OK call_id=%s room=%s agent_name=%s",
+            call_uuid, room_name, AGENT_NAME,
+        )
+        await lk.aclose()
+
+        if wait_for_completion:
+            result = await wait_for_call_completion(str(call_uuid), room_name)
+            if result:
+                fs = result.get("status", "Unknown")
+                call["status"] = fs
+                await _publish_batch_update(call)
+                if fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested"):
+                    return {"status": "completed", "outcome": fs, "room_name": room_name}
+                return {"status": "failed", "outcome": fs, "room_name": room_name}
+            return {"status": "failed", "room_name": room_name}
+        else:
+            # Fire-and-forget path for single-call endpoints; completion is
+            # reported via /api/agent/transcript from the agent runtime.
+            return {"status": "dispatched", "room_name": room_name}
+
+    except Exception as e:
+        logger.exception(
+            "[DISPATCH] FAIL call_id=%s name=%s phone=%s err=%s",
+            call_uuid, name, phone, e,
+        )
+        await db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Failed', error_message = $1,
+                   ended_at = $2, updated_at = $2,
+                   retry_count = retry_count + 1
+               WHERE id = $3""",
+            str(e), now_ist(), call_uuid,
+        )
+        call["status"] = "Failed"
+        await _publish_batch_update(call)
+        return {"status": "failed", "error": str(e)}
+
+
+# Global concurrency clamp for batch dispatch. For now fixed at 1 (sequential);
+# set MAX_BATCH_CONCURRENCY=N to allow more — requires also revisiting the
+# inter-call sleep below.
+MAX_BATCH_CONCURRENCY = int(os.getenv("MAX_BATCH_CONCURRENCY", "1"))
+
+
 async def process_batch_run(batch_uuid_str: str = None):
     """Batch-based processing — only processes calls belonging to a batch in 'running' state.
     If batch_uuid_str is provided, process that specific batch.
@@ -630,7 +977,9 @@ async def process_batch_run(batch_uuid_str: str = None):
 
         batch = _row_to_dict(batch_row)
         batch_id = batch["id"]
-        logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')})")
+        # Clamp per-batch concurrency against the global env ceiling.
+        batch_max_conc = max(1, min(int(batch.get("max_concurrent") or 1), MAX_BATCH_CONCURRENCY))
+        logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')}) | concurrency={batch_max_conc}")
 
         # Get pending calls for THIS batch only (using the string batch_id that links calls to batches)
         call_batch_id = batch.get("batch_id") or batch_id
@@ -656,9 +1005,14 @@ async def process_batch_run(batch_uuid_str: str = None):
         logger.info(f"Batch {batch_id} | {total} pending calls")
 
         for idx, call in enumerate(pending, 1):
-            call_uuid = uuid.UUID(call["id"])
-            name = call.get("customer_name") or "Customer"
-            phone = call.get("phone") or ""
+            # Cancellation check — set by POST /api/calls/batch/{id}/cancel
+            cancelled_at = await db_pool.fetchval(
+                "SELECT cancelled_at FROM agent_batches WHERE id = $1",
+                uuid.UUID(batch_id),
+            )
+            if cancelled_at:
+                logger.info(f"Batch {batch_id} cancelled at {cancelled_at} — halting")
+                break
 
             if await is_emergency_stop_active():
                 logger.warning("EMERGENCY STOP active -- halting batch")
@@ -667,128 +1021,13 @@ async def process_batch_run(batch_uuid_str: str = None):
                 logger.info("Calling hours ended -- stopping batch")
                 break
 
-            # Validate phone
-            if not phone or len(phone) < 10:
-                await db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Invalid Phone', retry_count = retry_count + 1, updated_at = $1
-                       WHERE id = $2""",
-                    now_ist(), call_uuid,
-                )
+            result = await dispatch_call(str(call["id"]), wait_for_completion=True)
+            rs = result.get("status")
+            if rs == "completed":
+                successful += 1
+            else:
                 failed += 1
-                continue
-
-            try:
-                call_start = now_ist()
-                await db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Calling', started_at = $1, updated_at = $1
-                       WHERE id = $2""",
-                    call_start, call_uuid,
-                )
-
-                if DEMO_MODE:
-                    # --- Demo simulation ---
-                    room_name = f"demo_{secrets.token_hex(6)}_{int(time.time())}"
-                    await db_pool.execute(
-                        "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
-                        room_name, call_uuid,
-                    )
-                    await asyncio.sleep(3)
-
-                    import random as rng
-                    interested = rng.choice([True, True, False])
-                    loan_type = rng.choice(["personal", "business", "education"])
-                    status = "Called - Interested" if interested else "Called - Not Interested"
-                    lead_quality = "hot" if interested else "cold"
-                    demo_transcript = [
-                        {"role": "agent", "text": f"Hello, am I speaking with {name}?", "timestamp": now_ist_str()},
-                        {"role": "user", "text": "Yes, speaking.", "timestamp": now_ist_str()},
-                    ]
-                    call_end = now_ist()
-                    duration_seconds = int((call_end - call_start).total_seconds())
-                    category = "Very Interested - Form Sent" if interested else "Not Interested - No Need Currently"
-
-                    await db_pool.execute(
-                        """UPDATE agent_calls SET
-                            transcript = $1, status = $2, call_duration = $3,
-                            ended_at = $4, updated_at = $4,
-                            interested = $5, loan_type = $6,
-                            category = $7,
-                            call_analysis = $8,
-                            collected_data = $9
-                           WHERE id = $10""",
-                        json.dumps(demo_transcript),
-                        status,
-                        duration_seconds,
-                        call_end,
-                        interested,
-                        loan_type if interested else None,
-                        category,
-                        json.dumps({"lead_quality": lead_quality, "follow_up_needed": "Yes" if interested else "No"}),
-                        json.dumps({"loan_type": loan_type}) if interested else None,
-                        call_uuid,
-                    )
-                    successful += 1
-                    completed += 1
-                else:
-                    # --- Real LiveKit + SIP call ---
-                    room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
-                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-
-                    await lk.room.create_room(api.CreateRoomRequest(
-                        name=room_name, empty_timeout=300, max_participants=3,
-                        metadata=json.dumps({
-                            "customer_name": name,
-                            "phone": phone,
-                            "call_id": str(call_uuid),
-                            "bank_id": call.get("bank_id", ""),
-                            "language": call.get("language", "hindi"),
-                        }),
-                    ))
-                    await db_pool.execute(
-                        "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
-                        room_name, call_uuid,
-                    )
-
-                    sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
-                    await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-                        room_name=room_name,
-                        sip_trunk_id=SIP_TRUNK_ID,
-                        sip_call_to=sip_phone,
-                        participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
-                        participant_name=name,
-                        play_ringtone=True,
-                    ))
-                    await asyncio.sleep(1.0)
-                    await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
-                        room=room_name, agent_name=AGENT_NAME,
-                    ))
-                    await lk.aclose()
-
-                    result = await wait_for_call_completion(str(call_uuid), room_name)
-                    if result:
-                        fs = result.get("status", "Unknown")
-                        if fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested"):
-                            successful += 1
-                        else:
-                            failed += 1
-                    else:
-                        failed += 1
-                    completed += 1
-
-            except Exception as e:
-                logger.error(f"Call error for {name}: {e}")
-                await db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Failed', error_message = $1,
-                           ended_at = $2, updated_at = $2,
-                           retry_count = retry_count + 1
-                       WHERE id = $3""",
-                    str(e), now_ist(), call_uuid,
-                )
-                failed += 1
-                completed += 1
+            completed += 1
 
             await asyncio.sleep(10)  # pause between calls
 
@@ -871,7 +1110,7 @@ async def upload_excel(
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
     background_tasks: BackgroundTasks = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Upload Excel/CSV with customer data for batch calling."""
     bank_id = None  # operator — no bank scoping
@@ -993,7 +1232,7 @@ async def upload_excel(
 async def trigger_batch(
     background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Start batch calling. Sets the most recent 'pending' batch to 'running' so the cron picks it up.
     Optionally specify a batch_id to start a specific batch."""
@@ -1030,7 +1269,7 @@ async def trigger_batch(
 @router.get("/batch-status")
 async def batch_status(
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Check batch completion progress."""
     bank_uuid = None  # operator — no bank scoping
@@ -1070,7 +1309,7 @@ async def batch_status(
 async def trigger_batch_retry(
     background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    _admin: dict = Depends(require_admin_local),
 ):
     """Retry failed/not-answered calls in a specific batch (or most recent completed batch).
     Resets failed calls to 'Pending' (if retry_count < MAX_RETRIES) and sets batch back to 'running'."""
@@ -1504,11 +1743,71 @@ async def submit_form(call_id: str, request: Request):
 # TRANSCRIPT WEBHOOK (called by voice agent, no bank auth needed)
 # ============================================================================
 
+class TranscriptChunkPayload(BaseModel):
+    call_id: Optional[str] = None
+    room: Optional[str] = None
+    role: str  # 'agent' | 'user'
+    text: str
+    language: Optional[str] = None
+    timestamp: Optional[str] = None
+    final: bool = True
+
+
+@router.post("/transcript-chunk")
+async def save_transcript_chunk(data: TranscriptChunkPayload):
+    """Incremental transcript update — publish to live SSE subscribers only.
+    The voice agent MAY call this per turn to drive true live transcripts.
+    DB is not updated here; the final /transcript call persists the full transcript."""
+    call_uuid = None
+    if data.call_id:
+        try:
+            call_uuid = uuid.UUID(data.call_id)
+        except ValueError:
+            pass
+    if not call_uuid and data.room:
+        row = await db_pool.fetchrow("SELECT id FROM agent_calls WHERE room_name = $1", data.room)
+        if row:
+            call_uuid = row["id"]
+    if not call_uuid:
+        logger.warning(
+            "[WEBHOOK] /transcript-chunk NOT_IDENTIFIED call_id=%s room=%s role=%s",
+            data.call_id, data.room, data.role,
+        )
+        return {"status": "error", "message": "call not identified"}
+
+    try:
+        import call_pubsub
+        await call_pubsub.publish(str(call_uuid), {
+            "role": data.role,
+            "text": data.text,
+            "language": data.language,
+            "timestamp": data.timestamp,
+            "final": data.final,
+        })
+        # Keep per-chunk logs at DEBUG so they don't drown prod logs.
+        logger.debug(
+            "[WEBHOOK] /transcript-chunk call_id=%s role=%s chars=%d",
+            call_uuid, data.role, len(data.text or ""),
+        )
+    except Exception as e:
+        logger.error(
+            "[WEBHOOK] /transcript-chunk ERR call_id=%s role=%s err=%s",
+            call_uuid, data.role, e,
+        )
+        return {"status": "error", "message": str(e)}
+    return {"status": "ok"}
+
+
 @router.post("/transcript")
 async def save_transcript(data: TranscriptPayload):
     """Save transcript from the voice agent. This is a webhook -- no JWT auth."""
     transcript = [item.model_dump() for item in data.transcript]
     room = data.room
+
+    logger.info(
+        "[WEBHOOK] /transcript IN call_id=%s room=%s msgs=%d interested=%s",
+        data.call_id, room, len(transcript), data.customer_interested,
+    )
 
     # Determine query target (prefer call_id)
     call_uuid = None
@@ -1525,7 +1824,10 @@ async def save_transcript(data: TranscriptPayload):
         call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE room_name = $1", room)
 
     if not call_row:
-        logger.warning(f"Transcript webhook: no call found for room={room}, call_id={data.call_id}")
+        logger.warning(
+            "[WEBHOOK] /transcript NOT_FOUND call_id=%s room=%s -- no matching agent_calls row",
+            data.call_id, room,
+        )
         return {"status": "error", "message": "Call not found"}
 
     call = _row_to_dict(call_row)
@@ -1604,6 +1906,20 @@ async def save_transcript(data: TranscriptPayload):
         category,
         actual_uuid,
     )
+    logger.info(
+        "[WEBHOOK] /transcript SAVED call_id=%s room=%s status=%s duration_s=%d msgs=%d",
+        actual_uuid, room, status, duration_seconds, len(transcript),
+    )
+
+    # Publish each transcript entry so SSE subscribers see the full conversation
+    # and mark the call as ended so live streams terminate cleanly.
+    try:
+        import call_pubsub
+        for entry in transcript:
+            await call_pubsub.publish(str(actual_uuid), entry)
+        call_pubsub.mark_ended(str(actual_uuid))
+    except Exception as e:
+        logger.warning("[WEBHOOK] /transcript pubsub publish failed call_id=%s err=%s", actual_uuid, e)
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:

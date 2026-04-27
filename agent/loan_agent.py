@@ -129,19 +129,52 @@ class LoanEnquirySession:
 
         logger.info(f"🏦 Session: {self.customer_name} | Type: {self.customer_type.upper()} | Lang: {self.language} | Memory: {'YES' if self.memory else 'NO'}")
 
+    async def _post_chunk(self, role: str, text: str) -> None:
+        """Fire-and-forget POST of one transcript entry to /api/agent/transcript-chunk.
+
+        Powers the /api/live-transcript/{call_id} SSE stream so the admin/portal
+        CallDetail page sees utterances as they happen, not just at call end.
+        Best-effort: 2s timeout, exceptions swallowed. Dropped chunks are harmless
+        because the final /transcript webhook still persists the canonical array.
+        """
+        try:
+            payload = {
+                "call_id":   self.call_id,         # may be None early; room is fallback
+                "room":      self.room_name,
+                "role":      role,
+                "text":      text,
+                "language":  self.language,
+                "timestamp": now_ist(),
+                "final":     True,
+            }
+            timeout = aiohttp.ClientTimeout(total=2)
+            async with aiohttp.ClientSession(timeout=timeout) as http:
+                async with http.post(
+                    f"{BACKEND_URL}/api/agent/transcript-chunk",
+                    json=payload,
+                    ssl=False,
+                ):
+                    pass  # body not needed
+        except Exception as e:
+            logger.warning(f"⚠️ transcript-chunk post failed (non-fatal): {e}")
+
     def add_user_message(self, text: str):
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "user", "text": text.strip(), "timestamp": now_ist()})
-        logger.info(f"👤 USER: {text}")
+        cleaned = text.strip()
+        self.transcript.append({"role": "user", "text": cleaned, "timestamp": now_ist()})
+        logger.info(f"👤 USER: {cleaned}")
+        asyncio.create_task(self._post_chunk("user", cleaned))
 
     def add_agent_message(self, text: str):
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "agent", "text": text.strip(), "timestamp": now_ist()})
-        logger.info(f"🤖 AGENT: {text}")
+        cleaned = text.strip()
+        self.transcript.append({"role": "agent", "text": cleaned, "timestamp": now_ist()})
+        logger.info(f"🤖 AGENT: {cleaned}")
+        asyncio.create_task(self._post_chunk("agent", cleaned))
 
     def set_lead_quality(self, interest: bool, reason: str = ""):
         self.customer_interested = interest
@@ -307,11 +340,15 @@ class LoanEnquirySession:
             "collected_address": self.collected_address,
         }
 
-        logger.info(f"📤 Sending transcript to {BACKEND_URL}/api/agent/transcript | call_id={self.call_id}, msgs={len(self.transcript)}")
+        logger.info(
+            "[TRANSCRIPT_POST] url=%s/api/agent/transcript call_id=%s room=%s msgs=%d interested=%s",
+            BACKEND_URL, self.call_id, self.room_name, len(self.transcript), self.customer_interested,
+        )
 
         if not self.transcript:
             logger.warning(f"⚠️ Sending EMPTY transcript for {self.room_name}")
 
+        last_error = None
         for attempt in range(3):
             try:
                 async with aiohttp.ClientSession() as http:
@@ -321,19 +358,46 @@ class LoanEnquirySession:
                         timeout=aiohttp.ClientTimeout(total=15),
                         ssl=False,
                     ) as resp:
+                        body = await resp.text()
                         if resp.status == 200:
-                            data = await resp.json()
-                            logger.info(f"✅ Transcript saved ({len(self.transcript)} messages) | Response: {data}")
+                            logger.info(
+                                "[TRANSCRIPT_POST] OK call_id=%s room=%s attempt=%d/3 body=%s",
+                                self.call_id, self.room_name, attempt + 1, body[:200],
+                            )
                             return
-                        else:
-                            body = await resp.text()
-                            logger.error(f"❌ Transcript save returned {resp.status}: {body}")
+                        last_error = f"HTTP {resp.status}: {body[:500]}"
+                        logger.error(
+                            "[TRANSCRIPT_POST] FAIL call_id=%s room=%s attempt=%d/3 status=%d body=%s",
+                            self.call_id, self.room_name, attempt + 1, resp.status, body[:500],
+                        )
             except Exception as e:
-                logger.error(f"❌ Transcript save failed (attempt {attempt+1}/3): {e}")
-                if attempt < 2:
-                    await asyncio.sleep(1.0)
+                last_error = f"{type(e).__name__}: {e}"
+                logger.error(
+                    "[TRANSCRIPT_POST] EXC call_id=%s room=%s attempt=%d/3 err=%s",
+                    self.call_id, self.room_name, attempt + 1, last_error,
+                )
+            if attempt < 2:
+                await asyncio.sleep(1.0)
 
-        logger.error(f"❌ CRITICAL: All 3 transcript save attempts failed for {self.room_name}")
+        # All retries exhausted. Make this impossible to miss: CRITICAL log line
+        # AND append to a dedicated never-gets-quiet file so ops can grep just
+        # for total failures without sifting through normal run noise.
+        logger.critical(
+            "[TRANSCRIPT_POST] GIVING_UP call_id=%s room=%s payload_msgs=%d last_error=%s",
+            self.call_id, self.room_name, len(self.transcript), last_error,
+        )
+        try:
+            fail_log = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "agent-transcript-failures.log",
+            )
+            os.makedirs(os.path.dirname(fail_log), exist_ok=True)
+            with open(fail_log, "a", encoding="utf-8") as fh:
+                fh.write(
+                    f"{datetime.now(IST).isoformat()} | call_id={self.call_id} | room={self.room_name} | "
+                    f"msgs={len(self.transcript)} | last_error={last_error}\n"
+                )
+        except Exception as fe:
+            logger.error(f"Could not append to transcript-failures log: {fe}")
 
 
 # ===================================================================
@@ -568,7 +632,17 @@ class LoanEnquiryAgent(Agent):
 # ===================================================================
 
 async def entrypoint(ctx: JobContext):
-    logger.info("🏦 Loan Enquiry Agent starting")
+    # ── Worker / dispatch fingerprint (FIRST log line) ──
+    # Logs who is actually handling this job so if a duplicate worker in the
+    # same LiveKit project steals a dispatch you can tell from this machine
+    # vs. another. room, job_id, worker_id, hostname, BACKEND_URL.
+    import socket
+    worker_id = getattr(getattr(ctx, "worker", None), "id", None) or os.getenv("LIVEKIT_WORKER_ID", "?")
+    job_id = getattr(getattr(ctx, "job", None), "id", None) or "?"
+    logger.info(
+        "[ENTRYPOINT] room=%s job_id=%s worker_id=%s host=%s backend=%s",
+        ctx.room.name, job_id, worker_id, socket.gethostname(), BACKEND_URL,
+    )
     session = None  # Define early for finally block
 
     try:
@@ -847,13 +921,20 @@ async def entrypoint(ctx: JobContext):
 # ===================================================================
 
 if __name__ == "__main__":
+    # Worker registers under AGENT_NAME -- this MUST match the backend's
+    # AGENT_NAME (backend/agent_routes.py:69) or LiveKit will route dispatches
+    # to a different worker registered under that backend's name. In dev,
+    # always set a unique AGENT_NAME (e.g. via agent/.env.local) so the prod
+    # worker doesn't steal your local dispatches and you can actually see the
+    # /api/agent/transcript-chunk traffic in your local backend.
+    AGENT_NAME = os.getenv("AGENT_NAME", "pusad-bank-loan-enquiry-enhanced")
     while True:
         try:
-            logger.info("🏦 Starting Loan Enquiry Agent Worker...")
+            logger.info(f"🏦 Starting Loan Enquiry Agent Worker (agent_name={AGENT_NAME})...")
             cli.run_app(
                 WorkerOptions(
                     entrypoint_fnc=entrypoint,
-                    agent_name="pusad-bank-loan-enquiry-enhanced",
+                    agent_name=AGENT_NAME,
                 )
             )
         except Exception as e:

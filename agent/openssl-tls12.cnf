@@ -1,0 +1,26 @@
+# Workaround for Homebrew openssl@3 3.6.2 TLS 1.3 handshake regression on macOS.
+#
+# Symptom (April 2026): /opt/homebrew/bin/openssl s_client and Python's ssl
+# module (which links against the same brew OpenSSL) hang indefinitely on the
+# TLS handshake to api.sarvam.ai (and others). Apple Secure Transport (curl)
+# and macOS LibreSSL (/usr/bin/openssl) both work fine. Forcing TLS 1.2 in
+# Python via SSLContext.maximum_version completes the same handshake in 200ms.
+#
+# This config pins the maximum TLS version to 1.2 just for processes that
+# load it (the agent worker, via OPENSSL_CONF=this-file in run.sh). The
+# backend doesn't make outbound TLS calls to Sarvam so it isn't affected.
+#
+# Once brew ships a fixed openssl@3 (or we downgrade to 3.5.x), delete this
+# file and the OPENSSL_CONF export in run.sh.
+
+openssl_conf = openssl_init
+
+[openssl_init]
+ssl_conf = ssl_section
+
+[ssl_section]
+system_default = system_default_section
+
+[system_default_section]
+MinProtocol = TLSv1.2
+MaxProtocol = TLSv1.2

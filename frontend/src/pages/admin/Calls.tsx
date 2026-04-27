@@ -30,6 +30,17 @@ export default function AdminCalls() {
 
   useEffect(load, [filter])
 
+  // Filter pills. Each entry: [display label, exact DB status value sent as ?status=]
+  // The DB stores human-readable values (Calling / Called - Interested / etc.).
+  const filterPills: [string, string][] = [
+    ['Pending',         'Pending'],
+    ['Calling',         'Calling'],
+    ['Interested',      'Called - Interested'],
+    ['Not interested',  'Called - Not Interested'],
+    ['Not answered',    'Not Answered'],
+    ['Failed',          'Failed'],
+  ]
+
   const retriableStatuses = new Set(['Failed', 'Not Answered', 'Call Not Connected'])
   const canRetry = (c: any) => retriableStatuses.has(c.status) && (c.retry_count ?? 0) < maxRetries
 
@@ -47,8 +58,6 @@ export default function AdminCalls() {
     }
   }
 
-  const statuses = ['queued', 'dialing', 'in_progress', 'completed', 'failed', 'not_answered']
-
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
@@ -63,7 +72,9 @@ export default function AdminCalls() {
       </div>
       <div className="flex flex-wrap gap-2">
         <Pill active={filter === undefined} onClick={() => setFilter(undefined)}>All</Pill>
-        {statuses.map((s) => <Pill key={s} active={filter === s} onClick={() => setFilter(s)}>{s.replace(/_/g, ' ')}</Pill>)}
+        {filterPills.map(([label, value]) => (
+          <Pill key={value} active={filter === value} onClick={() => setFilter(value)}>{label}</Pill>
+        ))}
       </div>
       {loading ? (
         <div className="text-sm text-[var(--color-muted)]">Loading…</div>

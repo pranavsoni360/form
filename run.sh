@@ -121,10 +121,36 @@ ensure_backend_venv() {
 }
 
 # ── Agent (LiveKit worker) ───────────────────────────────────
+# Find a Python interpreter compatible with livekit-agents (needs <3.14 as of
+# 1.5.x). Prefer 3.13, then 3.12, then 3.11, then 3.10. The backend venv can
+# use the system python (whatever version) because it has looser constraints.
+_find_agent_python() {
+    for py in python3.13 python3.12 python3.11 python3.10; do
+        if command -v "$py" >/dev/null 2>&1; then
+            echo "$py"
+            return 0
+        fi
+    done
+    # Last-ditch: use system python3 if it happens to be <3.14.
+    local v
+    v=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")
+    if [[ "$v" =~ ^3\.(1[0-3]|[0-9])$ ]]; then
+        echo "python3"
+        return 0
+    fi
+    return 1
+}
+
 ensure_agent_venv() {
     if [[ ! -d "$AGENT_VENV" ]]; then
-        echo -e "${CYAN}[agent]${NC} Creating Python venv..."
-        python3 -m venv "$PROJECT_DIR/agent/venv"
+        local py
+        if ! py=$(_find_agent_python); then
+            echo -e "${RED}[agent]${NC} No Python 3.10-3.13 found (livekit-agents requires <3.14)."
+            echo -e "${RED}[agent]${NC} Install with: brew install python@3.13"
+            exit 1
+        fi
+        echo -e "${CYAN}[agent]${NC} Creating Python venv with $py..."
+        "$py" -m venv "$PROJECT_DIR/agent/venv"
     fi
     local marker="$PROJECT_DIR/agent/venv/.deps-installed"
     if [[ ! -f "$marker" ]] || [[ "$PROJECT_DIR/agent/requirements.txt" -nt "$marker" ]]; then
@@ -145,9 +171,14 @@ start_agent() {
     agent_pid=$(pgrep -f "agent/venv.*loan_agent.py" 2>/dev/null || true)
     [[ -n "$agent_pid" ]] && { echo -e "${YELLOW}[agent]${NC} Already running (PID $agent_pid) — kill with './run.sh stop' first."; return 0; }
     cd "$PROJECT_DIR/agent"
-    "$AGENT_VENV/python" loan_agent.py dev > "$LOGDIR/agent.log" 2>&1 &
+    # Workaround for Homebrew openssl@3 3.6.2 TLS 1.3 regression on macOS:
+    # forces Python's ssl module to negotiate TLS 1.2 only. See
+    # agent/openssl-tls12.cnf header for diagnosis. Remove this export once
+    # brew ships a fix or you downgrade openssl@3.
+    OPENSSL_CONF="$PROJECT_DIR/agent/openssl-tls12.cnf" \
+        "$AGENT_VENV/python" loan_agent.py dev > "$LOGDIR/agent.log" 2>&1 &
     echo $! >> "$PIDFILE"
-    echo -e "${GREEN}[agent]${NC} Agent worker PID $! → logs/agent.log"
+    echo -e "${GREEN}[agent]${NC} Agent worker PID $! → logs/agent.log (OPENSSL_CONF=tls12 pin)"
     cd "$PROJECT_DIR"
 }
 

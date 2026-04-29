@@ -28,6 +28,7 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   failed: { label: 'Failed', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
   not_answered: { label: 'Not Answered', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
   queued: { label: 'Queued', color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
+  Scheduled: { label: '📅 Scheduled', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
 };
 
 export default function CallsPage() {

@@ -14,6 +14,8 @@ export default function BatchPage() {
   const [uploading, setUploading] = useState(false);
   const [batchStatus, setBatchStatus] = useState<any>(null);
   const [token, setToken] = useState('');
+  const [language, setLanguage] = useState('hindi');
+  const [gender, setGender] = useState('male');
 
   useEffect(() => {
     const t = getAccessToken('bank');
@@ -53,7 +55,8 @@ export default function BatchPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API_URL}/api/agent/upload-excel`, {
+      const qs = `language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}`;
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${qs}`, {
         method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Upload failed'); }
@@ -120,6 +123,36 @@ export default function BatchPage() {
             </div>
           </div>
         )}
+
+        {/* Agent voice config — applied to every record in the next upload */}
+        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-5 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">🌐 Agent Language</label>
+            <select
+              value={language}
+              onChange={e => setLanguage(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
+            >
+              <option value="hindi">🇮🇳 Hindi</option>
+              <option value="marathi">🏛️ Marathi</option>
+              <option value="english">🌍 English</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">👤 Agent Voice</label>
+            <select
+              value={gender}
+              onChange={e => setGender(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
+            >
+              <option value="male">👨 Male (Rajesh)</option>
+              <option value="female">👩 Female (Diya)</option>
+            </select>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 w-full">
+            Selected voice + language are stored per row at upload. Existing batches keep their original config.
+          </p>
+        </div>
 
         {/* Actions */}
         <div className="flex flex-wrap gap-3">

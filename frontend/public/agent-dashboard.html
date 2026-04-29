@@ -733,6 +733,33 @@
                     </table>
                 </div>
             </div>
+
+            <!-- Upcoming Callbacks (status='Scheduled') -->
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-header">
+                    <h3 class="card-title">📅 Upcoming Callbacks</h3>
+                    <button class="btn btn-secondary" onclick="loadScheduledCallbacks()">🔄 Refresh</button>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Scheduled For</th>
+                                <th>Reason</th>
+                                <th>Retry #</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduledCallbacksBody">
+                            <tr>
+                                <td colspan="6" class="no-data">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </section>
 
         <!-- Upload Section -->
@@ -837,6 +864,7 @@
                     <select class="form-select" id="filterStatus" onchange="loadCalls()" style="width: 160px;">
                         <option value="">All Status</option>
                         <option value="Pending">Pending</option>
+                        <option value="Scheduled">📅 Scheduled</option>
                         <option value="Calling">Calling</option>
                         <option value="Called - Interested">Called - Interested</option>
                         <option value="Called - Not Interested">Called - Not Interested</option>
@@ -1222,8 +1250,37 @@
                 // Load live status
                 loadLiveStatus();
                 loadRecentCalls();
+                loadScheduledCallbacks();
             } catch (error) {
                 showToast(`Failed to load dashboard: ${error.message}`, 'error');
+            }
+        }
+
+        // Load Upcoming Scheduled Callbacks (status='Scheduled')
+        async function loadScheduledCallbacks() {
+            const tbody = document.getElementById('scheduledCallbacksBody');
+            if (!tbody) return;
+            try {
+                const data = await apiCall('/api/agent/scheduled-callbacks?limit=50');
+                const list = data.scheduled || [];
+                if (list.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="no-data"><div class="no-data-icon">📭</div>No upcoming callbacks</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = list.map(c => `
+                    <tr onclick="viewCall('${c._id}')" style="cursor: pointer;">
+                        <td><strong>${c.name || c.customer_name || '-'}</strong></td>
+                        <td>${c.phone || '-'}</td>
+                        <td><strong style="color: var(--primary);">${c.scheduled_callback_at || '-'}</strong></td>
+                        <td><span class="badge badge-muted">${c.callback_reason || 'user_busy'}</span></td>
+                        <td>${c.retry_count || 0}</td>
+                        <td class="action-btns">
+                            <button class="action-btn" onclick="event.stopPropagation(); viewCall('${c._id}')" title="View Details">👁️</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                tbody.innerHTML = '<tr><td colspan="6" class="no-data">Failed to load</td></tr>';
             }
         }
 

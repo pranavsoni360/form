@@ -49,14 +49,36 @@ app.add_middleware(
 )
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://los_admin:password@localhost:5435/los_form")
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "your-32-byte-encryption-key-here")
-JWT_SECRET = os.getenv("JWT_SECRET", "your-jwt-secret-key")
-WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN")
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
-AISENSY_API_KEY = os.getenv("AISENSY_API_KEY")
+
+# ── Secrets (REQUIRED in non-development) ──
+# When LOS_ENV in {"prod","production","staging"}, refuse to boot with the dev defaults
+# below. Catches the silent footgun of deploying with a forgeable JWT secret.
+_INSECURE_JWT_DEFAULT = "your-jwt-secret-key"
+_INSECURE_ENC_DEFAULT = "your-32-byte-encryption-key-here"
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", _INSECURE_ENC_DEFAULT)
+JWT_SECRET = os.getenv("JWT_SECRET", _INSECURE_JWT_DEFAULT)
+LOS_ENV = os.getenv("LOS_ENV", "dev").lower()
+if LOS_ENV in {"prod", "production", "staging"}:
+    if JWT_SECRET == _INSECURE_JWT_DEFAULT or len(JWT_SECRET) < 32:
+        raise RuntimeError(
+            "JWT_SECRET must be set to a strong (>=32 char) value when LOS_ENV is prod/staging"
+        )
+    if ENCRYPTION_KEY == _INSECURE_ENC_DEFAULT or len(ENCRYPTION_KEY) < 32:
+        raise RuntimeError(
+            "ENCRYPTION_KEY must be set to a strong (>=32 char) value when LOS_ENV is prod/staging"
+        )
+elif JWT_SECRET == _INSECURE_JWT_DEFAULT or ENCRYPTION_KEY == _INSECURE_ENC_DEFAULT:
+    print("[config] WARNING: using insecure default JWT_SECRET / ENCRYPTION_KEY. Set them in .env before going to prod.", flush=True)
+
+WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN", "")
+WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
+AISENSY_API_KEY = os.getenv("AISENSY_API_KEY", "")
 AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_CAMPAIGN_NAME", "Call")
 AISENSY_USERNAME = os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA")
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/root/vaani_los_form/uploads"))
+
+# UPLOAD_DIR: prefer env, else <repo>/uploads (works on Windows + Linux). Was hardcoded to /root/...
+_DEFAULT_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR") or _DEFAULT_UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001")
@@ -102,6 +124,29 @@ COOKIE_SECURE = os.getenv("LOS_COOKIE_SECURE", "false").lower() == "true"
 
 db_pool: asyncpg.Pool = None
 security = HTTPBearer(auto_error=False)  # auto_error=False so we can handle missing tokens gracefully
+
+# ── PII redaction for logs ──
+# In dev (LOS_ENV != prod/staging) full OTP/PAN/Aadhaar can be printed for debugging.
+# In prod they are masked so logs / log shippers / SIEMs never see plaintext PII.
+_LOG_REDACT = LOS_ENV in {"prod", "production", "staging"}
+
+def _mask_phone(p: str) -> str:
+    if not p: return ""
+    digits = "".join(c for c in str(p) if c.isdigit())
+    return f"+91-XXXXX{digits[-5:]}" if len(digits) >= 5 else "+91-XXXXX"
+
+def _mask_otp(otp: str) -> str:
+    s = str(otp or "")
+    return ("*" * max(0, len(s) - 1)) + s[-1:] if _LOG_REDACT else s
+
+def _mask_pan(pan: str) -> str:
+    s = str(pan or "")
+    if len(s) < 4: return s
+    return s[:2] + "*" * (len(s) - 4) + s[-2:] if _LOG_REDACT else s
+
+def _mask_aadhaar(a: str) -> str:
+    s = "".join(c for c in str(a or "") if c.isdigit())
+    return ("XXXX-XXXX-" + s[-4:]) if _LOG_REDACT and len(s) >= 4 else s
 
 # ============================================
 # VALID STATUSES & TRANSITIONS

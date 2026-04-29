@@ -17,3 +17,11 @@ agent/venv/
 # Generated docs
 *.pdf
 incident_report*
+
+# Claude Code session metadata
+.claude/
+
+# Local test fixtures (contain real phone numbers)
+dummy.xlsx
+dummy_test_*.csv
+dummy_test_*.xlsx

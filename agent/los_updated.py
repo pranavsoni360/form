@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Loan Enquiry Agent - Pusad Urban Bank 🏦
 =========================================
@@ -13,7 +13,7 @@ import json
 import logging
 import asyncio
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 
@@ -87,6 +87,7 @@ class LoanEnquirySession:
         self.safety_timeout_task = None    # ✅ Store task reference for cancellation
         self.silence_monitor_task = None   # ✅ Store task reference for cancellation
         self.shutdown_event = asyncio.Event()  # ✅ Event to signal process shutdown
+        self.transcript_sent = False           # ✅ Idempotent guard for transcript POST
         self.last_speech_time = asyncio.get_event_loop().time()  # ✅ Monitor silence
 
         self.customer_name = metadata.get("customer_name", "Customer")
@@ -113,7 +114,10 @@ class LoanEnquirySession:
         self.loan_purpose = None
         self.employment_type = None
         self.employer_name = None
+        self.qualification = None    # ✅ educational qualification
         self.designation = None
+        self.sector = None           # ✅ auto-inferred from designation
+        self.working_experience = None  # ✅ years of experience
         self.monthly_income = None
         self.existing_emi = None
         self.business_type = None
@@ -165,7 +169,10 @@ class LoanEnquirySession:
             "loan_purpose":    "loan_purpose",
             "employment_type": "employment_type",
             "employer_name":   "employer_name",
+            "qualification":   "qualification",
             "designation":     "designation",
+            "sector":          "sector",
+            "working_experience": "working_experience",
             "monthly_income":  "monthly_income",
             "existing_emi":    "existing_emi",
             "business_type":   "business_type",
@@ -291,6 +298,12 @@ class LoanEnquirySession:
     # Transcript Save - with retries and proper timeout
     # ===================================================================
     async def _send_transcript(self):
+        # Idempotent — never send twice. Both save_and_disconnect (normal flow) and
+        # the JobContext shutdown callback (user-hangup race) call this; whichever
+        # wins first sets the flag and the other becomes a no-op.
+        if self.transcript_sent:
+            logger.info("📤 Transcript already sent, skipping duplicate POST")
+            return
         call_duration = (datetime.now(IST) - self.call_start_time).total_seconds()
         recording_path = f"/recordings/{self.room_name}.ogg" if self.egress_id else None
         
@@ -316,7 +329,10 @@ class LoanEnquirySession:
             "age": self.age,
             "loan_purpose": self.loan_purpose,
             "employer_name": self.employer_name,
+            "qualification": self.qualification,        # ✅ NEW
             "designation": self.designation,
+            "sector": self.sector,                      # ✅ NEW
+            "working_experience": self.working_experience,  # ✅ NEW
             "existing_emi": self.existing_emi,
             "business_age": self.business_age,
             "monthly_turnover": self.monthly_turnover,
@@ -339,6 +355,7 @@ class LoanEnquirySession:
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
+                            self.transcript_sent = True
                             logger.info(f"✅ Transcript saved ({len(self.transcript)} messages) | Response: {data}")
                             return
                         else:
@@ -447,24 +464,115 @@ async def end_call(context: RunContext, reason: str) -> str:
 
 
 @function_tool(
+    name="schedule_callback",
+    description=(
+        "Schedule a callback when the customer says they are busy / asks to be "
+        "called later. Pass an ISO 8601 datetime in IST (e.g. '2026-04-30T10:00:00+05:30'). "
+        "Resolve relative phrases like 'कल सुबह 10 बजे', 'शाम 5 बजे', 'Sunday' from the "
+        "current IST time given in your context. After this returns, say a short polite "
+        "confirmation (e.g. 'ठीक है, उस समय call करूँगा/करूँगी') and then call end_call('user_busy')."
+    ),
+)
+async def schedule_callback(context: RunContext, callback_iso: str, reason: str = "user_busy") -> str:
+    """
+    Args:
+        callback_iso: ISO 8601 datetime in IST when the customer is available.
+        reason: one of user_busy, in_meeting, traveling, will_call_later (free text OK).
+    """
+    session: LoanEnquirySession = context.userdata["session"]
+    try:
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                f"{BACKEND_URL}/api/agent/schedule-callback",
+                json={"call_id": session.call_id, "callback_iso": callback_iso, "reason": reason},
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=False,
+            ) as resp:
+                if resp.status == 200:
+                    body = await resp.json()
+                    logger.info(f"📅 Callback scheduled: {body}")
+                    return f"OK callback set for {body.get('scheduled_callback_at')}"
+                txt = await resp.text()
+                logger.warning(f"schedule_callback backend {resp.status}: {txt}")
+                return f"Failed: {txt}"
+    except Exception as e:
+        logger.error(f"❌ schedule_callback error: {e}")
+        return f"Error: {e}"
+
+
+@function_tool(
     name="collect_data",
     description=(
-        "Silently save a detail the customer just shared. "
-        "Call immediately whenever the customer mentions their age, income, "
-        "employer, address, business type, loan amount, or any other qualifying detail. "
-        "Never tell the customer you are saving data — just call this tool and continue."
+        "Silently save a SINGLE detail the customer just shared. "
+        "Use ONLY for one-off mid-conversation corrections or re-captures. "
+        "For saving all details together at the end of the Q&A, prefer collect_all_data instead. "
+        "Never tell the customer you are saving data."
     ),
 )
 async def collect_data(context: RunContext, field: str, value: str) -> str:
     """
     Args:
         field: age | loan_type | loan_amount | loan_purpose | employment_type |
-               employer_name | designation | monthly_income | existing_emi |
-               business_type | business_age | monthly_turnover | address
+               employer_name | qualification | designation | sector |
+               working_experience | existing_emi | business_type | business_age |
+               monthly_turnover | address
         value: what the customer said, as a string
     """
     session: LoanEnquirySession = context.userdata["session"]
     session.update_collected_data(field, value)
+    return "ok"
+
+
+@function_tool(
+    name="collect_all_data",
+    description=(
+        "Save ALL collected customer details in one single call — call this ONCE, "
+        "right before calling send_form_link or end_call, after all questions are answered. "
+        "Pass only the fields that were actually collected; leave the rest as empty string. "
+        "This replaces calling collect_data repeatedly and avoids response latency during Q&A."
+    ),
+)
+async def collect_all_data(
+    context: RunContext,
+    age: str = "",
+    employment_type: str = "",
+    employer_name: str = "",
+    qualification: str = "",
+    designation: str = "",
+    sector: str = "",
+    working_experience: str = "",
+    existing_emi: str = "",
+    loan_amount: str = "",
+    loan_type: str = "",
+    loan_purpose: str = "",
+    business_type: str = "",
+    business_age: str = "",
+    monthly_turnover: str = "",
+    address: str = "",
+) -> str:
+    """Batch-save all qualification data collected during the call in one tool call."""
+    session: LoanEnquirySession = context.userdata["session"]
+    fields = {
+        "age": age,
+        "employment_type": employment_type,
+        "employer_name": employer_name,
+        "qualification": qualification,
+        "designation": designation,
+        "sector": sector,
+        "working_experience": working_experience,
+        "existing_emi": existing_emi,
+        "loan_amount": loan_amount,
+        "loan_type": loan_type,
+        "loan_purpose": loan_purpose,
+        "business_type": business_type,
+        "business_age": business_age,
+        "monthly_turnover": monthly_turnover,
+        "address": address,
+    }
+    for field, value in fields.items():
+        if value and value.strip():
+            session.update_collected_data(field, value)
+    logger.info(f"📦 collect_all_data: saved {sum(1 for v in fields.values() if v and v.strip())} fields in one shot")
     return "ok"
 
 
@@ -480,90 +588,151 @@ def get_recording_disclaimer(lang: str) -> str:
     }.get(lang, "This call is being recorded for security and quality purposes.")
 
 
+SECTOR_INFERENCE_GUIDE = """
+SECTOR auto-mapping (use the customer's job/designation to silently fill sector — never ask):
+- Software Engineer / Developer / Programmer / DevOps / QA Engineer / Data Scientist / SDE → IT
+- Bank Clerk / Bank Officer / Cashier / Teller / Loan Officer / Branch Manager → Banking
+- Nurse / Doctor / Pharmacist / Lab Technician / Hospital staff / Compounder → Healthcare
+- Teacher / Professor / Lecturer / Principal / Tutor / Headmaster → Education
+- Police / Defence / Soldier / Government clerk / Tehsildar / Patwari / Postman / Railway employee → Government
+- Farmer / Krishi / खेती / Dairy / Poultry / Agriculture worker → Agriculture
+- Shopkeeper / Dukandar / Kirana / Retailer / Salesperson / Showroom staff → Retail
+- Mechanic / Electrician / Plumber / Carpenter / Welder / Factory worker / Operator / Fitter → Manufacturing
+- Driver / Auto-rickshaw / Truck driver / Tempo / Cab driver / Transport → Transportation
+- Accountant / CA / CS / Auditor / Tax consultant / Financial Advisor / Insurance agent → Finance
+- Construction worker / Mason / राजमिस्त्री / Contractor / Civil engineer (site) → Construction
+- Hotel / Restaurant / Chef / Waiter / Cook / Caterer → Hospitality
+- Tailor / Boutique / Beautician / Barber / Salon → Services
+- Lawyer / Advocate / Vakil / Notary → Legal
+- Self-employed / Business owner / Trader / Wholesaler → use customer's business_type if known, else Business
+"""
+
+
 def build_loan_enquiry_instructions(session: LoanEnquirySession) -> str:
 
     memory_block = f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🧠 RAG MEMORY (PAST CALL DETAILS)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{session.memory}\n" if session.memory else ""
 
-    if session.customer_type == CustomerType.EXISTING:
-        return f"""ROLE: {session.agent_name}, पुसद अर्बन बैंक का loan specialist। मौजूदा ग्राहक।
-GOAL: पहचान पुष्टि → Loan offer → Interest check → Details collect → Form भेजो → Call end।
-STYLE: Warm, professional, naturally conversational — जैसे असली relationship manager। छोटे वाक्य, एक बार में एक सवाल। हल्के acknowledgments ("जी", "अच्छा", "ठीक है जी", "नोट कर लिया") use करो। जवाब short रखो — 1-2 वाक्य, ताकि latency कम और बातचीत smooth रहे।
+    # Time context for the LLM so it can resolve "कल सुबह 10 बजे" → ISO datetime.
+    # Working hours come from backend env (default 10 AM – midnight IST).
+    _now_ist = datetime.now(IST)
+    time_context = (
+        f"CURRENT TIME (IST): {_now_ist.strftime('%A, %d %b %Y, %I:%M %p')} | "
+        f"Today's date: {_now_ist.strftime('%Y-%m-%d')} | "
+        f"Working hours: 10:00 - 24:00 IST (कॉल सिर्फ इस window में होते हैं)"
+    )
 
-DATA:
-Customer:{session.customer_name} | Type:EXISTING {memory_block}
+    # Common rules — kept short & directive so the LLM doesn't pad replies
+    COMMON_RULES = f"""
+RULES (पालन ज़रूरी):
+0. CUSTOMER GENDER — ग्राहक के नाम ({session.customer_name}) और आवाज़ से gender infer करो (Indian male: Adil, Rohan, Suresh, Vikram, Amit, etc.; female: Priya, Pooja, Tanvi, Sneha, Ananya, etc.; ambiguous तो आवाज़ से judge करो)। Conversation में सही gendered forms use करो:
+   • HINDI — Male customer: "आप क्या काम करते हैं?", "आपका नाम", "आपके पास", "उन्होंने बताया"। Female customer: "आप क्या काम करती हैं?", "आपका नाम" (same), "आपके पास" (same), "उन्होंने बताया" (same — honorific plural is gender-neutral in तीसरा purush)। Verb conjugation MAIN difference: "करते/करती", "रहते/रहती", "जानते/जानती", "बताते/बताती"।
+   • MARATHI — Male: "तुम्ही काय करता?", "तुम्हाला". Female: "तुम्ही काय करता?" (formal Marathi "तुम्ही" same for both). Address: "साहेब" (male) / "मॅडम" (female)।
+   • ENGLISH — Male: "Sir", "his", "he". Female: "Ma'am", "her", "she"।
+   अगर gender clear नहीं तो safe neutral form use करो ("आप क्या काम करते हैं?" default)। एक बार आवाज़ सुनकर gender confirm हो जाए तो उस पर consistent रहो — call के बीच मत बदलो।
+1. हर response 1 छोटा वाक्य। 12 शब्दों से कम।
+2. एक बार में सिर्फ एक सवाल। बार-बार "जी", "अच्छा", "नोट कर लिया" मत बोलो — 4 में से 1 बार OK।
+3. ग्राहक के हर जवाब पर तुरंत collect_data(field, value) चुपचाप call करो। Tool नाम कभी मत बोलो।
+4. Designation/employer सुनकर sector खुद infer करो (नीचे SECTOR table) — कभी मत पूछो।
+5. ग्राहक "नहीं" बोले या interest नहीं — तुरंत polite goodbye फिर end_call("not_interested")। बहस मत करो।
+6. Form भेजने के बाद end_call("interested")। goodbye एक छोटी line: "धन्यवाद {session.customer_name} जी।"
+7. end_call() के बाद कुछ मत बोलो। STOP.
+8. TTS: कोई emoji नहीं, कोई — (em-dash) नहीं, कोई empty line नहीं। सिर्फ ?, .।
+9. RAG MEMORY available है तो past context use करो — पहले से collected info दोबारा मत पूछो।
 
-⚠️ सिस्टम नोट: परिचय, disclaimer, पहचान पुष्टि पहले ही हो चुकी है। दोबारा मत बोलो। सीधे जवाब से शुरू करो।
+12. BUSY / CALLBACK HANDLING:
+    Customer कहे "अभी busy हूँ", "बाद में call करो", "अभी time नहीं है", "meeting में हूँ", "drive कर रहा हूँ", "नहीं अभी नहीं" — तुरंत polite होकर पूछो: "कोई बात नहीं। कब call करूँ — आपको कब suitable होगा?" (एक छोटा वाक्य)।
+    Customer का जवाब सुनो (e.g. "कल सुबह 10 बजे", "शाम 5 बजे", "Sunday", "2 बजे")।
+    Resolve to ISO 8601 IST format using {time_context.split('|')[0].strip()}:
+      - "कल सुबह 10 बजे" → tomorrow 10:00 → e.g. "{(_now_ist + timedelta(days=1)).strftime('%Y-%m-%d')}T10:00:00+05:30"
+      - "शाम 5 बजे" / "5 बजे" → today 17:00 if before 17:00, else tomorrow 17:00
+      - "Sunday" → next Sunday 10:00
+      - कुछ unclear / customer ने clear time नहीं दिया → "कल सुबह 10 बजे" default लो।
+    Working hours 10:00-24:00 IST के बाहर हो तो backend automatically clamp कर देगा — आप बस नज़दीकी time दो।
+    फिर तुरंत schedule_callback(callback_iso=<ISO>, reason="user_busy") tool call करो।
+    Tool succeed होने पर एक छोटी polite line कहो: "ठीक है, मैं उस समय call करूँगा/करूँगी। धन्यवाद {session.customer_name} जी।" फिर end_call("user_busy")।
+    अगर customer specific time देने से मना करे ("बाद में बता दूँगा") → "ठीक है, कल फिर try करूँगा/करूँगी" → schedule_callback कल 10 AM के लिए → end_call("user_busy")।
+10. OFF-TOPIC HANDLING: ग्राहक loan के अलावा कुछ पूछे (मौसम, news, account balance, FD rate, branch timing, खुद के बारे में, random चर्चा, joke, etc.) — एक छोटी polite line में deflect करो फिर तुरंत वही question repeat करो जिस पर रुके थे। Examples:
+   - Customer: "आज मौसम कैसा है?" → "उसकी जानकारी मेरे पास नहीं है। आपकी उम्र क्या है?"
+   - Customer: "मेरा account balance बताओ?" → "Balance के लिए हमारी customer care team से बात करें। फिलहाल loan के लिए — कितने साल का experience है?"
+   - Customer: "तुम कौन हो / AI हो?" → "मैं {session.agent_name}, पुसद बैंक की loan assistant। आपकी qualifications क्या हैं?"
+   कभी debate मत करो, कभी off-topic answer मत दो, कभी lecture मत दो — सिर्फ acknowledge + redirect।
 
-FLOW:
-1. ग्राहक हाँ बोले तो: "आप हमारे valued customer हैं। आपके लिए Business, Personal या Education loan के options हैं। क्या आप इनमें से कोई loan लेना चाहेंगे?"
-2. Loan details बताओ:
-   Education: 50K-20L | 8.5-10.5% | 15Y | पढ़ाई में no EMI
-   Business: 1L-50L | 10-13% | 7Y | business 2Y+ पुराना
-   Personal: 50K-10L | 11-14.5% | 5Y | min 25K salary
-3. Strong interest पर transition: "बहुत अच्छा! बस कुछ छोटे-छोटे सवाल पूछने हैं, उसके बाद WhatsApp पर form भेजूँगा। शुरू करते हैं —"
-4. एक-एक करके पूछो:
-   - "आपकी उम्र क्या है?"
-   - "आप क्या काम करते हैं?"
-   - "किस कंपनी में काम करते हैं?"
-   - "आपकी salary किस range में आती है?"
-   - "लोन के लिए कितना amount चाहिए?"
-5. Eligible: "आप पात्र हैं। WhatsApp पर form link भेज दूँ?"
-6. Link भेजने के बाद: "link भेज दिया है। form भर लीजिए।"
+11. SERIOUS-PROSPECT DETECTION (बहुत important — calmly और politely handle करो):
+    Time-waster signals (इनमें से 2 दिखें तो customer serious नहीं है):
+    a. लगातार off-topic जवाब, हँसी-मज़ाक, "हा हा", "तू बता ना", "तुम क्या करती हो" जैसे flirt/joke
+    b. सवाल का सीधा जवाब टाल रहा है (3 बार vague: "अरे यार", "सोचेंगे", "बाद में बताऊँगा", "क्या फरक पड़ता है")
+    c. गिबरिश, contradictions, या दूसरे काम कर रहा (TV chal raha, आसपास से बोल रहा "अभी busy हूँ रुक")
+    d. Loan की baat ही नहीं कर रहा — सिर्फ general बात, gossip, या आपको परख रहा है
+    e. Customer "मज़ाक कर रहा हूँ", "टाइम पास", "बस ऐसे ही" जैसी कोई admission
 
-RULES:
-1. If RAG MEMORY is available, use past call context naturally — reference previous interest, skip already-collected info, continue from where last call ended.
-2. हर बार सिर्फ एक सवाल पूछो।
-3. जब भी ग्राहक कोई जानकारी दें (उम्र, आय, नियोक्ता, पता, loan राशि) तुरंत collect_data(field, value) tool call करो — चुपचाप।
-4. end_call() से पहले हमेशा यह बोलें: "धन्यवाद [ग्राहक का नाम देवनागरी लिपि में] जी, आपके समय के लिए। आपका दिन शुभ हो!" (उदाहरण: 'Tanvi' की जगह 'तन्वी' लिखें)।
-5. यह बोलने के बाद उसी response में end_call() tool call करें।
-6. NEVER SPEAK AGAIN AFTER end_call(). SILENT. STOP.
-7. Tool नाम कभी मत बोलो।
-8. ⚠️ STRICT TTS RULE: DO NOT use ANY emojis (like 😊, 🙏). Use ONLY standard punctuation (?, .). Avoid long dashes (—). DO NOT output empty lines.
+    जब signal दिखे — पहली बार: 1 calm polite redirect (Rule 10)। दूसरी बार signal दिखे → respectful, customer-first tone में पूछो (कभी threatening या "call end करूँ" मत बोलो — disrespectful लगता है)। इन में से कोई एक line use करो:
+    - "क्या आप वाकई loan के बारे में जानकारी लेना चाहते हैं? आपका समय कीमती है।"
+    - "अगर अभी सही समय नहीं है तो कोई बात नहीं, बाद में call कर लूँगा/लूँगी।"
+    - "मैं समझ सकता/सकती हूँ — क्या loan में आपकी अभी interest है, या किसी और समय बात करें?"
+
+    फिर customer के जवाब पर:
+    - "हाँ interested हूँ / continue करो / sorry जी" → सीधा अगले question पर वापस। कोई lecture नहीं।
+    - "नहीं / interest नहीं / मज़ाक कर रहा था" → "कोई बात नहीं, धन्यवाद {session.customer_name} जी।" → end_call("not_interested")।
+    - "बाद में / अभी busy / फिर बात करेंगे" → "बिल्कुल, फिर कभी connect करते हैं। धन्यवाद {session.customer_name} जी।" → end_call("user_busy")।
+    - फिर भी टाल-मटोल → "ठीक है, धन्यवाद {session.customer_name} जी।" → end_call("user_busy") (silently end, कोई accusation नहीं)।
+
+    Tone: सख्त नहीं, judge मत करो, सिर्फ professional और शांत — जैसे एक senior banker time-waster को gracefully exit देता है। आवाज़ में irritation बिल्कुल मत आए।
 """
+
+    if session.customer_type == CustomerType.EXISTING:
+        return f"""ROLE: {session.agent_name}, पुसद अर्बन बैंक का loan specialist। मौजूदा valued customer से बात।
+DATA: Customer:{session.customer_name} | EXISTING
+{time_context}{memory_block}
+
+⚠️ Disclaimer + पहचान पहले हो चुकी है। सीधे step 1 से शुरू।
+
+FLOW (छोटे वाक्यों में):
+1. "आप हमारे valued customer हैं। Business, Personal, या Education loan लेना चाहेंगे?"
+2. हाँ बोले तो — एक line में rates: Education 8.5-10.5% / Business 10-13% / Personal 11-14.5%।
+3. Interest confirm होते ही: "बस कुछ छोटे सवाल पूछने हैं, फिर WhatsApp पर form।"
+4. एक-एक करके पूछो (हर जवाब पर तुरंत collect_data चुपचाप call करो):
+   Q1: "आपकी उम्र क्या है?" → collect_data("age", value)
+   Q2: "आप क्या काम करते हैं और किस कंपनी में?" — एक ही सवाल। जवाब से तीनों निकालो: collect_data("designation", role); collect_data("employer_name", company); sector खुद infer करके collect_data("sector", inferred)। Sector कभी मत पूछो।
+   Q3: "आपकी qualifications क्या हैं?" → collect_data("qualification", value)
+   Q4: "कितने साल का experience है?" → collect_data("working_experience", value)
+   Q5: "कोई existing loan या EMI चल रही है?" → collect_data("existing_emi", value)
+   Q6: "लोन किस purpose के लिए चाहिए?" → collect_data("loan_purpose", value)
+   Q7: "कितना loan amount चाहिए?" → collect_data("loan_amount", value); loan_type भी collect_data करो।
+   Q8: "क्या यही number आपका WhatsApp number है?" — हाँ → collect_data("whatsapp_same", "yes")। नहीं तो "WhatsApp number बताइए" → collect_data("whatsapp_number", value)।
+5. "आप पात्र हैं। WhatsApp पर form भेज दूँ?" → हाँ → send_form_link → "form link भेज दिया है।"
+6. "धन्यवाद {session.customer_name} जी।" → end_call("interested")।
+{COMMON_RULES}
+{SECTOR_INFERENCE_GUIDE}"""
 
     else:  # नया ग्राहक
         return f"""ROLE: {session.agent_name}, पुसद अर्बन बैंक का loan specialist। नया ग्राहक।
-GOAL: पहचान पुष्टि → Bank intro → Loan offer → Interest check → Details collect → Form भेजो → Call end।
-STYLE: Warm, professional, naturally conversational — जैसे एक असली bank relationship manager बात करता है। छोटे वाक्य। एक बार में एक सवाल। कभी-कभार हल्के acknowledgments दो: "जी", "अच्छा", "समझ गया जी", "बिल्कुल"। Customer के जवाब सुनकर कभी short reaction दो ("ठीक है", "नोट कर लिया") फिर अगला सवाल। Robotic मत लगो।
+DATA: Customer:{session.customer_name} | NEW
+{time_context}{memory_block}
 
-DATA:
-Customer:{session.customer_name} | Type:NEW {memory_block}
+⚠️ Disclaimer + पहचान पहले हो चुकी है। नाम दोबारा मत पूछो।
 
-⚠️ सिस्टम नोट: परिचय, disclaimer, पहचान पुष्टि पहले ही हो चुकी है। दोबारा मत बोलो। ग्राहक का नाम {session.customer_name} है — दोबारा नाम मत पूछो।
-
-LOAN ELIGIBILITY CRITERIA (नए ग्राहकों को clearly बताओ):
-   Education: 50K-20L | 8.5-10.5% | 15Y | पढ़ाई के दौरान कोई EMI नहीं | admission letter ज़रूरी
+LOAN ELIGIBILITY (नए ग्राहकों को clearly बताओ):
+   Education: 50K-20L | 8.5-10.5% | 15Y | पढ़ाई में EMI नहीं | admission letter ज़रूरी
    Business: 1L-50L | 10-13% | 7Y | business 2+ साल पुराना | GST registration preferred
-   Personal: 50K-10L | 11-14.5% | 5Y | min ₹25,000/month salary | 6 महीने की job stability ज़रूरी
+   Personal: 50K-10L | 11-14.5% | 5Y | min ₹25,000/month salary | 6 महीने job stability ज़रूरी
 
-FLOW:
-1. ग्राहक हाँ बोले तो — पहले bank का brief intro दो:
-   "पुसद अर्बन बैंक Vidarbha में 30+ सालों से सेवा कर रहा है — सबसे कम interest rates और fast approval के साथ।"
-   फिर loan offer: "आपके लिए Business, Personal या Education loan के options हैं। क्या आप कोई loan लेना चाहेंगे?"
-2. Loan details और eligibility criteria clearly बताओ (ऊपर देखो)।
-3. Strong interest पर transition: "बहुत अच्छा! बस कुछ छोटे-छोटे सवाल पूछने हैं, उसके बाद WhatsApp पर form भेजूँगा। शुरू करते हैं —"
-4. एक-एक करके पूछो। हर जवाब के बाद हल्का सा acknowledge करो ("जी, नोट कर लिया", "ठीक है जी") ताकि customer को लगे कि उनकी बात सुनी और दर्ज की जा रही है। शुरू में एक बार बोलो: "मैं आपके जवाब note करता/करती जाऊँगा/जाऊँगी, ताकि form में सब सही आए।" सवाल:
-   - "आपकी उम्र क्या है?"
-   - "आप क्या काम करते हैं?"
-   - "किस कंपनी में / किस जगह काम करते हैं?"
-   - "आपकी monthly salary किस range में आती है?"
-   - "कोई existing loan या EMI चल रही है? कितनी?"
-   - "लोन के लिए कितना amount चाहिए?"
-   - "आपकी qualifications क्या हैं?"
-5. Eligible: "आप पात्र हैं। WhatsApp पर form link भेज दूँ?"
-6. Link भेजने के बाद: "link भेज दिया है। form भर लीजिए।"
-
-RULES:
-1. If RAG MEMORY is available, use past call context naturally — reference previous interest, skip already-collected info, continue from where last call ended.
-2. हर बार सिर्फ एक सवाल पूछो।
-3. ग्राहक का नाम दोबारा मत पूछो — पहले से पता है: {session.customer_name}
-4. जब भी ग्राहक कोई जानकारी दें (उम्र, आय, नियोक्ता, qualifications, loan राशि, existing EMI) तुरंत collect_data(field, value) tool call करो — चुपचाप, बिना बताए।
-5. end_call() से पहले बोलो: "धन्यवाद {session.customer_name} जी, आपके समय के लिए। आपका दिन शुभ हो!" फिर उसी response में end_call() करो।
-6. NEVER SPEAK AGAIN AFTER end_call(). SILENT. STOP.
-7. Tool नाम कभी मत बोलो।
-8. ⚠️ STRICT TTS RULE: DO NOT use ANY emojis. Use ONLY standard punctuation (?, .). Avoid long dashes (—). DO NOT output empty lines.
-9. जवाब short और natural रखो — 1-2 वाक्य से ज़्यादा नहीं, ताकि latency कम हो और बातचीत flow करे।
-"""
+FLOW (छोटे वाक्यों में):
+1. "पुसद अर्बन बैंक 30 साल से Vidarbha में service दे रहा है। Business, Personal, या Education loan में interest है?"
+2. हाँ बोले तो eligibility एक line में बताओ (ऊपर देखो)।
+3. Interest confirm: "बस कुछ छोटे सवाल, फिर WhatsApp पर form।"
+4. एक-एक करके पूछो (हर जवाब पर तुरंत collect_data चुपचाप call करो):
+   Q1: "आपकी उम्र क्या है?" → collect_data("age", value)
+   Q2: "आप क्या काम करते हैं और किस कंपनी में?" — एक ही सवाल। जवाब से तीनों निकालो: collect_data("designation", role); collect_data("employer_name", company); sector खुद infer करके collect_data("sector", inferred)। Sector कभी मत पूछो।
+   Q3: "आपकी qualifications क्या हैं?" → collect_data("qualification", value)
+   Q4: "कितने साल का experience है?" → collect_data("working_experience", value)
+   Q5: "कोई existing loan या EMI चल रही है?" → collect_data("existing_emi", value)
+   Q6: "लोन किस purpose के लिए चाहिए?" → collect_data("loan_purpose", value)
+   Q7: "कितना loan amount चाहिए?" → collect_data("loan_amount", value); loan_type भी collect_data करो।
+   Q8: "क्या यही number आपका WhatsApp number है?" — हाँ → collect_data("whatsapp_same", "yes")। नहीं तो "WhatsApp number बताइए" → collect_data("whatsapp_number", value)।
+5. "आप पात्र हैं। WhatsApp पर form भेज दूँ?" → हाँ → send_form_link → "form link भेज दिया है।"
+6. "धन्यवाद {session.customer_name} जी।" → end_call("interested")।
+{COMMON_RULES}
+{SECTOR_INFERENCE_GUIDE}"""
 
 
 # ===================================================================
@@ -574,7 +743,7 @@ class LoanEnquiryAgent(Agent):
     def __init__(self, session: LoanEnquirySession):
         super().__init__(
             instructions=build_loan_enquiry_instructions(session),
-            tools=[send_form_link, end_call, collect_data],
+            tools=[send_form_link, end_call, collect_data, collect_all_data, schedule_callback],
         )
 
 
@@ -607,6 +776,21 @@ async def entrypoint(ctx: JobContext):
 
         session = LoanEnquirySession(ctx, metadata)
 
+        # CRITICAL: register transcript flush as a JobContext shutdown callback.
+        # If the customer hangs up, livekit-agents tears the worker down and any
+        # asyncio.create_task we scheduled in participant_disconnected may be
+        # cancelled mid-HTTP. Shutdown callbacks are awaited by the framework
+        # before the process exits, guaranteeing transcript delivery.
+        # _send_transcript is idempotent (transcript_sent flag), so coexisting
+        # with the normal save_and_disconnect path is safe.
+        async def _flush_transcript_on_shutdown():
+            try:
+                await session._send_transcript()
+            except Exception as e:
+                logger.error(f"❌ Shutdown-callback transcript flush failed: {e}")
+
+        ctx.add_shutdown_callback(_flush_transcript_on_shutdown)
+
         # Wait for participant with timeout
         async def wait_for_participant(timeout: float = 60.0):
             deadline = asyncio.get_event_loop().time() + timeout
@@ -633,10 +817,11 @@ async def entrypoint(ctx: JobContext):
         @ctx.room.on("participant_disconnected")
         def on_participant_disconnect(participant_info):
             logger.info(f"📞 Participant disconnected: {participant_info.identity}")
-            # ✅ Check session exists before accessing
             if session is not None and not session.call_ended:
                 logger.info("📤 Customer hung up - saving transcript...")
-                asyncio.create_task(session.save_and_disconnect(delay=1.0))
+                # delay=0: no point waiting, customer is gone. Shutdown-callback
+                # will also flush transcript if this task gets cancelled.
+                asyncio.create_task(session.save_and_disconnect(delay=0))
 
         # Brief delay for call stabilization (tuned down for latency)
         await asyncio.sleep(0.2)
@@ -678,6 +863,13 @@ async def entrypoint(ctx: JobContext):
             # Start LLM generation as soon as final STT arrives, before VAD end-of-speech.
             # Biggest single latency win — trims 300–700ms off turn response.
             preemptive_generation=True,
+            # Default min_endpointing_delay is 0.5s, far too long for natural phone
+            # conversation. Drop to 0.2s — agent starts responding ~300ms sooner.
+            min_endpointing_delay=0.2,
+            max_endpointing_delay=2.5,
+            # User can interrupt with a short word (3 letters) — feels human.
+            min_interruption_duration=0.3,
+            discard_audio_if_uninterruptible=True,
             userdata={"session": session},
         )
 
@@ -793,15 +985,15 @@ async def entrypoint(ctx: JobContext):
             logger.warning(f"⚠️ Greeting failed: {e}")
 
         # ===================================================================
-        # Silence Monitor (hang up after 30s silence)
+        # Silence Monitor (hang up after 20s silence — was 30s)
         # ===================================================================
         async def silence_monitor():
             while not session.call_ended:
                 await asyncio.sleep(5)
                 time_since_last_speech = asyncio.get_event_loop().time() - session.last_speech_time
 
-                if time_since_last_speech > 30 and not session.call_ended:
-                    logger.warning("🕒 Over 30s silence detected. Hanging up.")
+                if time_since_last_speech > 20 and not session.call_ended:
+                    logger.warning("🕒 Over 20s silence detected. Hanging up.")
                     if session.agent_session:
                         try:
                             farewell = {
@@ -825,12 +1017,12 @@ async def entrypoint(ctx: JobContext):
         session.silence_monitor_task = asyncio.create_task(silence_monitor())
 
         # ===================================================================
-        # Safety Timeout (3 minutes max)
+        # Safety Timeout (2 minutes max — calls should be ~90s with 5 questions)
         # ===================================================================
         async def safety_timeout():
-            await asyncio.sleep(180)
+            await asyncio.sleep(120)
             if not session.call_ended:
-                logger.warning("⚠️ SAFETY TIMEOUT: 180s exceeded")
+                logger.warning("⚠️ SAFETY TIMEOUT: 120s exceeded — force-ending stuck call")
                 session.call_outcome = "safety_timeout"
                 await session.save_and_disconnect(delay=0)
 

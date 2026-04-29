@@ -89,7 +89,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "your-jwt-secret-key")
 # Call time window (IST)
 CALL_START_HOUR = int(os.getenv("CALL_START_HOUR", "10"))  # 10 AM
 CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "24"))      # midnight
-MAX_RETRIES = int(os.getenv("MAX_CALL_RETRIES", "1"))       # default 1 retry after initial attempt
+MAX_RETRIES = int(os.getenv("MAX_CALL_RETRIES", "2"))       # max retry attempts AFTER initial dial
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -330,6 +330,20 @@ def _serialize_call(c: dict) -> dict:
                 c[field] = format_ist_time(dt)
             except Exception:
                 pass
+
+    # Samavesh-shaped aliases the static agent-dashboard.html reads.
+    # Set AFTER datetime formatting so these are already IST display strings.
+    c["call_start_time"] = c.get("started_at", "")
+    c["call_end_time"] = c.get("ended_at", "")
+    c["uploaded_at"] = c.get("created_at", "")
+
+    # Format scheduled_callback_at into IST display string for the UI
+    sc = c.get("scheduled_callback_at")
+    if sc and isinstance(sc, str):
+        try:
+            c["scheduled_callback_at"] = format_ist_time(datetime.fromisoformat(sc))
+        except Exception:
+            pass
     return c
 
 # ============================================================================
@@ -462,6 +476,9 @@ class TranscriptPayload(BaseModel):
     loan_purpose: Optional[str] = None
     employer_name: Optional[str] = None
     designation: Optional[str] = None
+    qualification: Optional[str] = None
+    sector: Optional[str] = None
+    working_experience: Optional[str] = None
     existing_emi: Optional[str] = None
     business_age: Optional[str] = None
     monthly_turnover: Optional[str] = None
@@ -495,10 +512,14 @@ async def agent_startup():
 
     _scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
-    # Batch runner every 5 minutes — only processes batches in "running" state
+    # Batch runner every 5 minutes — only processes batches in "running" state.
+    # Cron hour range is derived from CALL_START_HOUR / CALL_END_HOUR env so it
+    # always matches is_within_calling_hours().
+    _last_active_hour = (CALL_END_HOUR - 1) % 24  # cron's hour='X-Y' is inclusive
+    _hour_expr = f"{CALL_START_HOUR}-{_last_active_hour}" if CALL_START_HOUR <= _last_active_hour else f"{CALL_START_HOUR}-23,0-{_last_active_hour}"
     _scheduler.add_job(
         _scheduled_batch_run,
-        CronTrigger(hour="10-23", minute="*/5", timezone="Asia/Kolkata"),
+        CronTrigger(hour=_hour_expr, minute="*/5", timezone="Asia/Kolkata"),
         id="batch_runner",
         replace_existing=True,
     )
@@ -510,7 +531,7 @@ async def agent_startup():
         replace_existing=True,
     )
     _scheduler.start()
-    logger.info("Agent scheduler started (calls 10AM-midnight, analytics every 2m)")
+    logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, max_retries={MAX_RETRIES})")
 
 
 async def agent_shutdown():
@@ -632,12 +653,17 @@ async def process_batch_run(batch_uuid_str: str = None):
         batch_id = batch["id"]
         logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')})")
 
-        # Get pending calls for THIS batch only (using the string batch_id that links calls to batches)
+        # Get pending calls for THIS batch only (using the string batch_id that links calls to batches).
+        # Scheduled rows wait until scheduled_callback_at <= NOW(); Pending fires immediately.
         call_batch_id = batch.get("batch_id") or batch_id
         pending_rows = await db_pool.fetch(
             """SELECT * FROM agent_calls
-                WHERE batch_id = $1 AND status IN ('Pending', 'Scheduled')
-                ORDER BY created_at ASC LIMIT 50""",
+                WHERE batch_id = $1
+                  AND (
+                    status = 'Pending'
+                    OR (status = 'Scheduled' AND (scheduled_callback_at IS NULL OR scheduled_callback_at <= NOW()))
+                  )
+                ORDER BY COALESCE(scheduled_callback_at, created_at) ASC LIMIT 50""",
             call_batch_id,
         )
 
@@ -736,6 +762,15 @@ async def process_batch_run(batch_uuid_str: str = None):
                     room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
                     lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
 
+                    # Pull gender out of collected_data (stored at upload time as JSONB).
+                    # Frontend selector → upload-excel query param → collected_data → here → room
+                    # metadata → agent's LANG_CONFIG / GENDER_CONFIG. Defaults to "male" if absent.
+                    cd = call.get("collected_data") or {}
+                    if isinstance(cd, str):
+                        try: cd = json.loads(cd)
+                        except: cd = {}
+                    customer_gender = (cd.get("gender") if isinstance(cd, dict) else None) or "male"
+
                     await lk.room.create_room(api.CreateRoomRequest(
                         name=room_name, empty_timeout=300, max_participants=3,
                         metadata=json.dumps({
@@ -744,6 +779,7 @@ async def process_batch_run(batch_uuid_str: str = None):
                             "call_id": str(call_uuid),
                             "bank_id": call.get("bank_id", ""),
                             "language": call.get("language", "hindi"),
+                            "gender": customer_gender,
                         }),
                     ))
                     await db_pool.execute(
@@ -751,6 +787,11 @@ async def process_batch_run(batch_uuid_str: str = None):
                         room_name, call_uuid,
                     )
 
+                    # Dispatch agent FIRST so it is in the room before the SIP leg connects
+                    # (matches the Samavesh production pattern; otherwise customer hears silence).
+                    await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
+                        room=room_name, agent_name=AGENT_NAME,
+                    ))
                     sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
                     await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
                         room_name=room_name,
@@ -759,10 +800,6 @@ async def process_batch_run(batch_uuid_str: str = None):
                         participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
                         participant_name=name,
                         play_ringtone=True,
-                    ))
-                    await asyncio.sleep(1.0)
-                    await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
-                        room=room_name, agent_name=AGENT_NAME,
                     ))
                     await lk.aclose()
 
@@ -813,14 +850,17 @@ async def process_batch_run(batch_uuid_str: str = None):
 
 
 async def process_analytics_batch():
-    """Background LLM analysis of completed call transcripts."""
+    """Background LLM analysis of completed call transcripts.
+    Picks up calls that have a transcript but were left as 'Uncategorized' by the
+    immediate transcript handler. Merges the LLM result into call_analysis (preserves
+    fields the agent already set, e.g. lead_quality from the agent's own assessment)."""
     if not await acquire_analytics_lock():
         return
 
     try:
         rows = await db_pool.fetch(
             """SELECT * FROM agent_calls
-               WHERE call_analysis IS NULL
+               WHERE COALESCE(category, 'Uncategorized') IN ('Uncategorized', '')
                  AND transcript IS NOT NULL AND transcript != '[]'::jsonb
                  AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')
                ORDER BY created_at ASC
@@ -837,25 +877,36 @@ async def process_analytics_batch():
                 if isinstance(transcript, str):
                     transcript = json.loads(transcript)
                 analysis = analyze_transcript_with_llm(transcript)
-                summary = f"Category: {analysis.get('category')} | Follow-up: {analysis.get('follow_up_needed')}"
+
+                existing = call.get("call_analysis") or {}
+                if isinstance(existing, str):
+                    try: existing = json.loads(existing)
+                    except: existing = {}
+                merged = dict(existing) if isinstance(existing, dict) else {}
+                # Don't clobber agent-set lead_quality with a None from the LLM
+                for k, v in {
+                    "follow_up_needed": analysis.get("follow_up_needed", "No"),
+                    "reminder_date": analysis.get("reminder_date"),
+                    "how_to_follow_up": analysis.get("how_to_follow_up"),
+                    "when_to_follow_up": analysis.get("when_to_follow_up"),
+                    "lead_quality": analysis.get("lead_quality") or merged.get("lead_quality"),
+                    "summary": f"Category: {analysis.get('category')} | Follow-up: {analysis.get('follow_up_needed')}",
+                }.items():
+                    if v is not None:
+                        merged[k] = v
+
                 await db_pool.execute(
                     """UPDATE agent_calls
                        SET category = $1,
-                           call_analysis = $2,
+                           call_analysis = $2::jsonb,
                            updated_at = $3
                        WHERE id = $4""",
                     analysis.get("category", "Uncategorized"),
-                    json.dumps({
-                        "follow_up_needed": analysis.get("follow_up_needed", "No"),
-                        "reminder_date": analysis.get("reminder_date"),
-                        "how_to_follow_up": analysis.get("how_to_follow_up"),
-                        "when_to_follow_up": analysis.get("when_to_follow_up"),
-                        "lead_quality": analysis.get("lead_quality"),
-                        "summary": summary,
-                    }),
+                    json.dumps(merged),
                     now_ist(),
                     uuid.UUID(call["id"]),
                 )
+                logger.info(f"Analytics done for call {call['id']}: {analysis.get('category')}")
             except Exception as e:
                 logger.error(f"Analytics failed for {call['id']}: {e}")
     finally:
@@ -973,13 +1024,26 @@ async def upload_excel(
 
         logger.info(f"Uploaded {count} records, batch={batch_id}, bank={bank_id}")
 
+        # Auto-start batch immediately if within calling hours (Samavesh pattern)
+        auto_calling = False
+        if background_tasks is not None and count > 0 and is_within_calling_hours():
+            await db_pool.execute(
+                "UPDATE agent_batches SET status = 'running' WHERE id = $1", batch_uuid,
+            )
+            background_tasks.add_task(process_batch_run, str(batch_uuid))
+            auto_calling = True
+            logger.info(f"Auto-started batch {batch_id}")
+
         return {
             "status": "success",
             "batch_id": batch_id,
             "batch_uuid": str(batch_uuid),
             "inserted_count": count,
-            "message": f"Uploaded {count} records. Click 'Start Batch' to begin calling.",
-            "auto_calling": False,
+            "message": (
+                f"Uploaded {count} records. Calling started!" if auto_calling
+                else f"Uploaded {count} records. Calls will start at {CALL_START_HOUR} AM IST."
+            ),
+            "auto_calling": auto_calling,
             "calling_hours": {"active": is_within_calling_hours(), "window": f"{CALL_START_HOUR}AM - {CALL_END_HOUR % 24 or 12}AM IST"},
         }
     except HTTPException:
@@ -1038,30 +1102,31 @@ async def batch_status(
     bk_params = [bank_uuid] if bank_uuid else []
     offset = len(bk_params)
 
-    if batch_id:
-        pending_count = await db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1} AND status IN ('Pending', 'Calling', 'Scheduled')",
-            *bk_params, batch_id,
+    async def _count(extra_clause: str, *extra_params):
+        if batch_id:
+            return await db_pool.fetchval(
+                f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1}{extra_clause}",
+                *bk_params, batch_id, *extra_params,
+            )
+        return await db_pool.fetchval(
+            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond}{extra_clause}",
+            *bk_params, *extra_params,
         )
-        total_count = await db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1}",
-            *bk_params, batch_id,
-        )
-    else:
-        pending_count = await db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND status IN ('Pending', 'Calling', 'Scheduled')",
-            *bk_params,
-        )
-        total_count = await db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond}",
-            *bk_params,
-        )
+
+    pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled')")
+    active_count = await _count(" AND status = 'Calling'")
+    failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
+    completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
+    total_count = await _count("")
 
     return {
         "status": "success",
-        "completed": pending_count == 0,
+        "is_complete": pending_count == 0,                  # boolean kept under a non-clashing key
         "message": "All calls completed" if pending_count == 0 else f"{pending_count} calls remaining",
         "pending": pending_count,
+        "active_calls": active_count,
+        "failed": failed_count,
+        "completed": completed_count,                       # numeric, matches dashboard tile expectation
         "total": total_count,
     }
 
@@ -1093,12 +1158,16 @@ async def trigger_batch_retry(
     batch = _row_to_dict(batch_row)
     bid = batch["id"]
 
-    # Reset failed calls in this batch to Pending (only if under retry limit)
+    # Reset failed calls in this batch to Pending (only if under retry limit).
+    # retry_count is incremented on every failure including the initial dial,
+    # so retry_count == 1 means "initial failed, 0 retries done" → eligible for
+    # retry #1. With MAX_RETRIES=2, we allow retry while retry_count <= 2,
+    # giving exactly 2 retries after the original attempt.
     result = await db_pool.execute(
         f"""UPDATE agent_calls SET status = 'Pending'
             WHERE batch_id = $1
             AND status IN ('Not Answered', 'Failed', 'Call Not Connected')
-            AND retry_count < {MAX_RETRIES}""",
+            AND retry_count <= {MAX_RETRIES}""",
         batch.get("batch_id") or bid,
     )
     reset_count = int(result.split()[-1]) if result else 0
@@ -1164,9 +1233,15 @@ async def resume_calling():
 
 @router.get("/uploads")
 async def list_uploads():
-    """List all batch uploads."""
+    """List all batch uploads. Aliases created_at/total_records as uploaded_at/record_count
+    so the static dashboard (which uses Samavesh field names) renders correctly."""
     rows = await db_pool.fetch("SELECT * FROM agent_batches ORDER BY created_at DESC LIMIT 50")
-    return {"uploads": _rows_to_list(rows)}
+    uploads = []
+    for r in _rows_to_list(rows):
+        r["uploaded_at"] = r.get("created_at")
+        r["record_count"] = r.get("total_records") or 0
+        uploads.append(r)
+    return {"uploads": uploads}
 
 @router.get("/upload/{batch_id}")
 async def get_upload_detail(batch_id: str):
@@ -1179,11 +1254,14 @@ async def get_upload_detail(batch_id: str):
 
 @router.get("/recent_calls")
 async def recent_calls(limit: int = Query(10, ge=1, le=50)):
-    """Get recent calls (shortcut for dashboard)."""
+    """Get recent calls (shortcut for dashboard).
+    Returns both `calls` (current API) and `recent_calls` (Samavesh-shaped) so
+    the static agent-dashboard.html, which reads `data.recent_calls`, renders."""
     rows = await db_pool.fetch(
         "SELECT * FROM agent_calls ORDER BY created_at DESC LIMIT $1", limit
     )
-    return {"calls": [_serialize_call(_row_to_dict(r)) for r in rows]}
+    payload = [_serialize_call(_row_to_dict(r)) for r in rows]
+    return {"calls": payload, "recent_calls": payload}
 
 # ============================================================================
 # CALL MANAGEMENT ENDPOINTS
@@ -1385,10 +1463,11 @@ async def categorize_call(
     if data.after_call_remark:
         analysis["after_call_remark"] = data.after_call_remark
 
+    # `bank_id IS NOT DISTINCT FROM $5` matches NULL=NULL (operator) and uuid=uuid (bank user).
     await db_pool.execute(
         """UPDATE agent_calls
            SET category = $1, call_analysis = $2, updated_at = $3
-           WHERE id = $4 AND bank_id = $5""",
+           WHERE id = $4 AND bank_id IS NOT DISTINCT FROM $5""",
         data.category, json.dumps(analysis), now_ist(), call_uuid, bank_uuid,
     )
     return {"status": "updated", "call_id": call_id}
@@ -1566,6 +1645,9 @@ async def save_transcript(data: TranscriptPayload):
         "loan_purpose": data.loan_purpose or existing_collected.get("loan_purpose"),
         "employer_name": data.employer_name or existing_collected.get("employer_name"),
         "designation": data.designation or existing_collected.get("designation"),
+        "qualification": data.qualification or existing_collected.get("qualification"),
+        "sector": data.sector or existing_collected.get("sector"),
+        "working_experience": data.working_experience or existing_collected.get("working_experience"),
         "existing_emi": data.existing_emi or existing_collected.get("existing_emi"),
         "business_age": data.business_age or existing_collected.get("business_age"),
         "monthly_turnover": data.monthly_turnover or existing_collected.get("monthly_turnover"),
@@ -1574,6 +1656,23 @@ async def save_transcript(data: TranscriptPayload):
     existing_collected.update({k: v for k, v in qualification_data.items() if v})
 
     category = "Uncategorized" if transcript else "Call Not Connected"
+
+    # Build call_analysis JSONB with lead_quality so dashboard stats can find hot/warm leads.
+    call_analysis = {
+        "lead_quality": (data.lead_quality or "cold").lower(),
+        "interest_reason": data.interest_reason,
+    }
+
+    # Safe parse: agent occasionally sends free-text amounts ("5 lakh") that would crash float().
+    def _safe_amount(v):
+        if v is None: return None
+        s = str(v).strip()
+        if not s: return None
+        digits = "".join(c for c in s if c.isdigit() or c == ".")
+        try:
+            return float(digits) if digits else None
+        except ValueError:
+            return None
 
     await db_pool.execute(
         """UPDATE agent_calls SET
@@ -1589,8 +1688,8 @@ async def save_transcript(data: TranscriptPayload):
             loan_amount = COALESCE($9, loan_amount),
             collected_data = $10,
             category = $11,
-            call_analysis = NULL
-           WHERE id = $12""",
+            call_analysis = $12::jsonb
+           WHERE id = $13""",
         json.dumps(transcript),
         status,
         recording_url,
@@ -1599,9 +1698,10 @@ async def save_transcript(data: TranscriptPayload):
         data.customer_interested,
         data.whatsapp_form_sent,
         data.loan_type or None,
-        float(data.loan_amount) if data.loan_amount and str(data.loan_amount).strip() else None,
+        _safe_amount(data.loan_amount),
         json.dumps(existing_collected),
         category,
+        json.dumps(call_analysis),
         actual_uuid,
     )
 
@@ -1671,6 +1771,85 @@ async def save_transcript(data: TranscriptPayload):
 # WHATSAPP FORM LINK (called by voice agent)
 # ============================================================================
 
+@router.get("/scheduled-callbacks")
+async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
+    """List upcoming scheduled callbacks ordered by callback time.
+    Used by the dashboard's 'Upcoming Callbacks' section."""
+    rows = await db_pool.fetch(
+        """SELECT * FROM agent_calls
+           WHERE status = 'Scheduled' AND scheduled_callback_at IS NOT NULL
+           ORDER BY scheduled_callback_at ASC LIMIT $1""",
+        limit,
+    )
+    payload = [_serialize_call(_row_to_dict(r)) for r in rows]
+    return {"scheduled": payload, "count": len(payload)}
+
+
+@router.post("/schedule-callback")
+async def schedule_callback(request: Request):
+    """Triggered by the voice agent when a customer says they are busy and asks
+    to be called back at a specific time. Clamps the time into working hours,
+    sets the call's status to 'Scheduled' so the batch dispatcher will re-dial."""
+    data = await request.json()
+    call_id = data.get("call_id")
+    callback_iso = data.get("callback_iso")
+    reason = (data.get("reason") or "").strip() or "user_busy"
+
+    if not call_id or not callback_iso:
+        raise HTTPException(status_code=400, detail="call_id and callback_iso required")
+    try:
+        call_uuid = uuid.UUID(call_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid call_id")
+    try:
+        # Accept either naive (treated as IST) or tz-aware ISO 8601 strings
+        if callback_iso.endswith("Z"):
+            callback_iso = callback_iso[:-1] + "+00:00"
+        dt = datetime.fromisoformat(callback_iso)
+        if dt.tzinfo is None:
+            dt = IST.localize(dt)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid callback_iso: {e}")
+
+    # Clamp into [now+1min, working_hours]. If the requested time is in the past or
+    # outside the calling window, push it to the next valid window start.
+    dt_ist = dt.astimezone(IST)
+    now_local = now_ist()
+    if dt_ist < now_local + timedelta(minutes=1):
+        dt_ist = now_local + timedelta(minutes=2)
+    # If hour is outside working window, snap to next CALL_START_HOUR
+    if dt_ist.hour < CALL_START_HOUR or dt_ist.hour >= CALL_END_HOUR:
+        next_day = dt_ist.date() if dt_ist.hour < CALL_START_HOUR else (dt_ist + timedelta(days=1)).date()
+        dt_ist = IST.localize(datetime.combine(next_day, datetime.min.time())).replace(hour=CALL_START_HOUR)
+
+    await db_pool.execute(
+        """UPDATE agent_calls
+           SET status = 'Scheduled',
+               scheduled_callback_at = $1,
+               callback_reason = $2,
+               error_message = NULL,
+               updated_at = $3
+           WHERE id = $4""",
+        dt_ist, reason, now_local, call_uuid,
+    )
+    # Also reactivate the parent batch so the dispatcher will pick this row up later
+    row = await db_pool.fetchrow("SELECT batch_id FROM agent_calls WHERE id = $1", call_uuid)
+    if row and row["batch_id"]:
+        await db_pool.execute(
+            """UPDATE agent_batches
+               SET status = CASE WHEN status = 'completed' THEN 'running' ELSE status END
+               WHERE batch_id = $1""",
+            row["batch_id"],
+        )
+
+    logger.info(f"Callback scheduled for {call_uuid} at {dt_ist.isoformat()} (reason={reason})")
+    return {
+        "status": "success",
+        "scheduled_callback_at": dt_ist.isoformat(),
+        "reason": reason,
+    }
+
+
 @router.post("/send-whatsapp-form")
 async def send_whatsapp_form(request: Request):
     """Triggered by the AI voice agent's send_form_link tool.
@@ -1719,7 +1898,7 @@ async def send_whatsapp_form(request: Request):
     # character-class footgun (lstrip("91") strips any leading 9s and 1s).
     _digits = ''.join(c for c in (phone_norm or '') if c.isdigit())
     bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
-    form_url = f"{FORM_BASE_URL}/loan-form?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/loan-form"
+    form_url = f"{FORM_BASE_URL}/?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/"
 
     if phone_norm:
         # Check if application already exists for this phone
@@ -1883,16 +2062,19 @@ async def send_whatsapp_form(request: Request):
             analysis["notification_status"] = "sent_via_aisensy" if aisensy_ok else "aisensy_failed"
             analysis["notification_time"] = now_ist().isoformat()
 
+            # form_sent reflects actual WhatsApp delivery, not just app creation.
             await db_pool.execute(
-                """UPDATE agent_calls SET form_sent = true, form_link = $1,
-                   call_analysis = $2, updated_at = $3 WHERE id = $4""",
-                form_url, json.dumps(analysis), now_ist(), call_uuid,
+                """UPDATE agent_calls SET form_sent = $1, form_link = $2,
+                   call_analysis = $3, updated_at = $4 WHERE id = $5""",
+                aisensy_ok, form_url, json.dumps(analysis), now_ist(), call_uuid,
             )
         except Exception as e:
             logger.warning(f"Could not update agent_calls: {e}")
 
+    # Caller (voice agent) checks `whatsapp_sent` to know whether to retry / disclose to user.
     return {
-        "status": "success",
+        "status": "success" if aisensy_ok else "partial",
+        "whatsapp_sent": aisensy_ok,
         "message": "Form link sent" if aisensy_ok else "Form created (WhatsApp delivery failed)",
         "form_url": form_url,
         "application_id": str(app_id) if app_id else None,
@@ -2028,13 +2210,17 @@ async def export_daily_report(
     report_rows = []
     for r in rows:
         c = _row_to_dict(r)
+        ca = c.get("call_analysis") or {}
+        if isinstance(ca, str):
+            try: ca = json.loads(ca)
+            except: ca = {}
         report_rows.append({
             "Name": c.get("customer_name", ""),
             "Phone": c.get("phone", ""),
             "Status": c.get("status", ""),
             "Category": c.get("category", ""),
-            "Lead Quality": (c.get("call_analysis") or {}).get("lead_quality", ""),
-            "Duration (sec)": c.get("call_duration", ""),
+            "Lead Quality": ca.get("lead_quality", "") if isinstance(ca, dict) else "",
+            "Duration (sec)": c.get("call_duration", "") or "",
             "Call Time": str(c.get("started_at", ""))[:19] if c.get("started_at") else "",
         })
 
@@ -2061,7 +2247,8 @@ async def export_all_calls(
 ):
     """Comprehensive Excel export with all call data."""
     bank_uuid = None  # operator — no bank scoping
-    conditions = ["bank_id = $1"]
+    # bank_id IS NOT DISTINCT FROM matches NULL=NULL (operator) and uuid=uuid (bank user).
+    conditions = ["bank_id IS NOT DISTINCT FROM $1"]
     params: list = [bank_uuid]
     idx = 2
 
@@ -2145,7 +2332,11 @@ async def export_all_calls(
         df.to_excel(writer, index=False, sheet_name="All Calls")
         ws = writer.sheets["All Calls"]
         for col_idx, col in enumerate(df.columns):
-            max_len = max(df[col].astype(str).apply(len).max(), len(col)) + 2
+            try:
+                col_max = int(df[col].astype(str).map(len).max() or 0)
+            except Exception:
+                col_max = 0
+            max_len = max(col_max, len(str(col))) + 2
             letter = chr(65 + col_idx) if col_idx < 26 else chr(64 + col_idx // 26) + chr(65 + col_idx % 26)
             ws.column_dimensions[letter].width = min(max_len, 50)
     output.seek(0)
@@ -2165,9 +2356,10 @@ async def export_all_calls(
 async def get_live_status(user: dict = Depends(get_current_bank_user)):
     """Get current calling status -- which customer is being called right now."""
     bank_uuid = None  # operator — no bank scoping
+    # `bank_id IS NOT DISTINCT FROM $1` matches NULL=NULL (operator) and uuid=uuid (bank user).
     row = await db_pool.fetchrow(
         """SELECT id, customer_name, phone, started_at FROM agent_calls
-           WHERE status = 'Calling' AND bank_id = $1 LIMIT 1""",
+           WHERE status = 'Calling' AND bank_id IS NOT DISTINCT FROM $1 LIMIT 1""",
         bank_uuid,
     )
 

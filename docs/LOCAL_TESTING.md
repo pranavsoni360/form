@@ -158,6 +158,73 @@ Login URL: http://localhost:5180/login (select **Vendor** tab) → `vendor1` / `
 
 A CHECK constraint enforces these — the INSERT will fail if you mismatch.
 
+### 4e. Add a customer for form-flow testing (without going through a voice call)
+
+The customer-facing form's `/api/request-otp` only works if the phone already exists in either `loan_applications` or `form_tokens`. Without a real voice call, you need to seed one row manually. Two recipes:
+
+**Minimal** — just enough so the OTP send/verify works. Form opens empty, customer fills everything from scratch:
+
+```bash
+docker exec -i los-postgres-dev psql -U los_admin -d los_form <<SQL
+INSERT INTO loan_applications
+       (customer_name, phone, loan_id, current_step, status, last_saved_at)
+VALUES ('Test Customer', '+919999999999',
+        'TEST-' || substr(md5(random()::text), 1, 8),
+        1, 'draft', NOW());
+SQL
+```
+
+Then have the tester open `http://localhost:5180/?phone=9999999999` (or the v1 form URL) and click **Send OTP**. Read the OTP from `logs/backend.log` (see §5b).
+
+**Full simulation** — fakes a completed voice call so the form opens with prefilled fields + green "Voice Call" badges next to employer / income / loan amount, exactly like a real post-call experience:
+
+```bash
+docker exec -i los-postgres-dev psql -U los_admin -d los_form <<'SQL'
+DO $$
+DECLARE
+    new_call_id UUID;
+    new_app_id  UUID;
+BEGIN
+    INSERT INTO agent_calls
+        (id, customer_name, phone, status, started_at, ended_at,
+         interested, transcript, collected_data, category, call_duration)
+    VALUES
+        (gen_random_uuid(), 'Test Customer', '+919999999999',
+         'Called - Interested', NOW() - INTERVAL '5 minutes', NOW(),
+         TRUE, '[]'::jsonb,
+         '{"employer_name":"Acme Corp","designation":"Engineer","monthly_income":"95000","loan_purpose":"Personal"}'::jsonb,
+         'Uncategorized', 300)
+    RETURNING id INTO new_call_id;
+
+    INSERT INTO loan_applications
+        (id, agent_call_id, customer_name, full_name, phone, loan_id,
+         employer_name, designation, employment_type, industry_type,
+         monthly_gross_income, purpose_of_loan, loan_amount_requested,
+         customer_type, status, current_step, last_saved_at, field_sources)
+    VALUES
+        (gen_random_uuid(), new_call_id,
+         'Test Customer', 'Test Customer', '+919999999999',
+         'AGENT-DEMO-' || substr(md5(random()::text), 1, 8),
+         'Acme Corp', 'Engineer', 'salaried', 'private_sector',
+         95000.00, 'Personal', 250000.00,
+         'new', 'draft', 1, NOW(),
+         '{"employer_name":         {"source":"agent_call","original":"Acme Corp","modified":false},
+           "designation":           {"source":"agent_call","original":"Engineer","modified":false},
+           "employment_type":       {"source":"agent_call","original":"salaried","modified":false},
+           "monthly_gross_income":  {"source":"agent_call","original":"95000","modified":false},
+           "purpose_of_loan":       {"source":"agent_call","original":"Personal","modified":false},
+           "loan_amount_requested": {"source":"agent_call","original":"250000","modified":false},
+           "customer_name":         {"source":"agent_call","original":"Test Customer","modified":false}
+         }'::jsonb)
+    RETURNING id INTO new_app_id;
+
+    UPDATE agent_calls SET application_id = new_app_id WHERE id = new_call_id;
+END $$;
+SQL
+```
+
+Change `+919999999999` to whichever number you want to test against. Re-running the script appends another agent_call + loan_application — to reset, see §6 *Resetting everything*.
+
 ---
 
 ## 5. Getting OTPs

@@ -15,6 +15,7 @@ from livekit.agents import JobContext, function_tool, RunContext
 from livekit.agents.voice import AgentSession, Agent
 from livekit.plugins import deepgram, silero, sarvam, google, groq
 from livekit.agents.llm import FallbackAdapter
+from google.genai import types as genai_types
 
 try:
     from livekit.agents import BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
@@ -129,7 +130,11 @@ async def entrypoint(ctx: JobContext):
             # to Groq so the call doesn't stall.
             llm=FallbackAdapter(
                 [
-                    google.LLM(model="gemini-2.5-flash", temperature=0.4),
+                    google.LLM(
+                        model="gemini-2.5-flash",
+                        temperature=0.4,
+                        http_options=genai_types.HttpOptions(timeout=30000),
+                    ),
                     groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
                     groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
                 ]

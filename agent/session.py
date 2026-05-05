@@ -258,8 +258,8 @@ class LoanEnquirySession:
             "business_age": self.business_age,
             "monthly_turnover": self.monthly_turnover,
             "collected_address": self.collected_address,
-            "account_type": self.account_type,
-            "initial_deposit": self.initial_deposit,
+            "account_type": self.account_type or "",
+            "initial_deposit": self.initial_deposit or "",
         }
 
         logger.info(

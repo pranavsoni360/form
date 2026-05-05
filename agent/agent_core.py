@@ -129,7 +129,7 @@ async def entrypoint(ctx: JobContext):
             # to Groq so the call doesn't stall.
             llm=FallbackAdapter(
                 [
-                    google.LLM(model="gemini-2.5-flash", temperature=0.4, timeout=30),
+                    google.LLM(model="gemini-2.5-flash", temperature=0.4),
                     groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
                     groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
                 ]

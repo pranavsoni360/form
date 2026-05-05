@@ -26,6 +26,7 @@ from config import IST, BACKEND_URL, LANG_CONFIG, GENDER_CONFIG
 from session import LoanEnquirySession, CustomerType
 from tools import send_form_link, end_call, schedule_callback, collect_all_data
 from prompts import build_loan_enquiry_instructions
+from prompts_account import build_account_opening_instructions
 
 logger = logging.getLogger("loan-enquiry-agent")
 
@@ -184,9 +185,24 @@ async def entrypoint(ctx: JobContext):
 
         session.agent_session = agent_session
 
+        agent_purpose = metadata.get("agent_purpose", "loan_enquiry")
+        if agent_purpose == "account_opening":
+            instructions = build_account_opening_instructions(
+                customer_name=session.customer_name,
+                phone=session.phone,
+                language=session.language,
+                gender=session.gender,
+                agent_name=session.agent_name,
+            )
+        else:
+            instructions = build_loan_enquiry_instructions(session)
+
         await agent_session.start(
             room=ctx.room,
-            agent=LoanEnquiryAgent(session),
+            agent=Agent(
+                instructions=instructions,
+                tools=[send_form_link, end_call, schedule_callback, collect_all_data],
+            ),
         )
         logger.info("Session started with production settings")
 

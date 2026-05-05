@@ -801,6 +801,13 @@
                             <option value="female">👩 Female (Diya)</option>
                         </select>
                     </div>
+                    <div style="flex: 1;">
+                        <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">🤖 Agent</label>
+                        <select class="form-select" id="uploadAgentType">
+                            <option value="loan_enquiry" selected>Loan Enquiry — Pusad Urban Bank</option>
+                            <option value="account_opening">Account Opening — Union Bank of India</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -1509,12 +1516,13 @@
         async function uploadFile(file) {
             const language = document.getElementById('uploadLanguage').value;
             const gender = document.getElementById('uploadGender').value;
+            const agentType = document.getElementById('uploadAgentType').value;
             showToast(`Uploading file... (${language} / ${gender})`, 'info');
             const formData = new FormData();
             formData.append('file', file);
 
             try {
-                const response = await fetch(`${getApiUrl()}/api/agent/upload-excel?language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}`, {
+                const response = await fetch(`${getApiUrl()}/api/agent/upload-excel?language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}&agent_type=${encodeURIComponent(agentType)}`, {
                     method: 'POST',
                     body: formData
                 });

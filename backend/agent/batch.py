@@ -23,7 +23,7 @@ from .state import (
     set_emergency_stop, cleanup_stuck_calls, _init_system_state,
     _row_to_dict, _rows_to_list, _serialize_call,
     LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
-    SIP_TRUNK_ID, AGENT_NAME, DEMO_MODE, CALL_START_HOUR, CALL_END_HOUR,
+    SIP_TRUNK_ID, AGENT_NAME, UNION_BANK_AGENT_NAME, DEMO_MODE, CALL_START_HOUR, CALL_END_HOUR,
     MAX_RETRIES, IST,
 )
 from .analytics import process_analytics_batch
@@ -311,6 +311,8 @@ async def process_batch_run(batch_uuid_str: str = None):
                             "bank_id": call.get("bank_id", ""),
                             "language": call.get("language", "hindi"),
                             "gender": customer_gender,
+                            "agent_purpose": call.get("agent_type", "loan_enquiry"),
+                            "bank_name": "Union Bank of India" if call.get("agent_type") == "account_opening" else "Pusad Urban Bank",
                         }),
                     ))
                     await _state.db_pool.execute(
@@ -320,8 +322,9 @@ async def process_batch_run(batch_uuid_str: str = None):
 
                     # Dispatch agent FIRST so it is in the room before the SIP leg connects
                     # (matches the Samavesh production pattern; otherwise customer hears silence).
+                    _agent_name = UNION_BANK_AGENT_NAME if call.get("agent_type") == "account_opening" else AGENT_NAME
                     await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
-                        room=room_name, agent_name=AGENT_NAME,
+                        room=room_name, agent_name=_agent_name,
                     ))
                     sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
                     await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
@@ -388,6 +391,7 @@ async def upload_excel(
     file: UploadFile = File(...),
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
+    agent_type: str = Query("loan_enquiry", description="loan_enquiry | account_opening"),
     background_tasks: BackgroundTasks = None,
     # no auth — operator access
 ):
@@ -438,9 +442,9 @@ async def upload_excel(
         # Insert into agent_batches with batch_id string for linking to agent_calls
         batch_uuid = uuid.uuid4()
         await _state.db_pool.execute(
-            """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at)
-               VALUES ($1, $2, $3, $4, $5, 0, 0, 'pending', $6, $7)""",
-            batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time,
+            """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at, agent_type)
+               VALUES ($1, $2, $3, $4, $5, 0, 0, 'pending', $6, $7, $8)""",
+            batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time, agent_type,
         )
 
         count = 0
@@ -463,11 +467,13 @@ async def upload_excel(
                 """INSERT INTO agent_calls (
                     id, bank_id, batch_id, customer_name, phone, loan_type, loan_amount,
                     language, status, room_name, interested, form_sent,
-                    category, transcript, collected_data, created_at, updated_at
+                    category, transcript, collected_data, created_at, updated_at,
+                    agent_type
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
                     $8, 'Pending', $9, false, false,
-                    'Uncategorized', '[]'::jsonb, $10, $11, $11
+                    'Uncategorized', '[]'::jsonb, $10, $11, $11,
+                    $12
                 )""",
                 call_uuid,
                 bank_id_uuid,
@@ -486,6 +492,7 @@ async def upload_excel(
                     "gender": gender.lower().strip(),
                 }),
                 upload_time,
+                agent_type,
             )
             count += 1
 

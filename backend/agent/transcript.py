@@ -1,0 +1,200 @@
+# backend/agent/transcript.py
+import json
+import uuid
+import logging
+from datetime import datetime, timezone
+
+from fastapi import APIRouter
+
+from .state import (
+    db_pool, now_ist, RECORDING_BASE_URL, _row_to_dict,
+    TranscriptPayload, IST,
+)
+
+logger = logging.getLogger("agent-transcript")
+router = APIRouter()
+
+
+@router.post("/transcript")
+async def save_transcript(data: TranscriptPayload):
+    """Save transcript from the voice agent. This is a webhook -- no JWT auth."""
+    transcript = [item.model_dump() for item in data.transcript]
+    room = data.room
+
+    # Determine query target (prefer call_id)
+    call_uuid = None
+    if data.call_id:
+        try:
+            call_uuid = uuid.UUID(data.call_id)
+        except ValueError:
+            pass
+
+    # Look up the call
+    if call_uuid:
+        call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    else:
+        call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE room_name = $1", room)
+
+    if not call_row:
+        logger.warning(f"Transcript webhook: no call found for room={room}, call_id={data.call_id}")
+        return {"status": "error", "message": "Call not found"}
+
+    call = _row_to_dict(call_row)
+    actual_uuid = uuid.UUID(call["id"])
+
+    # Determine status from transcript content
+    if transcript:
+        status = "Called - Interested" if data.customer_interested else "Called - Not Interested"
+    else:
+        status = "Not Answered"
+
+    recording_url = f"{RECORDING_BASE_URL}{data.recording_path}" if data.recording_path and RECORDING_BASE_URL else None
+
+    # Calculate duration
+    duration_seconds = 0
+    if call.get("started_at"):
+        try:
+            start = call["started_at"]
+            if isinstance(start, str):
+                start = datetime.fromisoformat(start)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc).astimezone(IST)
+            duration_seconds = int((now_ist() - start).total_seconds())
+        except Exception:
+            pass
+
+    # Build collected_data from qualification fields
+    existing_collected = call.get("collected_data") or {}
+    if isinstance(existing_collected, str):
+        existing_collected = json.loads(existing_collected)
+    qualification_data = {
+        "customer_type": data.customer_type or existing_collected.get("customer_type"),
+        "employment_type": data.employment_type or existing_collected.get("employment_type"),
+        "business_type": data.business_type or existing_collected.get("business_type"),
+        "monthly_income": data.monthly_income or existing_collected.get("monthly_income"),
+        "interest_reason": data.interest_reason or existing_collected.get("interest_reason"),
+        "age": data.age or existing_collected.get("age"),
+        "loan_purpose": data.loan_purpose or existing_collected.get("loan_purpose"),
+        "employer_name": data.employer_name or existing_collected.get("employer_name"),
+        "designation": data.designation or existing_collected.get("designation"),
+        "qualification": data.qualification or existing_collected.get("qualification"),
+        "sector": data.sector or existing_collected.get("sector"),
+        "working_experience": data.working_experience or existing_collected.get("working_experience"),
+        "existing_emi": data.existing_emi or existing_collected.get("existing_emi"),
+        "business_age": data.business_age or existing_collected.get("business_age"),
+        "monthly_turnover": data.monthly_turnover or existing_collected.get("monthly_turnover"),
+        "collected_address": data.collected_address or existing_collected.get("collected_address"),
+    }
+    existing_collected.update({k: v for k, v in qualification_data.items() if v})
+
+    category = "Uncategorized" if transcript else "Call Not Connected"
+
+    # Build call_analysis JSONB with lead_quality so dashboard stats can find hot/warm leads.
+    call_analysis = {
+        "lead_quality": (data.lead_quality or "cold").lower(),
+        "interest_reason": data.interest_reason,
+    }
+
+    # Safe parse: agent occasionally sends free-text amounts ("5 lakh") that would crash float().
+    def _safe_amount(v):
+        if v is None: return None
+        s = str(v).strip()
+        if not s: return None
+        digits = "".join(c for c in s if c.isdigit() or c == ".")
+        try:
+            return float(digits) if digits else None
+        except ValueError:
+            return None
+
+    await db_pool.execute(
+        """UPDATE agent_calls SET
+            transcript = $1,
+            status = $2,
+            recording_url = $3,
+            ended_at = $4,
+            call_duration = $5,
+            updated_at = $4,
+            interested = $6,
+            form_sent = $7,
+            loan_type = COALESCE($8, loan_type),
+            loan_amount = COALESCE($9, loan_amount),
+            collected_data = $10,
+            category = $11,
+            call_analysis = $12::jsonb
+           WHERE id = $13""",
+        json.dumps(transcript),
+        status,
+        recording_url,
+        now_ist(),
+        duration_seconds,
+        data.customer_interested,
+        data.whatsapp_form_sent,
+        data.loan_type or None,
+        _safe_amount(data.loan_amount),
+        json.dumps(existing_collected),
+        category,
+        json.dumps(call_analysis),
+        actual_uuid,
+    )
+
+    # ── If a loan_application was created from this call, backfill with collected data ──
+    try:
+        app_row = await db_pool.fetchrow(
+            "SELECT id FROM loan_applications WHERE agent_call_id = $1", actual_uuid)
+        if app_row:
+            from main import save_field_sources
+
+            def _parse_num(val):
+                if not val: return None
+                cleaned = "".join(c for c in str(val) if c.isdigit() or c == ".")
+                try: return float(cleaned) if cleaned else None
+                except ValueError: return None
+
+            await db_pool.execute(
+                """UPDATE loan_applications SET
+                    employer_name = COALESCE($1, employer_name),
+                    designation = COALESCE($2, designation),
+                    employment_type = COALESCE($3, employment_type),
+                    monthly_gross_income = COALESCE($4, monthly_gross_income),
+                    monthly_emi_existing = COALESCE($5, monthly_emi_existing),
+                    current_address = COALESCE($6, current_address),
+                    purpose_of_loan = COALESCE($7, purpose_of_loan),
+                    loan_amount_requested = COALESCE($8, loan_amount_requested),
+                    industry_type = COALESCE($9, industry_type),
+                    customer_type = COALESCE($10, customer_type)
+                WHERE id = $11""",
+                existing_collected.get("employer_name") or None,
+                existing_collected.get("designation") or None,
+                existing_collected.get("employment_type") or None,
+                _parse_num(existing_collected.get("monthly_income")),
+                _parse_num(existing_collected.get("existing_emi")),
+                existing_collected.get("collected_address") or None,
+                existing_collected.get("loan_purpose") or None,
+                _parse_num(data.loan_amount),
+                existing_collected.get("business_type") or None,
+                existing_collected.get("customer_type") or None,
+                app_row["id"],
+            )
+            # Save field_sources for Voice Call badges
+            source_fields = {}
+            field_map = {
+                "employer_name": existing_collected.get("employer_name"),
+                "designation": existing_collected.get("designation"),
+                "employment_type": existing_collected.get("employment_type"),
+                "monthly_gross_income": existing_collected.get("monthly_income"),
+                "monthly_emi_existing": existing_collected.get("existing_emi"),
+                "current_address": existing_collected.get("collected_address"),
+                "purpose_of_loan": existing_collected.get("loan_purpose"),
+                "industry_type": existing_collected.get("business_type"),
+                "customer_type": existing_collected.get("customer_type"),
+            }
+            for field, value in field_map.items():
+                if value and str(value).strip():
+                    source_fields[field] = value
+            if source_fields:
+                await save_field_sources(app_row["id"], "agent_call", source_fields)
+            logger.info(f"Backfilled loan_application {app_row['id']} with {len(source_fields)} fields from call data")
+    except Exception as e:
+        logger.warning(f"Could not backfill loan_application: {e}")
+
+    return {"status": "success", "room": room, "updated": True}

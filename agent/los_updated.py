@@ -6,11 +6,11 @@ import logging
 import time
 
 from dotenv import load_dotenv
+
+load_dotenv(".env.local")  # must run before local module imports that call os.getenv()
+
 from livekit.agents import WorkerOptions, cli
-
 from agent_core import entrypoint
-
-load_dotenv(".env.local")
 
 logging.basicConfig(
     level=logging.INFO,

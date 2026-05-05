@@ -72,6 +72,8 @@ class LoanEnquirySession:
         self.business_age = None
         self.monthly_turnover = None
 
+        self.initial_deposit = None
+
         self.call_outcome = None
         self.form_link_sent = False
         self.call_start_time = datetime.now(IST)
@@ -129,6 +131,8 @@ class LoanEnquirySession:
             "business_age": "business_age",
             "monthly_turnover": "monthly_turnover",
             "address": "collected_address",
+            "account_type": "account_type",
+            "initial_deposit": "initial_deposit",
         }
         attr = mapping.get(field.lower().strip())
         if attr:
@@ -254,6 +258,8 @@ class LoanEnquirySession:
             "business_age": self.business_age,
             "monthly_turnover": self.monthly_turnover,
             "collected_address": self.collected_address,
+            "account_type": self.account_type,
+            "initial_deposit": self.initial_deposit,
         }
 
         logger.info(

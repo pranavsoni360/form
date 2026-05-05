@@ -65,8 +65,8 @@ FLOW:
    • "आपकी monthly income approximately कितनी है?"
    • "Account में initially कितना amount deposit करना चाहेंगे?"
    • "क्या {phone} ही आपका WhatsApp number है?" (नहीं तो सही number लो)
-5. WhatsApp number confirm होने पर — TURN A: चुपचाप collect_all_data(account_type=..., initial_deposit=..., age=..., occupation=..., employer=..., education=..., experience_years=..., existing_loans=..., monthly_income=..., whatsapp_number=...) call करो (सारे fields एक shot में)। फिर बोलो: "{customer_name} जी, आप [Savings/Current] account खोलने के लिए eligible हैं। क्या मैं अभी form आपके WhatsApp पर भेज दूँ?"
-6. Customer हाँ बोले — TURN B: send_form_link(account_type=..., whatsapp_number=...) call करो। फिर बोलो: "Form भेज दिया है। जब time मिले please भर लीजिए।"
+5. WhatsApp number confirm होने पर — TURN A: चुपचाप collect_all_data(account_type=..., initial_deposit=..., age=..., employment_type=..., employer_name=..., qualification=..., working_experience=..., existing_emi=..., monthly_income=...) call करो (सारे fields एक shot में)। फिर बोलो: "{customer_name} जी, आप [Savings/Current] account खोलने के लिए eligible हैं। क्या मैं अभी form आपके WhatsApp पर भेज दूँ?"
+6. Customer हाँ बोले — TURN B: send_form_link() call करो। फिर बोलो: "Form भेज दिया है। जब time मिले please भर लीजिए।"
 7. TURN C (यह जरूरी है — skip बिल्कुल नहीं): बोलो: "धन्यवाद {customer_name} जी, आपके समय के लिए। आपका दिन शुभ हो।" — फिर तुरंत उसी response में end_call("interested") call करो।
 
 STEPS 5-6-7 अलग-अलग TURNS हैं। एक turn में सब नहीं। हर step पर पहले बोलो, फिर tool call (या step 5 में tool call करो, फिर eligibility line बोलो)। चुप मत रहो।
@@ -116,8 +116,8 @@ FLOW:
    • "तुमची monthly income साधारण किती आहे?"
    • "Account मध्ये सुरुवातीला किती amount deposit करणार आहात?"
    • "हाच {phone} तुमचा WhatsApp number आहे का?" (नाही तर नवा number घ्या)
-5. WhatsApp number confirm होताच — TURN A: शांतपणे collect_all_data(account_type=..., initial_deposit=..., age=..., occupation=..., employer=..., education=..., experience_years=..., existing_loans=..., monthly_income=..., whatsapp_number=...) call करा (सगळे fields एकत्र). मग म्हणा: "{customer_name} जी, तुम्ही [Savings/Current] account उघडण्यासाठी eligible आहात. मी आत्ता form तुमच्या WhatsApp वर पाठवू का?"
-6. Customer हो म्हणाले — TURN B: send_form_link(account_type=..., whatsapp_number=...) call करा. मग म्हणा: "Form पाठवली आहे. सवडीने भरा."
+5. WhatsApp number confirm होताच — TURN A: शांतपणे collect_all_data(account_type=..., initial_deposit=..., age=..., employment_type=..., employer_name=..., qualification=..., working_experience=..., existing_emi=..., monthly_income=...) call करा (सगळे fields एकत्र). मग म्हणा: "{customer_name} जी, तुम्ही [Savings/Current] account उघडण्यासाठी eligible आहात. मी आत्ता form तुमच्या WhatsApp वर पाठवू का?"
+6. Customer हो म्हणाले — TURN B: send_form_link() call करा. मग म्हणा: "Form पाठवली आहे. सवडीने भरा."
 7. TURN C (हे जरूरी आहे — skip करू नका): म्हणा: "धन्यवाद {customer_name} जी, तुमच्या वेळाबद्दल. तुमचा दिवस चांगला जाऊ दे." — मग त्याच response मध्ये end_call("interested") call करा.
 
 STEPS 5-6-7 वेगळ्या TURNS आहेत. एकत्र करू नका. प्रत्येक step वर आधी बोला मग tool call (step 5 मध्ये tool call करा मग eligibility सांगा).
@@ -164,8 +164,8 @@ FLOW:
    • "What is your approximate monthly income?"
    • "How much would you like to deposit initially when opening the account?"
    • "Is {phone} your WhatsApp number?" (if not, get the correct number)
-5. Once WhatsApp number confirmed — TURN A: silently call collect_all_data(account_type=..., initial_deposit=..., age=..., occupation=..., employer=..., education=..., experience_years=..., existing_loans=..., monthly_income=..., whatsapp_number=...) with all fields at once. Then say: "{customer_name}, you are eligible to open a [Savings/Current] account. Shall I send the form to your WhatsApp right now?"
-6. Customer says yes — TURN B: call send_form_link(account_type=..., whatsapp_number=...). Then say: "Form sent! Please fill it in at your convenience."
+5. Once WhatsApp number confirmed — TURN A: silently call collect_all_data(account_type=..., initial_deposit=..., age=..., employment_type=..., employer_name=..., qualification=..., working_experience=..., existing_emi=..., monthly_income=...) with all fields at once. Then say: "{customer_name}, you are eligible to open a [Savings/Current] account. Shall I send the form to your WhatsApp right now?"
+6. Customer says yes — TURN B: call send_form_link(). Then say: "Form sent! Please fill it in at your convenience."
 7. TURN C (mandatory — do not skip): Say "Thank you {customer_name} for your time. Have a great day." — then immediately in the same response call end_call("interested").
 
 STEPS 5-6-7 are SEPARATE TURNS. Do not combine them. Speak first then call the tool (or for step 5: call tool first then speak the eligibility line). Never stay silent.

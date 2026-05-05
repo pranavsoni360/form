@@ -225,15 +225,15 @@ async def entrypoint(ctx: JobContext):
             logger.info("Triggering hardcoded split greeting")
 
             if session.language == "english":
-                part1 = f"Hello, this is {session.agent_name} calling from Pusad Urban Bank. This call is being recorded for security and quality purposes."
+                part1 = f"Hello, this is {session.agent_name} calling from {session.bank_name}. This call is being recorded for security and quality purposes."
                 part2 = f"Am I speaking with {session.customer_name}?"
             elif session.language == "marathi":
                 bolte = "बोलतेय" if session.gender == "female" else "बोलतोय"
-                part1 = f"नमस्कार, मी {session.agent_name}, पुसद अर्बन बँक मधून {bolte}. ही कॉल सुरक्षेसाठी रेकॉर्ड केली जात आहे."
+                part1 = f"नमस्कार, मी {session.agent_name}, {session.bank_name} मधून {bolte}. ही कॉल सुरक्षेसाठी रेकॉर्ड केली जात आहे."
                 part2 = f"मी {session.customer_name} जींशी बोलतोय का?"
             else:
                 bol = "रही" if session.gender == "female" else "रहा"
-                part1 = f"Hello, मैं {session.agent_name} बोल {bol} हूँ पुसद अर्बन बैंक से। यह कॉल सुरक्षा के लिए रिकॉर्ड की जा रही है।"
+                part1 = f"Hello, मैं {session.agent_name} बोल {bol} हूँ {session.bank_name} से। यह कॉल सुरक्षा के लिए रिकॉर्ड की जा रही है।"
                 part2 = f"क्या मेरी बात {session.customer_name} जी से हो रही है?"
 
             handle1 = agent_session.say(part1, allow_interruptions=False, add_to_chat_ctx=False)

@@ -16,6 +16,7 @@ export default function BatchPage() {
   const [token, setToken] = useState('');
   const [language, setLanguage] = useState('hindi');
   const [gender, setGender] = useState('male');
+  const [agentType, setAgentType] = useState<string>('loan_enquiry');
 
   useEffect(() => {
     const t = getAccessToken('bank');
@@ -55,7 +56,7 @@ export default function BatchPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const qs = `language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}`;
+      const qs = `language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}&agent_type=${encodeURIComponent(agentType)}`;
       const res = await fetch(`${API_URL}/api/agent/upload-excel?${qs}`, {
         method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
@@ -147,6 +148,17 @@ export default function BatchPage() {
             >
               <option value="male">👨 Male (Rajesh)</option>
               <option value="female">👩 Female (Diya)</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">🏦 Agent Type</label>
+            <select
+              value={agentType}
+              onChange={(e) => setAgentType(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
+            >
+              <option value="loan_enquiry">Loan Enquiry — Pusad Urban Bank</option>
+              <option value="account_opening">Account Opening — Union Bank of India</option>
             </select>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 w-full">

@@ -60,14 +60,20 @@ async def send_whatsapp_form(request: Request):
 
     # ── 3. Create loan_application (bridge: agent_calls → loan system) ──
     app_id = None
+    agent_type = call_row.get("agent_type", "loan_enquiry") if call_row else "loan_enquiry"
+
     # Append phone as query param so the OTP page auto-fills and auto-sends.
     # Take the last 10 digits — handles +91/91 prefixes without the str.lstrip
     # character-class footgun (lstrip("91") strips any leading 9s and 1s).
     _digits = ''.join(c for c in (phone_norm or '') if c.isdigit())
     bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
-    form_url = f"{FORM_BASE_URL}/?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/"
 
-    if phone_norm:
+    if agent_type == "account_opening":
+        form_url = f"{FORM_BASE_URL}/account-form?call_id={call_id}"
+    else:
+        form_url = f"{FORM_BASE_URL}/?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/"
+
+    if phone_norm and agent_type != "account_opening":
         # Check if application already exists for this phone
         existing_app = await _state.db_pool.fetchrow(
             "SELECT id FROM loan_applications WHERE phone = $1 AND status != 'submitted' ORDER BY created_at DESC LIMIT 1",
@@ -244,5 +250,5 @@ async def send_whatsapp_form(request: Request):
         "whatsapp_sent": aisensy_ok,
         "message": "Form link sent" if aisensy_ok else "Form created (WhatsApp delivery failed)",
         "form_url": form_url,
-        "application_id": str(app_id) if app_id else None,
+        "application_id": str(app_id) if app_id else (call_id if agent_type == "account_opening" else None),
     }

@@ -8,8 +8,9 @@ import logging
 import aiohttp
 from fastapi import APIRouter, Request
 
+from . import state as _state
 from .state import (
-    db_pool, now_ist, AISENSY_API_KEY, AISENSY_CAMPAIGN_NAME,
+    now_ist, AISENSY_API_KEY, AISENSY_CAMPAIGN_NAME,
     AISENSY_USERNAME, AISENSY_IMAGE_URL, FORM_BASE_URL,
 )
 
@@ -37,7 +38,7 @@ async def send_whatsapp_form(request: Request):
     if call_id:
         try:
             call_uuid = uuid.UUID(call_id)
-            call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+            call_row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
             if call_row:
                 cd = call_row["collected_data"]
                 if isinstance(cd, str):
@@ -68,7 +69,7 @@ async def send_whatsapp_form(request: Request):
 
     if phone_norm:
         # Check if application already exists for this phone
-        existing_app = await db_pool.fetchrow(
+        existing_app = await _state.db_pool.fetchrow(
             "SELECT id FROM loan_applications WHERE phone = $1 AND status != 'submitted' ORDER BY created_at DESC LIMIT 1",
             phone_norm,
         )
@@ -101,7 +102,7 @@ async def send_whatsapp_form(request: Request):
             existing_emi = parse_num(collected.get("existing_emi"))
 
             try:
-                row = await db_pool.fetchrow(
+                row = await _state.db_pool.fetchrow(
                     """INSERT INTO loan_applications (
                         customer_name, phone, loan_id, current_step, status, last_saved_at, bank_id,
                         agent_call_id, full_name, employer_name, designation, employment_type,
@@ -161,7 +162,7 @@ async def send_whatsapp_form(request: Request):
 
         # Link agent_call → application
         if app_id and call_uuid:
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 "UPDATE agent_calls SET application_id = $1 WHERE id = $2",
                 app_id, call_uuid,
             )
@@ -220,7 +221,7 @@ async def send_whatsapp_form(request: Request):
     # ── 5. Update agent_calls ──
     if call_uuid:
         try:
-            row = await db_pool.fetchrow("SELECT call_analysis FROM agent_calls WHERE id = $1", call_uuid)
+            row = await _state.db_pool.fetchrow("SELECT call_analysis FROM agent_calls WHERE id = $1", call_uuid)
             analysis = {}
             if row and row["call_analysis"]:
                 analysis = row["call_analysis"] if isinstance(row["call_analysis"], dict) else json.loads(row["call_analysis"])
@@ -229,7 +230,7 @@ async def send_whatsapp_form(request: Request):
             analysis["notification_time"] = now_ist().isoformat()
 
             # form_sent reflects actual WhatsApp delivery, not just app creation.
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 """UPDATE agent_calls SET form_sent = $1, form_link = $2,
                    call_analysis = $3, updated_at = $4 WHERE id = $5""",
                 aisensy_ok, form_url, json.dumps(analysis), now_ist(), call_uuid,

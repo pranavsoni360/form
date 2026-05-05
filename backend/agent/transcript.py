@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
+from . import state as _state
 from .state import (
-    db_pool, now_ist, RECORDING_BASE_URL, _row_to_dict,
+    now_ist, RECORDING_BASE_URL, _row_to_dict,
     TranscriptPayload, IST,
 )
 
@@ -31,9 +32,9 @@ async def save_transcript(data: TranscriptPayload):
 
     # Look up the call
     if call_uuid:
-        call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+        call_row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
     else:
-        call_row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE room_name = $1", room)
+        call_row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE room_name = $1", room)
 
     if not call_row:
         logger.warning(f"Transcript webhook: no call found for room={room}, call_id={data.call_id}")
@@ -106,7 +107,7 @@ async def save_transcript(data: TranscriptPayload):
         except ValueError:
             return None
 
-    await db_pool.execute(
+    await _state.db_pool.execute(
         """UPDATE agent_calls SET
             transcript = $1,
             status = $2,
@@ -139,7 +140,7 @@ async def save_transcript(data: TranscriptPayload):
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:
-        app_row = await db_pool.fetchrow(
+        app_row = await _state.db_pool.fetchrow(
             "SELECT id FROM loan_applications WHERE agent_call_id = $1", actual_uuid)
         if app_row:
             from main import save_field_sources
@@ -150,7 +151,7 @@ async def save_transcript(data: TranscriptPayload):
                 try: return float(cleaned) if cleaned else None
                 except ValueError: return None
 
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 """UPDATE loan_applications SET
                     employer_name = COALESCE($1, employer_name),
                     designation = COALESCE($2, designation),

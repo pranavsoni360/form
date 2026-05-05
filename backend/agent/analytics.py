@@ -9,8 +9,9 @@ from fastapi import APIRouter
 from google import genai
 from google.genai import types
 
+from . import state as _state
 from .state import (
-    db_pool, acquire_analytics_lock, release_analytics_lock,
+    acquire_analytics_lock, release_analytics_lock,
     GEMINI_API_KEY, CATEGORY_OPTIONS, now_ist, _row_to_dict,
 )
 
@@ -74,7 +75,7 @@ async def process_analytics_batch():
         return
 
     try:
-        rows = await db_pool.fetch(
+        rows = await _state.db_pool.fetch(
             """SELECT * FROM agent_calls
                WHERE COALESCE(category, 'Uncategorized') IN ('Uncategorized', '')
                  AND transcript IS NOT NULL AND transcript != '[]'::jsonb
@@ -111,7 +112,7 @@ async def process_analytics_batch():
                     if v is not None:
                         merged[k] = v
 
-                await db_pool.execute(
+                await _state.db_pool.execute(
                     """UPDATE agent_calls
                        SET category = $1,
                            call_analysis = $2::jsonb,

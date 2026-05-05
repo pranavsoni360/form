@@ -12,8 +12,9 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from . import state as _state
 from .state import (
-    db_pool, now_ist, format_ist_time, IST,
+    now_ist, format_ist_time, IST,
     _row_to_dict, _rows_to_list, _serialize_call,
     get_current_bank_user, STATUS_OPTIONS, CATEGORY_OPTIONS,
     CallCategorizeRequest, is_within_calling_hours,
@@ -35,7 +36,7 @@ async def get_call_alias(call_id: str):
         call_uuid = uuid.UUID(call_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
-    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     return _serialize_call(_row_to_dict(row))
@@ -47,7 +48,7 @@ async def get_call_transcript_alias(call_id: str):
         call_uuid = uuid.UUID(call_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
-    row = await db_pool.fetchrow("SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1", call_uuid)
+    row = await _state.db_pool.fetchrow("SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1", call_uuid)
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     call = _row_to_dict(row)
@@ -114,10 +115,10 @@ async def list_calls(
             pass
 
     where = " AND ".join(conditions) if conditions else "TRUE"
-    total = await db_pool.fetchval(f"SELECT COUNT(*) FROM agent_calls WHERE {where}", *params)
+    total = await _state.db_pool.fetchval(f"SELECT COUNT(*) FROM agent_calls WHERE {where}", *params)
     offset = (page - 1) * page_size
 
-    rows = await db_pool.fetch(
+    rows = await _state.db_pool.fetch(
         f"""SELECT * FROM agent_calls WHERE {where}
             ORDER BY created_at DESC
             LIMIT ${idx} OFFSET ${idx + 1}""",
@@ -147,7 +148,7 @@ async def get_call(call_id: str, user: dict = Depends(get_current_bank_user)):
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
     bank_uuid = None  # operator — no bank scoping
-    row = await db_pool.fetchrow(
+    row = await _state.db_pool.fetchrow(
         "SELECT * FROM agent_calls WHERE id = $1",
         call_uuid,
     )
@@ -165,7 +166,7 @@ async def get_call_transcript(call_id: str, user: dict = Depends(get_current_ban
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
     bank_uuid = None  # operator — no bank scoping
-    row = await db_pool.fetchrow(
+    row = await _state.db_pool.fetchrow(
         "SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1",
         call_uuid,
     )
@@ -189,7 +190,7 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
     bank_uuid = None  # operator — no bank scoping
-    row = await db_pool.fetchrow(
+    row = await _state.db_pool.fetchrow(
         "SELECT id, customer_name, recording_url FROM agent_calls WHERE id = $1",
         call_uuid,
     )
@@ -218,7 +219,7 @@ async def categorize_call(
     bank_uuid = None  # operator — no bank scoping
 
     # Build the update -- merge remark into call_analysis JSONB
-    existing = await db_pool.fetchrow(
+    existing = await _state.db_pool.fetchrow(
         "SELECT call_analysis FROM agent_calls WHERE id = $1",
         call_uuid,
     )
@@ -234,7 +235,7 @@ async def categorize_call(
         analysis["after_call_remark"] = data.after_call_remark
 
     # `bank_id IS NOT DISTINCT FROM $5` matches NULL=NULL (operator) and uuid=uuid (bank user).
-    await db_pool.execute(
+    await _state.db_pool.execute(
         """UPDATE agent_calls
            SET category = $1, call_analysis = $2, updated_at = $3
            WHERE id = $4 AND bank_id IS NOT DISTINCT FROM $5""",
@@ -256,7 +257,7 @@ async def get_form_data(call_id: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID")
 
-    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
     if not row:
         raise HTTPException(status_code=404, detail="Lead not found")
     call = _row_to_dict(row)
@@ -299,7 +300,7 @@ async def submit_form(call_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid call ID")
 
     data = await request.json()
-    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
     if not row:
         raise HTTPException(status_code=404, detail="Lead not found")
     call = _row_to_dict(row)
@@ -331,7 +332,7 @@ async def submit_form(call_id: str, request: Request):
         existing_analysis = json.loads(existing_analysis)
     existing_analysis["lead_quality"] = "hot"
 
-    await db_pool.execute(
+    await _state.db_pool.execute(
         """UPDATE agent_calls SET
             loan_type = COALESCE($1, loan_type),
             loan_amount = COALESCE($2, loan_amount),
@@ -377,17 +378,17 @@ async def get_dashboard_stats(
 
     base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{date_clause}"
 
-    total = await db_pool.fetchval(base, *params)
-    whatsapp_forms_sent = await db_pool.fetchval(f"{base} AND form_sent = true", *params)
-    hot_leads = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'", *params)
-    warm_leads = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'", *params)
-    pending_calls = await db_pool.fetchval(f"{base} AND status = 'Pending'", *params)
-    not_answered = await db_pool.fetchval(
+    total = await _state.db_pool.fetchval(base, *params)
+    whatsapp_forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true", *params)
+    hot_leads = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'", *params)
+    warm_leads = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'", *params)
+    pending_calls = await _state.db_pool.fetchval(f"{base} AND status = 'Pending'", *params)
+    not_answered = await _state.db_pool.fetchval(
         f"{base} AND status IN ('Not Answered', 'Failed', 'Invalid Phone', 'Call Not Connected')", *params
     )
-    education_loans = await db_pool.fetchval(f"{base} AND loan_type = 'education'", *params)
-    business_loans = await db_pool.fetchval(f"{base} AND loan_type = 'business'", *params)
-    personal_loans = await db_pool.fetchval(f"{base} AND loan_type = 'personal'", *params)
+    education_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'education'", *params)
+    business_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'business'", *params)
+    personal_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'personal'", *params)
 
     stats = {
         "total_calls": total,
@@ -411,12 +412,12 @@ async def get_dashboard_stats(
     # Breakdowns
     by_status = {}
     for s in STATUS_OPTIONS:
-        by_status[s] = await db_pool.fetchval(f"{base} AND status = ${idx}", *params, s)
+        by_status[s] = await _state.db_pool.fetchval(f"{base} AND status = ${idx}", *params, s)
     stats["by_status"] = by_status
 
     by_category = {}
     for c in CATEGORY_OPTIONS:
-        by_category[c] = await db_pool.fetchval(f"{base} AND category = ${idx}", *params, c)
+        by_category[c] = await _state.db_pool.fetchval(f"{base} AND category = ${idx}", *params, c)
     stats["by_category"] = by_category
 
     return {"date": date or now_ist().strftime("%Y-%m-%d"), **stats}
@@ -427,19 +428,19 @@ async def get_analytics():
     """Analytics summary (all calls)."""
     base = "SELECT COUNT(*) FROM agent_calls WHERE TRUE"
 
-    total = await db_pool.fetchval(base)
-    forms_sent = await db_pool.fetchval(f"{base} AND form_sent = true")
-    interested = await db_pool.fetchval(f"{base} AND interested = true")
-    success_rate = await db_pool.fetchval(
+    total = await _state.db_pool.fetchval(base)
+    forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true")
+    interested = await _state.db_pool.fetchval(f"{base} AND interested = true")
+    success_rate = await _state.db_pool.fetchval(
         f"{base} AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')")
-    failure_rate = await db_pool.fetchval(
+    failure_rate = await _state.db_pool.fetchval(
         f"{base} AND status IN ('Failed', 'Not Answered', 'Call Not Connected')")
-    hot = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'")
-    warm = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'")
-    cold = await db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'cold'")
-    edu = await db_pool.fetchval(f"{base} AND loan_type = 'education'")
-    biz = await db_pool.fetchval(f"{base} AND loan_type = 'business'")
-    per = await db_pool.fetchval(f"{base} AND loan_type = 'personal'")
+    hot = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'")
+    warm = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'")
+    cold = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'cold'")
+    edu = await _state.db_pool.fetchval(f"{base} AND loan_type = 'education'")
+    biz = await _state.db_pool.fetchval(f"{base} AND loan_type = 'business'")
+    per = await _state.db_pool.fetchval(f"{base} AND loan_type = 'personal'")
 
     return {
         "total_calls_made": total,
@@ -470,7 +471,7 @@ async def export_daily_report(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format (YYYY-MM-DD)")
 
-    rows = await db_pool.fetch(
+    rows = await _state.db_pool.fetch(
         """SELECT * FROM agent_calls
            WHERE created_at >= $1 AND created_at < $2
            ORDER BY created_at DESC""",
@@ -548,7 +549,7 @@ async def export_all_calls(
             pass
 
     where = " AND ".join(conditions)
-    rows = await db_pool.fetch(
+    rows = await _state.db_pool.fetch(
         f"SELECT * FROM agent_calls WHERE {where} ORDER BY created_at DESC",
         *params,
     )
@@ -630,7 +631,7 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
     """Get current calling status -- which customer is being called right now."""
     bank_uuid = None  # operator — no bank scoping
     # `bank_id IS NOT DISTINCT FROM $1` matches NULL=NULL (operator) and uuid=uuid (bank user).
-    row = await db_pool.fetchrow(
+    row = await _state.db_pool.fetchrow(
         """SELECT id, customer_name, phone, started_at FROM agent_calls
            WHERE status = 'Calling' AND bank_id IS NOT DISTINCT FROM $1 LIMIT 1""",
         bank_uuid,
@@ -674,7 +675,7 @@ async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
     bank_uuid = None  # operator — no bank scoping
 
     # 1. Delete broken calls (no room_name)
-    del_result = await db_pool.execute(
+    del_result = await _state.db_pool.execute(
         """DELETE FROM agent_calls
            WHERE status = 'Calling'
                  AND (room_name IS NULL OR room_name = '')""",
@@ -683,7 +684,7 @@ async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
 
     # 2. Fail old stuck calls (>10 min)
     ten_min_ago = now_ist() - timedelta(minutes=10)
-    upd_result = await db_pool.execute(
+    upd_result = await _state.db_pool.execute(
         """UPDATE agent_calls
            SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
                ended_at = $1, updated_at = $1

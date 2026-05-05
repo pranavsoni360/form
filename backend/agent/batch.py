@@ -16,8 +16,9 @@ from livekit import api
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from . import state as _state
 from .state import (
-    db_pool, now_ist, now_ist_str, is_within_calling_hours,
+    now_ist, now_ist_str, is_within_calling_hours,
     acquire_batch_lock, release_batch_lock, is_emergency_stop_active,
     set_emergency_stop, cleanup_stuck_calls, _init_system_state,
     _row_to_dict, _rows_to_list, _serialize_call,
@@ -95,7 +96,7 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-        row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+        row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
         if not row:
             return None
         doc = _row_to_dict(row)
@@ -115,11 +116,11 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
                     # Phase 2: wait for transcript after room deletion
                     for _ in range(12):
                         await asyncio.sleep(5)
-                        row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+                        row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
                         if row and dict(row).get("status") != "Calling":
                             return _row_to_dict(row)
                     # Transcript never arrived
-                    await db_pool.execute(
+                    await _state.db_pool.execute(
                         """UPDATE agent_calls
                            SET status = 'Not Answered',
                                ended_at = $1, updated_at = $1,
@@ -128,13 +129,13 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
                            WHERE id = $2""",
                         now_ist(), call_uuid,
                     )
-                    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+                    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
                     return _row_to_dict(row)
             except Exception:
                 pass
 
     # Global timeout
-    await db_pool.execute(
+    await _state.db_pool.execute(
         """UPDATE agent_calls
            SET status = 'Not Answered',
                ended_at = $1, updated_at = $1,
@@ -142,7 +143,7 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
            WHERE id = $2""",
         now_ist(), call_uuid,
     )
-    row = await db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
     return _row_to_dict(row)
 
 
@@ -166,12 +167,12 @@ async def process_batch_run(batch_uuid_str: str = None):
     try:
         # Find the batch to process
         if batch_uuid_str:
-            batch_row = await db_pool.fetchrow(
+            batch_row = await _state.db_pool.fetchrow(
                 "SELECT * FROM agent_batches WHERE id = $1 AND status = 'running'",
                 uuid.UUID(batch_uuid_str),
             )
         else:
-            batch_row = await db_pool.fetchrow(
+            batch_row = await _state.db_pool.fetchrow(
                 "SELECT * FROM agent_batches WHERE status = 'running' ORDER BY created_at ASC LIMIT 1"
             )
 
@@ -186,7 +187,7 @@ async def process_batch_run(batch_uuid_str: str = None):
         # Get pending calls for THIS batch only (using the string batch_id that links calls to batches).
         # Scheduled rows wait until scheduled_callback_at <= NOW(); Pending fires immediately.
         call_batch_id = batch.get("batch_id") or batch_id
-        pending_rows = await db_pool.fetch(
+        pending_rows = await _state.db_pool.fetch(
             """SELECT * FROM agent_calls
                 WHERE batch_id = $1
                   AND (
@@ -199,7 +200,7 @@ async def process_batch_run(batch_uuid_str: str = None):
 
         if not pending_rows:
             # No more pending calls in this batch — mark batch as completed
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 "UPDATE agent_batches SET status = 'completed', completed = (SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1) WHERE id = $2",
                 call_batch_id, uuid.UUID(batch_id),
             )
@@ -225,7 +226,7 @@ async def process_batch_run(batch_uuid_str: str = None):
 
             # Validate phone
             if not phone or len(phone) < 10:
-                await db_pool.execute(
+                await _state.db_pool.execute(
                     """UPDATE agent_calls
                        SET status = 'Invalid Phone', retry_count = $1, updated_at = $2
                        WHERE id = $3""",
@@ -236,7 +237,7 @@ async def process_batch_run(batch_uuid_str: str = None):
 
             try:
                 call_start = now_ist()
-                await db_pool.execute(
+                await _state.db_pool.execute(
                     """UPDATE agent_calls
                        SET status = 'Calling', started_at = $1, updated_at = $1
                        WHERE id = $2""",
@@ -246,7 +247,7 @@ async def process_batch_run(batch_uuid_str: str = None):
                 if DEMO_MODE:
                     # --- Demo simulation ---
                     room_name = f"demo_{secrets.token_hex(6)}_{int(time.time())}"
-                    await db_pool.execute(
+                    await _state.db_pool.execute(
                         "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
                         room_name, call_uuid,
                     )
@@ -265,7 +266,7 @@ async def process_batch_run(batch_uuid_str: str = None):
                     duration_seconds = int((call_end - call_start).total_seconds())
                     category = "Very Interested - Form Sent" if interested else "Not Interested - No Need Currently"
 
-                    await db_pool.execute(
+                    await _state.db_pool.execute(
                         """UPDATE agent_calls SET
                             transcript = $1, status = $2, call_duration = $3,
                             ended_at = $4, updated_at = $4,
@@ -312,7 +313,7 @@ async def process_batch_run(batch_uuid_str: str = None):
                             "gender": customer_gender,
                         }),
                     ))
-                    await db_pool.execute(
+                    await _state.db_pool.execute(
                         "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
                         room_name, call_uuid,
                     )
@@ -346,7 +347,7 @@ async def process_batch_run(batch_uuid_str: str = None):
 
             except Exception as e:
                 logger.error(f"Call error for {name}: {e}")
-                await db_pool.execute(
+                await _state.db_pool.execute(
                     """UPDATE agent_calls
                        SET status = 'Failed', error_message = $1,
                            ended_at = $2, updated_at = $2,
@@ -362,12 +363,12 @@ async def process_batch_run(batch_uuid_str: str = None):
     finally:
         # Check if batch has any remaining pending calls
         if batch_row:
-            remaining = await db_pool.fetchval(
+            remaining = await _state.db_pool.fetchval(
                 "SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1 AND status IN ('Pending', 'Scheduled')",
                 call_batch_id,
             )
             if remaining == 0:
-                await db_pool.execute(
+                await _state.db_pool.execute(
                     "UPDATE agent_batches SET status = 'completed' WHERE id = $1",
                     uuid.UUID(batch_id),
                 )
@@ -436,7 +437,7 @@ async def upload_excel(
 
         # Insert into agent_batches with batch_id string for linking to agent_calls
         batch_uuid = uuid.uuid4()
-        await db_pool.execute(
+        await _state.db_pool.execute(
             """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at)
                VALUES ($1, $2, $3, $4, $5, 0, 0, 'pending', $6, $7)""",
             batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time,
@@ -458,7 +459,7 @@ async def upload_excel(
             call_uuid = uuid.uuid4()
             room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
 
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 """INSERT INTO agent_calls (
                     id, bank_id, batch_id, customer_name, phone, loan_type, loan_amount,
                     language, status, room_name, interested, form_sent,
@@ -493,7 +494,7 @@ async def upload_excel(
         # Auto-start batch immediately if within calling hours (Samavesh pattern)
         auto_calling = False
         if background_tasks is not None and count > 0 and is_within_calling_hours():
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 "UPDATE agent_batches SET status = 'running' WHERE id = $1", batch_uuid,
             )
             background_tasks.add_task(process_batch_run, str(batch_uuid))
@@ -539,17 +540,17 @@ async def trigger_batch(
 
     # Find the batch to start (pending first, then running/paused)
     if batch_id:
-        batch_row = await db_pool.fetchrow(
+        batch_row = await _state.db_pool.fetchrow(
             "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
     else:
-        batch_row = await db_pool.fetchrow(
+        batch_row = await _state.db_pool.fetchrow(
             "SELECT * FROM agent_batches WHERE status IN ('pending', 'running', 'paused') ORDER BY created_at DESC LIMIT 1")
 
     if not batch_row:
         raise HTTPException(status_code=404, detail="No pending batch found. Upload a CSV first.")
 
     # Set batch to "running"
-    await db_pool.execute(
+    await _state.db_pool.execute(
         "UPDATE agent_batches SET status = 'running' WHERE id = $1", batch_row["id"])
 
     # Immediately kick off processing (don't wait for cron)
@@ -570,11 +571,11 @@ async def batch_status(
 
     async def _count(extra_clause: str, *extra_params):
         if batch_id:
-            return await db_pool.fetchval(
+            return await _state.db_pool.fetchval(
                 f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1}{extra_clause}",
                 *bk_params, batch_id, *extra_params,
             )
-        return await db_pool.fetchval(
+        return await _state.db_pool.fetchval(
             f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond}{extra_clause}",
             *bk_params, *extra_params,
         )
@@ -613,9 +614,9 @@ async def trigger_batch_retry(
 
     # Find the batch
     if batch_id:
-        batch_row = await db_pool.fetchrow("SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
+        batch_row = await _state.db_pool.fetchrow("SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
     else:
-        batch_row = await db_pool.fetchrow(
+        batch_row = await _state.db_pool.fetchrow(
             "SELECT * FROM agent_batches WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1")
 
     if not batch_row:
@@ -629,7 +630,7 @@ async def trigger_batch_retry(
     # so retry_count == 1 means "initial failed, 0 retries done" → eligible for
     # retry #1. With MAX_RETRIES=2, we allow retry while retry_count <= 2,
     # giving exactly 2 retries after the original attempt.
-    result = await db_pool.execute(
+    result = await _state.db_pool.execute(
         f"""UPDATE agent_calls SET status = 'Pending'
             WHERE batch_id = $1
             AND status IN ('Not Answered', 'Failed', 'Call Not Connected')
@@ -642,7 +643,7 @@ async def trigger_batch_retry(
         return {"status": "nothing", "message": "No retriable calls found (all at max retries or already completed)"}
 
     # Set batch back to running
-    await db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE id = $1", uuid.UUID(bid))
+    await _state.db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE id = $1", uuid.UUID(bid))
     background_tasks.add_task(process_batch_run, bid)
     return {"status": "started", "message": f"Retrying {reset_count} failed calls in batch"}
 
@@ -656,10 +657,10 @@ async def emergency_stop():
     bank_uuid = None  # operator — no bank scoping
     # Kill active call
     if bank_uuid:
-        active = await db_pool.fetchrow(
+        active = await _state.db_pool.fetchrow(
             "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' AND bank_id = $1 LIMIT 1", bank_uuid)
     else:
-        active = await db_pool.fetchrow(
+        active = await _state.db_pool.fetchrow(
             "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' LIMIT 1")
     room_deleted = False
     if active and active["room_name"]:
@@ -668,7 +669,7 @@ async def emergency_stop():
             await lk.room.delete_room(api.DeleteRoomRequest(room=active["room_name"]))
             await lk.aclose()
             room_deleted = True
-            await db_pool.execute(
+            await _state.db_pool.execute(
                 """UPDATE agent_calls
                    SET status = 'Failed', error_message = 'Emergency Stop',
                        ended_at = $1, updated_at = $1
@@ -679,7 +680,7 @@ async def emergency_stop():
             logger.error(f"Failed to delete room during emergency stop: {e}")
 
     # Pause all running batches
-    await db_pool.execute("UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
+    await _state.db_pool.execute("UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
     await release_batch_lock()
     return {"status": "success", "message": "Emergency stop activated — all batches paused", "active_call_killed": room_deleted}
 
@@ -688,7 +689,7 @@ async def emergency_stop():
 async def resume_calling():
     """Disable emergency stop and resume paused batches."""
     await set_emergency_stop(False)
-    result = await db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
+    result = await _state.db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
     resumed = int(result.split()[-1]) if result else 0
     logger.info(f"Emergency stop deactivated, {resumed} batches resumed")
     return {"status": "success", "message": f"Calling resumed. {resumed} batch(es) reactivated."}
@@ -701,7 +702,7 @@ async def resume_calling():
 async def list_uploads():
     """List all batch uploads. Aliases created_at/total_records as uploaded_at/record_count
     so the static dashboard (which uses Samavesh field names) renders correctly."""
-    rows = await db_pool.fetch("SELECT * FROM agent_batches ORDER BY created_at DESC LIMIT 50")
+    rows = await _state.db_pool.fetch("SELECT * FROM agent_batches ORDER BY created_at DESC LIMIT 50")
     uploads = []
     for r in _rows_to_list(rows):
         r["uploaded_at"] = r.get("created_at")
@@ -712,7 +713,7 @@ async def list_uploads():
 @router.get("/upload/{batch_id}")
 async def get_upload_detail(batch_id: str):
     """Get calls for a specific batch."""
-    rows = await db_pool.fetch(
+    rows = await _state.db_pool.fetch(
         "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, created_at FROM agent_calls WHERE batch_id = $1 ORDER BY created_at DESC",
         batch_id,
     )
@@ -723,7 +724,7 @@ async def recent_calls(limit: int = Query(10, ge=1, le=50)):
     """Get recent calls (shortcut for dashboard).
     Returns both `calls` (current API) and `recent_calls` (Samavesh-shaped) so
     the static agent-dashboard.html, which reads `data.recent_calls`, renders."""
-    rows = await db_pool.fetch(
+    rows = await _state.db_pool.fetch(
         "SELECT * FROM agent_calls ORDER BY created_at DESC LIMIT $1", limit
     )
     payload = [_serialize_call(_row_to_dict(r)) for r in rows]

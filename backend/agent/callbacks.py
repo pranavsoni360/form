@@ -6,8 +6,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from . import state as _state
 from .state import (
-    db_pool, now_ist, IST, CALL_START_HOUR, CALL_END_HOUR,
+    now_ist, IST, CALL_START_HOUR, CALL_END_HOUR,
     _serialize_call, _row_to_dict,
 )
 
@@ -19,7 +20,7 @@ router = APIRouter()
 async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
     """List upcoming scheduled callbacks ordered by callback time.
     Used by the dashboard's 'Upcoming Callbacks' section."""
-    rows = await db_pool.fetch(
+    rows = await _state.db_pool.fetch(
         """SELECT * FROM agent_calls
            WHERE status = 'Scheduled' AND scheduled_callback_at IS NOT NULL
            ORDER BY scheduled_callback_at ASC LIMIT $1""",
@@ -66,7 +67,7 @@ async def schedule_callback(request: Request):
         next_day = dt_ist.date() if dt_ist.hour < CALL_START_HOUR else (dt_ist + timedelta(days=1)).date()
         dt_ist = IST.localize(datetime.combine(next_day, datetime.min.time())).replace(hour=CALL_START_HOUR)
 
-    await db_pool.execute(
+    await _state.db_pool.execute(
         """UPDATE agent_calls
            SET status = 'Scheduled',
                scheduled_callback_at = $1,
@@ -77,9 +78,9 @@ async def schedule_callback(request: Request):
         dt_ist, reason, now_local, call_uuid,
     )
     # Also reactivate the parent batch so the dispatcher will pick this row up later
-    row = await db_pool.fetchrow("SELECT batch_id FROM agent_calls WHERE id = $1", call_uuid)
+    row = await _state.db_pool.fetchrow("SELECT batch_id FROM agent_calls WHERE id = $1", call_uuid)
     if row and row["batch_id"]:
-        await db_pool.execute(
+        await _state.db_pool.execute(
             """UPDATE agent_batches
                SET status = CASE WHEN status = 'completed' THEN 'running' ELSE status END
                WHERE batch_id = $1""",

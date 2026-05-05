@@ -258,7 +258,7 @@ async def cleanup_stuck_calls():
         result = await db_pool.execute(
             """UPDATE agent_calls
                SET status = 'Failed', error_message = 'Stuck call cleaned up on startup',
-                   ended_at = $1, updated_at = $1, retry_count = retry_count + 1
+                   ended_at = $1, updated_at = $1
                WHERE status = 'Calling' AND started_at < $2""",
             now_ist(), ten_min_ago,
         )
@@ -697,9 +697,9 @@ async def process_batch_run(batch_uuid_str: str = None):
             if not phone or len(phone) < 10:
                 await db_pool.execute(
                     """UPDATE agent_calls
-                       SET status = 'Invalid Phone', retry_count = retry_count + 1, updated_at = $1
-                       WHERE id = $2""",
-                    now_ist(), call_uuid,
+                       SET status = 'Invalid Phone', retry_count = $1, updated_at = $2
+                       WHERE id = $3""",
+                    MAX_RETRIES + 1, now_ist(), call_uuid,
                 )
                 failed += 1
                 continue
@@ -876,7 +876,7 @@ async def process_analytics_batch():
                 transcript = call.get("transcript", [])
                 if isinstance(transcript, str):
                     transcript = json.loads(transcript)
-                analysis = analyze_transcript_with_llm(transcript)
+                analysis = await asyncio.to_thread(analyze_transcript_with_llm, transcript)
 
                 existing = call.get("call_analysis") or {}
                 if isinstance(existing, str):

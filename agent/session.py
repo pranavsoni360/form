@@ -47,6 +47,8 @@ class LoanEnquirySession:
         self.email           = metadata.get("email", "")
         self.current_address = metadata.get("current_address", "")
         self.memory          = metadata.get("memory", "")
+        self.agent_purpose   = metadata.get("agent_purpose", "loan_enquiry")
+        self.bank_name       = metadata.get("bank_name", "Pusad Urban Bank")
 
         self.customer_interested = None
         self.interest_reason = None

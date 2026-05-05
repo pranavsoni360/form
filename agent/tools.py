@@ -149,6 +149,8 @@ async def collect_all_data(
     business_age: str = "",
     monthly_turnover: str = "",
     address: str = "",
+    account_type: str = "",
+    initial_deposit: str = "",
 ) -> str:
     session: LoanEnquirySession = context.userdata["session"]
     fields = {
@@ -158,6 +160,7 @@ async def collect_all_data(
         "monthly_income": monthly_income, "loan_amount": loan_amount, "loan_type": loan_type,
         "loan_purpose": loan_purpose, "business_type": business_type, "business_age": business_age,
         "monthly_turnover": monthly_turnover, "address": address,
+        "account_type": account_type, "initial_deposit": initial_deposit,
     }
     saved = 0
     for f, v in fields.items():

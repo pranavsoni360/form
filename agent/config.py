@@ -16,6 +16,9 @@ GENDER_CONFIG = {
 }
 
 
+UNION_BANK_NAME = "Union Bank of India"
+
+
 def normalize_mobile(mobile: str) -> str:
     mobile = mobile.strip()
     if mobile.startswith("+91"):

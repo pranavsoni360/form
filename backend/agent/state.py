@@ -33,6 +33,10 @@ DEMO_MODE = os.getenv("AGENT_DEMO_MODE", "false").lower() == "true"
 # Agent dispatched by LiveKit
 AGENT_NAME = os.getenv("AGENT_NAME", "pusad-bank-loan-enquiry-enhanced")
 
+# Union Bank agent
+UNION_BANK_AGENT_NAME = os.getenv("UNION_BANK_AGENT_NAME", "union-bank-account-opening")
+UNION_BANK_NAME = "Union Bank of India"
+
 # Recording server base URL (GPU box serving recordings)
 RECORDING_BASE_URL = os.getenv("RECORDING_BASE_URL", "")
 
@@ -399,6 +403,9 @@ class TranscriptPayload(BaseModel):
     business_age: Optional[str] = None
     monthly_turnover: Optional[str] = None
     collected_address: Optional[str] = None
+    # Account opening fields (Union Bank agent)
+    account_type: str = ""
+    initial_deposit: str = ""
 
 
 class CallCategorizeRequest(BaseModel):

@@ -263,7 +263,16 @@ async def get_form_data(call_id: str):
     call = _row_to_dict(row)
     collected = call.get("collected_data") or {}
     if isinstance(collected, str):
-        collected = json.loads(collected)
+        try:
+            collected = json.loads(collected)
+        except Exception:
+            collected = {}
+    ca = call.get("call_analysis") or {}
+    if isinstance(ca, str):
+        try:
+            ca = json.loads(ca)
+        except Exception:
+            ca = {}
 
     return {
         "status": "success",
@@ -284,7 +293,7 @@ async def get_form_data(call_id: str):
             "address": collected.get("collected_address", ""),
             "designation": collected.get("designation", ""),
             "loan_purpose": collected.get("loan_purpose", ""),
-            "lead_quality": (call.get("call_analysis") or {}).get("lead_quality", ""),
+            "lead_quality": ca.get("lead_quality", ""),
             "call_status": call.get("status", ""),
             "bank_id": call.get("bank_id", ""),
         },

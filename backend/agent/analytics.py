@@ -67,64 +67,54 @@ Transcript:
 
 
 async def process_analytics_batch():
-    """Background LLM analysis of completed call transcripts.
-    Picks up calls that have a transcript but were left as 'Uncategorized' by the
-    immediate transcript handler. Merges the LLM result into call_analysis (preserves
-    fields the agent already set, e.g. lead_quality from the agent's own assessment)."""
+    """Sweep cron: enqueue transcript_analyze jobs for any call that completed
+    with a transcript but is still 'Uncategorized'.
+
+    The actual Gemini call is no longer made here — that work runs on the M3
+    job worker pool (see services/job_worker.py + services/job_handlers.py),
+    so a slow LLM cannot block this cron tick anymore.
+
+    This function is now a safety-net producer: the transcript webhook enqueues
+    jobs at call-completion time, so most analyses happen seconds after the
+    call ends. This cron catches anything that slipped through (e.g. webhook
+    delivery failure, agent crash before transcript POST).
+    """
     if not await acquire_analytics_lock():
         return
 
     try:
+        # Import the producer lazily to avoid circular import (services depends
+        # on backend.agent at handler invocation time).
+        from services.job_worker import enqueue_job
+
         rows = await _state.db_pool.fetch(
-            """SELECT * FROM agent_calls
+            """SELECT id FROM agent_calls
                WHERE COALESCE(category, 'Uncategorized') IN ('Uncategorized', '')
                  AND transcript IS NOT NULL AND transcript != '[]'::jsonb
                  AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')
+                 AND NOT EXISTS (
+                     -- Avoid re-enqueueing if a pending/running/failed job already exists
+                     SELECT 1 FROM call_processing_jobs j
+                     WHERE j.job_type = 'transcript_analyze'
+                       AND j.status IN ('pending', 'running', 'failed')
+                       AND (j.payload->>'call_id') = agent_calls.id::text
+                 )
                ORDER BY created_at ASC
-               LIMIT 20"""
+               LIMIT 50"""
         )
 
         if not rows:
             return
 
         for row in rows:
-            call = _row_to_dict(row)
             try:
-                transcript = call.get("transcript", [])
-                if isinstance(transcript, str):
-                    transcript = json.loads(transcript)
-                analysis = await asyncio.to_thread(analyze_transcript_with_llm, transcript)
-
-                existing = call.get("call_analysis") or {}
-                if isinstance(existing, str):
-                    try: existing = json.loads(existing)
-                    except: existing = {}
-                merged = dict(existing) if isinstance(existing, dict) else {}
-                # Don't clobber agent-set lead_quality with a None from the LLM
-                for k, v in {
-                    "follow_up_needed": analysis.get("follow_up_needed", "No"),
-                    "reminder_date": analysis.get("reminder_date"),
-                    "how_to_follow_up": analysis.get("how_to_follow_up"),
-                    "when_to_follow_up": analysis.get("when_to_follow_up"),
-                    "lead_quality": analysis.get("lead_quality") or merged.get("lead_quality"),
-                    "summary": f"Category: {analysis.get('category')} | Follow-up: {analysis.get('follow_up_needed')}",
-                }.items():
-                    if v is not None:
-                        merged[k] = v
-
-                await _state.db_pool.execute(
-                    """UPDATE agent_calls
-                       SET category = $1,
-                           call_analysis = $2::jsonb,
-                           updated_at = $3
-                       WHERE id = $4""",
-                    analysis.get("category", "Uncategorized"),
-                    json.dumps(merged),
-                    now_ist(),
-                    uuid.UUID(call["id"]),
+                await enqueue_job(
+                    _state.db_pool,
+                    job_type="transcript_analyze",
+                    payload={"call_id": str(row["id"])},
                 )
-                logger.info(f"Analytics done for call {call['id']}: {analysis.get('category')}")
+                logger.info("Analytics sweep: enqueued transcript_analyze for call %s", row["id"])
             except Exception as e:
-                logger.error(f"Analytics failed for {call['id']}: {e}")
+                logger.error("Failed to enqueue analytics job for %s: %s", row["id"], e)
     finally:
         await release_analytics_lock()

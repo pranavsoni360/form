@@ -133,6 +133,8 @@ WARN_AFTER_ATTEMPTS = 3
 COOKIE_SECURE = os.getenv("LOS_COOKIE_SECURE", "false").lower() == "true"
 
 db_pool: asyncpg.Pool = None
+job_db_pool: asyncpg.Pool = None  # Separate pool for the job worker (M3)
+job_worker_pool = None             # services.job_worker.JobWorkerPool instance
 security = HTTPBearer(auto_error=False)  # auto_error=False so we can handle missing tokens gracefully
 
 # ── PII redaction for logs ──
@@ -587,7 +589,7 @@ except ImportError as e:
 
 @app.on_event("startup")
 async def startup():
-    global db_pool
+    global db_pool, job_db_pool, job_worker_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
 
     # Run pending DB migrations before any other startup work touches the
@@ -603,11 +605,31 @@ async def startup():
         agent_set_db_pool(db_pool)
         await agent_startup()
 
+    # Async job queue (M3). Separate DB pool so a misbehaving handler can't
+    # starve the API request pool. N=4 workers fan out across
+    # call_processing_jobs with FOR UPDATE SKIP LOCKED.
+    try:
+        from services.job_worker import JobWorkerPool
+        from services.job_handlers import HANDLERS
+        job_db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=8)
+        job_worker_pool = JobWorkerPool(db_pool=job_db_pool, handlers=HANDLERS, n_workers=4)
+        await job_worker_pool.start()
+        logger.info("Job worker pool started (4 workers)")
+    except Exception:
+        logger.exception("Job worker pool failed to start; jobs will accumulate in queue until restart")
+
 @app.on_event("shutdown")
 async def shutdown():
-    global db_pool
+    global db_pool, job_db_pool, job_worker_pool
+    if job_worker_pool:
+        try:
+            await job_worker_pool.stop()
+        except Exception:
+            logger.exception("Error stopping job worker pool")
     if AGENT_MODULE_LOADED:
         await agent_shutdown()
+    if job_db_pool:
+        await job_db_pool.close()
     if db_pool:
         await db_pool.close()
 

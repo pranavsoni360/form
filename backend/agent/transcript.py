@@ -198,4 +198,21 @@ async def save_transcript(data: TranscriptPayload):
     except Exception as e:
         logger.warning(f"Could not backfill loan_application: {e}")
 
+    # M3: enqueue immediate transcript analysis job. The job worker pool runs
+    # Gemini categorization off the request thread so this webhook returns fast.
+    # Idempotency is handled inside the handler (skips if already categorized)
+    # and by the analytics cron's NOT EXISTS check (avoids duplicate jobs).
+    if transcript:
+        try:
+            from services.job_worker import enqueue_job
+            await enqueue_job(
+                _state.db_pool,
+                job_type="transcript_analyze",
+                payload={"call_id": str(actual_uuid)},
+            )
+            logger.info(f"Enqueued transcript_analyze job for call {actual_uuid}")
+        except Exception as e:
+            # Non-fatal — the analytics cron will sweep this call up later
+            logger.warning(f"Failed to enqueue transcript_analyze for {actual_uuid}: {e}")
+
     return {"status": "success", "room": room, "updated": True}

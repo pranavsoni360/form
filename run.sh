@@ -16,32 +16,11 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ── Docker Postgres ──────────────────────────────────────────
-# Apply every database/migration_*.sql in sorted order. Safe to re-run — all
-# migrations use IF NOT EXISTS / IF EXISTS, so existing containers pick up new
-# files automatically on next start.
-apply_migrations() {
-    local container="$1"
-    local count=0
-    for mig in "$PROJECT_DIR"/database/migration_*.sql; do
-        [[ -f "$mig" ]] || continue
-        local name
-        name=$(basename "$mig")
-        docker cp "$mig" "${container}:/tmp/${name}" >/dev/null 2>&1
-        # -q silences ALTER TABLE success lines; PGOPTIONS hides NOTICE ("already
-        # exists, skipping") spam. Real errors still surface on stderr.
-        local errs
-        errs=$(PGOPTIONS='--client-min-messages=warning' docker exec -e PGOPTIONS \
-            "$container" psql -q -U los_admin -d los_form -f "/tmp/${name}" 2>&1 1>/dev/null \
-            | grep -i 'error' || true)
-        if [[ -n "$errs" ]]; then
-            echo -e "${YELLOW}[db]${NC} ${name} had errors:"
-            echo "$errs" | sed 's/^/    /'
-        fi
-        count=$((count + 1))
-    done
-    [[ $count -gt 0 ]] && echo -e "${CYAN}[db]${NC} Applied ${count} migration(s)"
-}
-
+# Migrations are now applied by the backend on startup via
+# backend/db_migrations.py (uses _migrations tracker + advisory lock).
+# This script only ensures the Postgres container is up and the base
+# schema.sql is seeded on a fresh container — everything past v5 is
+# handled by the auto-runner.
 ensure_postgres() {
     local container="los-postgres-dev"
     local pg_port=5435
@@ -67,8 +46,7 @@ ensure_postgres() {
         docker exec "$container" psql -U los_admin -d los_form -f /tmp/schema.sql >/dev/null 2>&1 || true
     fi
 
-    apply_migrations "$container"
-    echo -e "${GREEN}[db]${NC} Postgres ready on port ${pg_port}"
+    echo -e "${GREEN}[db]${NC} Postgres ready on port ${pg_port} (migrations run by backend on startup)"
 }
 
 # MongoDB removed — agent module uses Postgres

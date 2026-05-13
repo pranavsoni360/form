@@ -24,8 +24,18 @@ import json
 import base64 as b64mod
 from fpdf import FPDF
 import tempfile
+import logging
 
 load_dotenv()
+
+# Module-scope logger. M1 will replace this with structured JSON logging.
+# For now, plain text is fine — uvicorn captures it.
+logger = logging.getLogger("los.backend")
+if not logger.handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
 
 app = FastAPI(
     title="Bank Loan Form API",
@@ -579,6 +589,16 @@ except ImportError as e:
 async def startup():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+
+    # Run pending DB migrations before any other startup work touches the
+    # schema. The runner acquires a Postgres advisory lock so concurrent
+    # uvicorn workers don't race.
+    from db_migrations import run_migrations
+    try:
+        await run_migrations(db_pool)
+    except Exception:
+        logger.exception("Migration run failed during startup; continuing so /healthz reports the issue")
+
     if AGENT_MODULE_LOADED:
         agent_set_db_pool(db_pool)
         await agent_startup()

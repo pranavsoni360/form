@@ -42,3 +42,9 @@ pandas
 livekit-api
 livekit-agents
 google-genai
+
+# Observability (M1): structured JSON logs + error tracking
+# sentry-sdk auto-captures unhandled FastAPI exceptions, scrubbed for PII
+# python-json-logger formats every log line as ECS-style JSON
+sentry-sdk[fastapi]
+python-json-logger

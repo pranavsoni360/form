@@ -28,14 +28,67 @@ import logging
 
 load_dotenv()
 
-# Module-scope logger. M1 will replace this with structured JSON logging.
-# For now, plain text is fine — uvicorn captures it.
+# ── M1: Structured logging + correlation IDs + Sentry ───────────────────────
+from lib.logging_config import configure_logging, correlation_id_var
+
+configure_logging(service_name="los.backend")
 logger = logging.getLogger("los.backend")
-if not logger.handlers:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+
+# Sentry — only initialize if a DSN is configured. Keeps dev clean.
+_SENTRY_DSN = os.getenv("SENTRY_DSN_BACKEND", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration
+
+        # Best-effort PII scrub. Sentry's send_default_pii=False already strips
+        # IP/cookies; this adds India-specific patterns (PAN, Aadhaar, phone).
+        #
+        # ORDER MATTERS: phone runs BEFORE Aadhaar because "+919876543210" has a
+        # 12-digit substring "919876543210" that would otherwise match Aadhaar
+        # first and corrupt the redaction. Same logic for PAN before phone:
+        # PAN's 5-letter prefix means it can never be a phone false positive,
+        # but keeping the deterministic order makes this easy to reason about.
+        _PII_PATTERNS = [
+            (re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b"), "[PAN_REDACTED]"),
+            (re.compile(r"\+?(?:91[-\s]?)?[6-9]\d{9}\b"), "[PHONE_REDACTED]"),
+            (re.compile(r"\b\d{12}\b"), "[AADHAAR_REDACTED]"),
+            (re.compile(r"\b\d{4}\b(?=.*(?:otp|OTP))"), "[OTP_REDACTED]"),
+        ]
+
+        def _scrub(value):
+            if isinstance(value, str):
+                for pat, repl in _PII_PATTERNS:
+                    value = pat.sub(repl, value)
+                return value
+            if isinstance(value, dict):
+                return {k: _scrub(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_scrub(v) for v in value]
+            return value
+
+        def _before_send(event, hint):
+            try:
+                return _scrub(event)
+            except Exception:
+                return event  # never break Sentry pipeline
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.getenv("LOS_ENV", "development"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
+            send_default_pii=False,
+            integrations=[FastApiIntegration(), AsyncioIntegration()],
+            before_send=_before_send,
+        )
+        logger.info("Sentry initialized", extra={"env": os.getenv("LOS_ENV", "development")})
+    except ImportError:
+        logger.warning("SENTRY_DSN_BACKEND set but sentry-sdk not installed")
+    except Exception as e:
+        logger.error("Sentry init failed: %s", e)
+else:
+    logger.info("Sentry disabled (set SENTRY_DSN_BACKEND to enable)")
 
 app = FastAPI(
     title="Bank Loan Form API",
@@ -57,6 +110,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── M1: Correlation-ID middleware + global exception handler ────────────────
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    """Attach a stable request ID to every request. Honored from upstream via
+    `X-Request-Id` header; otherwise generated. Threaded through all logs via
+    the `correlation_id_var` contextvar."""
+    cid = request.headers.get("X-Request-Id") or uuid.uuid4().hex
+    token = correlation_id_var.set(cid)
+    try:
+        response = await call_next(request)
+        response.headers["X-Correlation-Id"] = cid
+        return response
+    finally:
+        correlation_id_var.reset(token)
+
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    """Catch-all for unhandled exceptions. Logs with correlation_id and
+    returns a sanitized JSON response. Sentry, if initialized, has already
+    been notified via its FastApi integration."""
+    from fastapi.responses import JSONResponse
+    cid = correlation_id_var.get() or "-"
+    logger.exception(
+        "unhandled_exception",
+        extra={
+            "route": str(request.url.path),
+            "method": request.method,
+            "exc_type": type(exc).__name__,
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal", "correlation_id": cid},
+    )
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://los_admin:password@localhost:5435/los_form")
 
@@ -598,8 +688,20 @@ async def startup():
     from db_migrations import run_migrations
     try:
         await run_migrations(db_pool)
-    except Exception:
+    except Exception as e:
         logger.exception("Migration run failed during startup; continuing so /healthz reports the issue")
+        # M1: critical alert — schema drift between code and DB is a top-tier
+        # production hazard. Don't let it pass silently.
+        try:
+            from lib.notifier import notify
+            await notify(
+                severity="critical",
+                title="DB migration failed on backend startup",
+                body=f"{type(e).__name__}: {e}",
+                dedupe_key="migration_failure",
+            )
+        except Exception:
+            pass  # never let alerting block startup
 
     if AGENT_MODULE_LOADED:
         agent_set_db_pool(db_pool)
@@ -615,8 +717,18 @@ async def startup():
         job_worker_pool = JobWorkerPool(db_pool=job_db_pool, handlers=HANDLERS, n_workers=4)
         await job_worker_pool.start()
         logger.info("Job worker pool started (4 workers)")
-    except Exception:
+    except Exception as e:
         logger.exception("Job worker pool failed to start; jobs will accumulate in queue until restart")
+        try:
+            from lib.notifier import notify
+            await notify(
+                severity="critical",
+                title="Job worker pool failed to start",
+                body=f"{type(e).__name__}: {e}\n\nQueued jobs will not be processed until backend restart.",
+                dedupe_key="job_pool_startup_failure",
+            )
+        except Exception:
+            pass
 
 @app.on_event("shutdown")
 async def shutdown():

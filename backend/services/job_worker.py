@@ -199,6 +199,11 @@ class JobWorker:
                     job_id, backoff, attempts, max_attempts)
 
     async def _mark_dead(self, job_id: uuid.UUID, err: str) -> None:
+        # Fetch job_type for the alert before we mark it dead (so the alert is
+        # informative even if the row is later purged).
+        job_type = await self.db_pool.fetchval(
+            "SELECT job_type FROM call_processing_jobs WHERE id = $1", job_id
+        )
         await self.db_pool.execute(
             """UPDATE call_processing_jobs
                SET status = 'dead',
@@ -209,6 +214,20 @@ class JobWorker:
             err[:2000],
         )
         logger.error("Job %s marked DEAD: %s", job_id, err)
+
+        # M1: alert ops. Rate-limited per job_type so a broken handler doesn't
+        # flood Discord — one alert per 5 min per type.
+        try:
+            from lib.notifier import notify
+            await notify(
+                severity="critical",
+                title=f"Job dead: {job_type or 'unknown'}",
+                body=f"Job {job_id} exhausted retries.\n\nLast error:\n{err}",
+                dedupe_key=f"job_dead:{job_type or 'unknown'}",
+                fields={"job_id": str(job_id), "worker": self.worker_id},
+            )
+        except Exception:
+            logger.exception("notifier failed for dead job %s (non-fatal)", job_id)
 
 
 def _coerce_payload(payload) -> dict:

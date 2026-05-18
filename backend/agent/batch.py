@@ -70,6 +70,19 @@ async def agent_shutdown():
     global _scheduler
     if _scheduler:
         _scheduler.shutdown(wait=False)
+
+    # M4-lite: signal any in-flight dispatchers to stop accepting new calls
+    # from the queue. In-flight per-call tasks finish naturally (they may
+    # still be awaiting wait_for_call_completion). On next backend startup,
+    # cleanup_stuck_calls() resets anything left at 'Calling' for >10 min.
+    try:
+        from services.dispatcher import manager as dispatcher_mgr
+        n = dispatcher_mgr.stop_all()
+        if n:
+            logger.info(f"Signaled {n} active dispatcher(s) to stop")
+    except Exception:
+        logger.exception("Error signaling dispatcher shutdown (non-fatal)")
+
     await release_batch_lock()
     logger.info("Agent scheduler stopped")
 
@@ -150,8 +163,13 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
 async def process_batch_run(batch_uuid_str: str = None):
     """Batch-based processing — only processes calls belonging to a batch in 'running' state.
     If batch_uuid_str is provided, process that specific batch.
-    If None, find the oldest 'running' batch and process it."""
-    completed = successful = failed = 0
+    If None, find the oldest 'running' batch and process it.
+
+    As of M4-lite, per-call placement is delegated to services.dispatcher.Dispatcher
+    which runs N calls concurrently (env DISPATCHER_CONCURRENCY, default 5).
+    The previous sequential `for call in pending` loop with 10s sleeps capped
+    daily throughput around 100 calls; concurrent dispatch handles 500+/day.
+    """
     call_batch_id = None
     batch_row = None
     batch_id = None
@@ -182,186 +200,38 @@ async def process_batch_run(batch_uuid_str: str = None):
 
         batch = _row_to_dict(batch_row)
         batch_id = batch["id"]
+        call_batch_id = batch.get("batch_id") or batch_id
         logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')})")
 
-        # Get pending calls for THIS batch only (using the string batch_id that links calls to batches).
-        # Scheduled rows wait until scheduled_callback_at <= NOW(); Pending fires immediately.
-        call_batch_id = batch.get("batch_id") or batch_id
-        pending_rows = await _state.db_pool.fetch(
-            """SELECT * FROM agent_calls
-                WHERE batch_id = $1
-                  AND (
-                    status = 'Pending'
-                    OR (status = 'Scheduled' AND (scheduled_callback_at IS NULL OR scheduled_callback_at <= NOW()))
-                  )
-                ORDER BY COALESCE(scheduled_callback_at, created_at) ASC LIMIT 50""",
-            call_batch_id,
+        # ── M4-lite: delegate per-call placement to the concurrent dispatcher ──
+        from services.dispatcher import Dispatcher, manager as dispatcher_mgr
+
+        dispatcher = Dispatcher(
+            batch_id_uuid=batch_id,
+            call_batch_id=call_batch_id,
+            db_pool=_state.db_pool,
+            livekit_url=LIVEKIT_URL,
+            livekit_api_key=LIVEKIT_API_KEY,
+            livekit_api_secret=LIVEKIT_API_SECRET,
+            sip_trunk_id_fallback=SIP_TRUNK_ID,
+            agent_name_pusad=AGENT_NAME,
+            agent_name_union=UNION_BANK_AGENT_NAME,
+            demo_mode=DEMO_MODE,
+            wait_for_call_completion=wait_for_call_completion,
+            is_within_calling_hours_fn=is_within_calling_hours,
+            is_emergency_stop_active_fn=is_emergency_stop_active,
+            now_ist_fn=now_ist,
+            max_retries=MAX_RETRIES,
         )
+        dispatcher_mgr.register(batch_id, dispatcher)
+        try:
+            counts = await dispatcher.run()
+        finally:
+            dispatcher_mgr.unregister(batch_id)
 
-        if not pending_rows:
-            # No more pending calls in this batch — mark batch as completed
-            await _state.db_pool.execute(
-                "UPDATE agent_batches SET status = 'completed', completed = (SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1) WHERE id = $2",
-                call_batch_id, uuid.UUID(batch_id),
-            )
-            logger.info(f"Batch {batch_id} completed — no more pending calls")
-            await release_batch_lock()
-            return
-
-        pending = [_row_to_dict(r) for r in pending_rows]
-        total = len(pending)
-        logger.info(f"Batch {batch_id} | {total} pending calls")
-
-        for idx, call in enumerate(pending, 1):
-            call_uuid = uuid.UUID(call["id"])
-            name = call.get("customer_name") or "Customer"
-            phone = call.get("phone") or ""
-
-            if await is_emergency_stop_active():
-                logger.warning("EMERGENCY STOP active -- halting batch")
-                break
-            if not is_within_calling_hours():
-                logger.info("Calling hours ended -- stopping batch")
-                break
-
-            # Validate phone
-            if not phone or len(phone) < 10:
-                await _state.db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Invalid Phone', retry_count = $1, updated_at = $2
-                       WHERE id = $3""",
-                    MAX_RETRIES + 1, now_ist(), call_uuid,
-                )
-                failed += 1
-                continue
-
-            try:
-                call_start = now_ist()
-                await _state.db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Calling', started_at = $1, updated_at = $1
-                       WHERE id = $2""",
-                    call_start, call_uuid,
-                )
-
-                if DEMO_MODE:
-                    # --- Demo simulation ---
-                    room_name = f"demo_{secrets.token_hex(6)}_{int(time.time())}"
-                    await _state.db_pool.execute(
-                        "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
-                        room_name, call_uuid,
-                    )
-                    await asyncio.sleep(3)
-
-                    import random as rng
-                    interested = rng.choice([True, True, False])
-                    loan_type = rng.choice(["personal", "business", "education"])
-                    status = "Called - Interested" if interested else "Called - Not Interested"
-                    lead_quality = "hot" if interested else "cold"
-                    demo_transcript = [
-                        {"role": "agent", "text": f"Hello, am I speaking with {name}?", "timestamp": now_ist_str()},
-                        {"role": "user", "text": "Yes, speaking.", "timestamp": now_ist_str()},
-                    ]
-                    call_end = now_ist()
-                    duration_seconds = int((call_end - call_start).total_seconds())
-                    category = "Very Interested - Form Sent" if interested else "Not Interested - No Need Currently"
-
-                    await _state.db_pool.execute(
-                        """UPDATE agent_calls SET
-                            transcript = $1, status = $2, call_duration = $3,
-                            ended_at = $4, updated_at = $4,
-                            interested = $5, loan_type = $6,
-                            category = $7,
-                            call_analysis = $8,
-                            collected_data = $9
-                           WHERE id = $10""",
-                        json.dumps(demo_transcript),
-                        status,
-                        duration_seconds,
-                        call_end,
-                        interested,
-                        loan_type if interested else None,
-                        category,
-                        json.dumps({"lead_quality": lead_quality, "follow_up_needed": "Yes" if interested else "No"}),
-                        json.dumps({"loan_type": loan_type}) if interested else None,
-                        call_uuid,
-                    )
-                    successful += 1
-                    completed += 1
-                else:
-                    # --- Real LiveKit + SIP call ---
-                    room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
-                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-
-                    # Pull gender out of collected_data (stored at upload time as JSONB).
-                    # Frontend selector → upload-excel query param → collected_data → here → room
-                    # metadata → agent's LANG_CONFIG / GENDER_CONFIG. Defaults to "male" if absent.
-                    cd = call.get("collected_data") or {}
-                    if isinstance(cd, str):
-                        try: cd = json.loads(cd)
-                        except: cd = {}
-                    customer_gender = (cd.get("gender") if isinstance(cd, dict) else None) or "male"
-
-                    await lk.room.create_room(api.CreateRoomRequest(
-                        name=room_name, empty_timeout=300, max_participants=3,
-                        metadata=json.dumps({
-                            "customer_name": name,
-                            "phone": phone,
-                            "call_id": str(call_uuid),
-                            "bank_id": call.get("bank_id", ""),
-                            "language": call.get("language", "hindi"),
-                            "gender": customer_gender,
-                            "agent_purpose": call.get("agent_type", "loan_enquiry"),
-                            "bank_name": "Union Bank of India" if call.get("agent_type") == "account_opening" else "Pusad Urban Bank",
-                        }),
-                    ))
-                    await _state.db_pool.execute(
-                        "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
-                        room_name, call_uuid,
-                    )
-
-                    # Dispatch agent FIRST so it is in the room before the SIP leg connects
-                    # (matches the Samavesh production pattern; otherwise customer hears silence).
-                    _agent_name = UNION_BANK_AGENT_NAME if call.get("agent_type") == "account_opening" else AGENT_NAME
-                    await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
-                        room=room_name, agent_name=_agent_name,
-                    ))
-                    sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
-                    await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-                        room_name=room_name,
-                        sip_trunk_id=SIP_TRUNK_ID,
-                        sip_call_to=sip_phone,
-                        participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
-                        participant_name=name,
-                        play_ringtone=True,
-                    ))
-                    await lk.aclose()
-
-                    result = await wait_for_call_completion(str(call_uuid), room_name)
-                    if result:
-                        fs = result.get("status", "Unknown")
-                        if fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested"):
-                            successful += 1
-                        else:
-                            failed += 1
-                    else:
-                        failed += 1
-                    completed += 1
-
-            except Exception as e:
-                logger.error(f"Call error for {name}: {e}")
-                await _state.db_pool.execute(
-                    """UPDATE agent_calls
-                       SET status = 'Failed', error_message = $1,
-                           ended_at = $2, updated_at = $2,
-                           retry_count = retry_count + 1
-                       WHERE id = $3""",
-                    str(e), now_ist(), call_uuid,
-                )
-                failed += 1
-                completed += 1
-
-            await asyncio.sleep(10)  # pause between calls
+        completed = counts.get("completed", 0)
+        successful = counts.get("successful", 0)
+        failed = counts.get("failed", 0)
 
     finally:
         # Check if batch has any remaining pending calls
@@ -380,7 +250,11 @@ async def process_batch_run(batch_uuid_str: str = None):
                 logger.info(f"Batch {batch_id} paused — {remaining} calls remaining (will resume next cron)")
 
         await release_batch_lock()
-        logger.info(f"BATCH RUN DONE | Total: {completed} | OK: {successful} | Fail: {failed}")
+        try:
+            logger.info(f"BATCH RUN DONE | Total: {completed} | OK: {successful} | Fail: {failed}")
+        except UnboundLocalError:
+            # No batch was processed (no batch_row); counts not defined
+            pass
 
 # ============================================================================
 # BATCH MANAGEMENT ENDPOINTS

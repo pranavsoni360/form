@@ -687,7 +687,23 @@ except ImportError as e:
 @app.on_event("startup")
 async def startup():
     global db_pool, job_db_pool, job_worker_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    # M8-lite: pool tuned for 500/day. Peak ~10 calls/sec init × ~6 DB
+    # roundtrips/call = ~60 QPS sustainable on a 40-conn pool. min=10 keeps
+    # warm connections through quiet stretches.
+    # Also: command_timeout caps any single query at 30s (prevents a stuck
+    # query from holding a connection forever); idle_in_transaction_session
+    # _timeout drops abandoned transactions after 30s.
+    db_pool = await asyncpg.create_pool(
+        DATABASE_URL,
+        min_size=int(os.getenv("DB_POOL_MIN", "10")),
+        max_size=int(os.getenv("DB_POOL_MAX", "40")),
+        command_timeout=30,
+        max_inactive_connection_lifetime=300,
+        server_settings={
+            "idle_in_transaction_session_timeout": "30s",
+            "statement_timeout": "60s",
+        },
+    )
 
     # Run pending DB migrations before any other startup work touches the
     # schema. The runner acquires a Postgres advisory lock so concurrent

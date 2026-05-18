@@ -271,8 +271,12 @@ def _serialize_call(c: dict) -> dict:
     # Flatten collected_data fields to top level
     cd = c.get("collected_data") or {}
     if isinstance(cd, str):
-        try: cd = json.loads(cd)
-        except: cd = {}
+        try:
+            cd = json.loads(cd)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("collected_data JSON parse failed for call %s: %s",
+                           c.get("id", "?"), e)
+            cd = {}
     for k in ["monthly_income", "employment_type", "employer_name", "loan_purpose",
               "aadhar_number", "pan_number", "designation", "age", "business_type",
               "existing_emi", "collected_address", "monthly_turnover", "business_age"]:
@@ -282,8 +286,12 @@ def _serialize_call(c: dict) -> dict:
     # Flatten call_analysis fields to top level
     ca = c.get("call_analysis") or {}
     if isinstance(ca, str):
-        try: ca = json.loads(ca)
-        except: ca = {}
+        try:
+            ca = json.loads(ca)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("call_analysis JSON parse failed for call %s: %s",
+                           c.get("id", "?"), e)
+            ca = {}
     c["lead_quality"] = ca.get("lead_quality", "")
     c["follow_up_needed"] = ca.get("follow_up_needed", "No")
     c["notification_message"] = ca.get("notification_message", "")

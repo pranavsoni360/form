@@ -42,6 +42,8 @@ from typing import Optional
 
 from livekit import api
 
+from lib.circuit_breaker import protect, CircuitOpenError
+
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +247,31 @@ class Dispatcher:
             "Dispatcher batch=%s done | %s",
             self.batch_id_uuid, self.counts,
         )
+
+        # M5: alert on sustained failure rate. Threshold: >=5 failures AND
+        # >50% of attempts failed. dedupe_key includes the batch so we get
+        # one alert per bad batch, not one per cron tick.
+        completed = self.counts.get("completed", 0)
+        failed = self.counts.get("failed", 0)
+        if completed >= 5 and failed / max(1, completed) > 0.5:
+            try:
+                from lib.notifier import notify
+                await notify(
+                    severity="warning",
+                    title=f"Dispatcher: high failure rate ({failed}/{completed})",
+                    body=(
+                        f"Batch {self.batch_id_uuid} finished with "
+                        f"{failed} failures out of {completed} calls "
+                        f"({failed * 100 // max(1, completed)}%). "
+                        "Investigate LiveKit/SIP/agent worker health."
+                    ),
+                    dedupe_key=f"dispatcher_fail_rate:{self.batch_id_uuid}",
+                    fields={"successful": str(self.counts.get("successful", 0)),
+                            "failed": str(failed), "total": str(completed)},
+                )
+            except Exception:
+                pass
+
         return self.counts
 
     async def _dispatch_one(self, call: dict) -> None:
@@ -286,6 +313,22 @@ class Dispatcher:
                     "No outbound trunk available for call %s — neither phone_numbers nor SIP_TRUNK_ID env",
                     call_uuid,
                 )
+                # M5: ops-visible alert. Rate-limited so a misconfigured deploy
+                # doesn't flood Discord; ops just needs to see the issue once.
+                try:
+                    from lib.notifier import notify
+                    await notify(
+                        severity="critical",
+                        title="Dispatcher: no SIP trunk available",
+                        body=(
+                            "Calls cannot be placed because neither the phone_numbers "
+                            "table nor the SIP_TRUNK_ID env var has an active trunk. "
+                            "Seed phone_numbers or set SIP_TRUNK_ID."
+                        ),
+                        dedupe_key="dispatcher_no_trunk",
+                    )
+                except Exception:
+                    pass
                 await self.db_pool.execute(
                     """UPDATE agent_calls
                           SET status = 'Failed',
@@ -403,19 +446,27 @@ class Dispatcher:
                                else "Pusad Urban Bank")
 
         try:
-            await lk.room.create_room(api.CreateRoomRequest(
-                name=room_name, empty_timeout=300, max_participants=3,
-                metadata=json.dumps({
-                    "customer_name": name,
-                    "phone": phone,
-                    "call_id": str(call_uuid),
-                    "bank_id": call.get("bank_id", ""),
-                    "language": call.get("language", "hindi"),
-                    "gender": customer_gender,
-                    "agent_purpose": agent_purpose,
-                    "bank_name": bank_name_for_agent,
-                }),
-            ))
+            # M5: wrap each LiveKit op with circuit breaker + timeout.
+            # Three separate breaker names so e.g. SIP trouble doesn't trip
+            # the breaker that guards room creation.
+            await protect(
+                "livekit",
+                lk.room.create_room,
+                api.CreateRoomRequest(
+                    name=room_name, empty_timeout=300, max_participants=3,
+                    metadata=json.dumps({
+                        "customer_name": name,
+                        "phone": phone,
+                        "call_id": str(call_uuid),
+                        "bank_id": call.get("bank_id", ""),
+                        "language": call.get("language", "hindi"),
+                        "gender": customer_gender,
+                        "agent_purpose": agent_purpose,
+                        "bank_name": bank_name_for_agent,
+                    }),
+                ),
+                timeout_s=15,
+            )
             await self.db_pool.execute(
                 "UPDATE agent_calls SET room_name = $1 WHERE id = $2",
                 room_name, call_uuid,
@@ -425,18 +476,26 @@ class Dispatcher:
             # otherwise customer hears silence on connect)
             agent_for_call = (self.agent_name_union if agent_purpose == "account_opening"
                               else self.agent_name_pusad)
-            await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
-                room=room_name, agent_name=agent_for_call,
-            ))
+            await protect(
+                "livekit",
+                lk.agent_dispatch.create_dispatch,
+                api.CreateAgentDispatchRequest(room=room_name, agent_name=agent_for_call),
+                timeout_s=15,
+            )
             sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
-            await lk.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-                room_name=room_name,
-                sip_trunk_id=trunk["trunk_id"],
-                sip_call_to=sip_phone,
-                participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
-                participant_name=name,
-                play_ringtone=True,
-            ))
+            await protect(
+                "livekit_sip",
+                lk.sip.create_sip_participant,
+                api.CreateSIPParticipantRequest(
+                    room_name=room_name,
+                    sip_trunk_id=trunk["trunk_id"],
+                    sip_call_to=sip_phone,
+                    participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
+                    participant_name=name,
+                    play_ringtone=True,
+                ),
+                timeout_s=30,
+            )
         finally:
             await lk.aclose()
 

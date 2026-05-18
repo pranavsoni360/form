@@ -497,8 +497,12 @@ async def export_daily_report(
         c = _row_to_dict(r)
         ca = c.get("call_analysis") or {}
         if isinstance(ca, str):
-            try: ca = json.loads(ca)
-            except: ca = {}
+            try:
+                ca = json.loads(ca)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning("call_analysis JSON parse failed for call %s: %s",
+                               c.get("id", "?"), e)
+                ca = {}
         report_rows.append({
             "Name": c.get("customer_name", ""),
             "Phone": c.get("phone", ""),

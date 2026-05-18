@@ -128,6 +128,13 @@ async def correlation_id_middleware(request: Request, call_next):
         correlation_id_var.reset(token)
 
 
+# M5: ops router — /healthz, /readyz, /version (no auth).
+# Mounted BEFORE the global exception handler is defined so the router's
+# explicit JSON responses always reach the client.
+from routers.ops import router as ops_router  # noqa: E402
+app.include_router(ops_router)
+
+
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
     """Catch-all for unhandled exceptions. Logs with correlation_id and

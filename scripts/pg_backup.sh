@@ -15,9 +15,9 @@ set -euo pipefail
 #   5. Discord alert on failure (success ping optional)
 #
 # Usage:
-#   sudo bash scripts/pg_backup.sh           # full nightly backup
-#   sudo bash scripts/pg_backup.sh --dry-run # build dump locally, skip upload
-#   sudo bash scripts/pg_backup.sh --no-discord  # silence Discord alerts
+#   sudo bash scripts/pg_backup.sh            # full nightly backup
+#   sudo bash scripts/pg_backup.sh --dry-run  # build dump locally, skip upload
+#   sudo bash scripts/pg_backup.sh --no-telegram  # silence Telegram alerts
 #
 # Required env:
 #   BACKUP_GPG_PASSPHRASE   - symmetric encryption passphrase
@@ -29,7 +29,8 @@ set -euo pipefail
 #   BACKUP_DIR=/var/backups/los
 #   RCLONE_REMOTE=b2:voice-ops-backups
 #   BACKUP_RETENTION_DAYS=14
-#   DISCORD_WEBHOOK_URL=
+#   TELEGRAM_BOT_TOKEN=    (alerts disabled if unset)
+#   TELEGRAM_CHAT_ID=
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Config (override via env) ────────────────────────────────────────────────
@@ -39,17 +40,18 @@ LOS_PG_DB="${LOS_PG_DB:-los_form}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/los}"
 RCLONE_REMOTE="${RCLONE_REMOTE:-b2:voice-ops-backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 
 # ── Flags ────────────────────────────────────────────────────────────────────
 DRY_RUN=0
-NO_DISCORD=0
+NO_TELEGRAM=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
-        --no-discord) NO_DISCORD=1 ;;
+        --no-telegram) NO_TELEGRAM=1 ;;
         --help|-h)
-            sed -n '4,33p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '4,34p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) echo "Unknown arg: $arg" >&2; exit 2 ;;
@@ -62,28 +64,37 @@ warn()  { printf "\033[0;33m[%s] WARN:\033[0m %s\n" "$(date -u +"%Y-%m-%dT%H:%M:
 die()   {
     msg="$*"
     printf "\033[0;31m[%s] ERROR:\033[0m %s\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$msg" >&2
-    notify_discord "critical" "Postgres backup failed" "$msg"
+    notify_telegram "critical" "Postgres backup failed" "$msg"
     exit 1
 }
 
-notify_discord() {
+notify_telegram() {
     # $1=severity ("info"|"warning"|"critical"), $2=title, $3=body
-    [[ $NO_DISCORD -eq 1 ]] && return 0
-    [[ -z "$DISCORD_WEBHOOK_URL" ]] && return 0
-    local color
+    # Uses Telegram bot API sendMessage; matches the Python notifier format.
+    [[ $NO_TELEGRAM -eq 1 ]] && return 0
+    [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]] && return 0
+    local emoji
     case "$1" in
-        critical) color=15158332 ;;
-        warning)  color=15844367 ;;
-        *)        color=3447003 ;;
+        critical) emoji='🚨' ;;
+        warning)  emoji='⚠️' ;;
+        *)        emoji='ℹ️' ;;
     esac
-    # Escape the body for JSON (limited to common cases — no embedded quotes
-    # in titles/bodies expected from this script)
-    local body_escaped
-    body_escaped=$(printf '%s' "$3" | sed 's/"/\\"/g' | tr '\n' ' ')
-    curl -fsS -X POST -H 'Content-Type: application/json' \
-        --max-time 5 \
-        -d "{\"embeds\":[{\"title\":\"$2\",\"description\":\"$body_escaped\",\"color\":$color}]}" \
-        "$DISCORD_WEBHOOK_URL" >/dev/null || true
+    local now_utc
+    now_utc=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+    # parse_mode=HTML so <b> renders; we don't escape body specially because
+    # backup script bodies are plain text + sizes/paths. curl --data-urlencode
+    # handles URL escaping for us.
+    local text="${emoji} <b>$2</b>
+
+$3
+
+<i>⏰ ${now_utc}</i>"
+    curl -fsS --max-time 5 -G \
+        --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=${text}" \
+        --data-urlencode "parse_mode=HTML" \
+        --data-urlencode "disable_web_page_preview=true" \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" >/dev/null || true
 }
 
 # ── Pre-flight ───────────────────────────────────────────────────────────────
@@ -155,5 +166,5 @@ find "$BACKUP_DIR" -name "los_form-*.dump.gpg" -mtime +"$BACKUP_RETENTION_DAYS" 
 ELAPSED=$(( $(date +%s) - START_TS ))
 log "Backup complete in ${ELAPSED}s"
 if [[ $DRY_RUN -eq 0 ]]; then
-    notify_discord "info" "Postgres backup OK" "Size: $((ENC_SIZE / 1024)) KB | Elapsed: ${ELAPSED}s | Remote: $REMOTE_PATH"
+    notify_telegram "info" "Postgres backup OK" "Size: $((ENC_SIZE / 1024)) KB | Elapsed: ${ELAPSED}s | Remote: $REMOTE_PATH"
 fi

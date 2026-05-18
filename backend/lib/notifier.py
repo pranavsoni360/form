@@ -1,11 +1,16 @@
 """
-Discord webhook alerts with rate-limited token bucket.
+Telegram bot alerts with rate-limited token bucket.
 
 Why rate limiting:
 - During an incident, the same root cause can trigger hundreds of similar
-  errors. Without rate limiting, Discord becomes unreadable noise.
+  errors. Without rate limiting, the alert channel becomes unreadable noise.
 - Token bucket per `dedupe_key`: 1 alert / 5 min / key. After 30 min we emit
   a "still firing" summary so you know the issue persists.
+
+Why Telegram:
+- Operator's preference — alerts go to a Telegram chat the team already uses.
+- Telegram bot API: free, no per-message rate limits at this volume, no
+  webhook gymnastics. Just a bot token + chat_id.
 
 Usage:
     from lib.notifier import notify
@@ -14,41 +19,53 @@ Usage:
         title="Job worker died",
         body="JobWorker w0 crashed: ConnectionError to Postgres",
         dedupe_key="worker_crash:w0",
+        fields={"worker": "w0", "host": "voice-ops-1"},
     )
 
-If DISCORD_WEBHOOK_URL is not set, this becomes a no-op (logs a warning once
-on startup).
+Setup:
+1. Open Telegram → search @BotFather → /newbot → save the TOKEN
+2. Send /start to your new bot
+3. Visit https://api.telegram.org/bot<TOKEN>/getUpdates → find chat.id
+4. Put in .env:
+     TELEGRAM_BOT_TOKEN=7654321098:AAEx...K9wQ
+     TELEGRAM_CHAT_ID=123456789      (or -100... for a group)
+
+If TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are unset, this becomes a no-op
+(logs a warning once on startup). The application boots fine without alerts
+configured — useful for local dev.
 """
 
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
 
 logger = logging.getLogger(__name__)
 
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 # Token-bucket window: minimum gap between alerts with the SAME dedupe_key.
 ALERT_COOLDOWN_SECONDS = 300       # 5 minutes
 # After this many seconds of continuous firing, send a "still firing" summary.
 STILL_FIRING_INTERVAL_SECONDS = 1800  # 30 minutes
 
-# Discord embed body cap (their hard limit is 2000 for content / 4096 for
-# embed description; we stay conservative).
-MAX_BODY_LEN = 1800
+# Telegram message-body cap is 4096 chars; we stay conservative under that
+# so HTML overhead + emoji never push us over.
+MAX_BODY_LEN = 3500
 
-# Severity → Discord embed color (decimal).
-_COLOR = {
-    "info":     0x3498DB,  # blue
-    "warning":  0xF1C40F,  # yellow
-    "critical": 0xE74C3C,  # red
+# Severity → emoji prefix (Telegram doesn't do embed colors).
+_EMOJI = {
+    "info":     "ℹ️",
+    "warning":  "⚠️",
+    "critical": "🚨",
 }
 
 
@@ -61,7 +78,7 @@ class _AlertState:
 
 _state: dict[str, _AlertState] = {}
 _state_lock = asyncio.Lock()
-_no_webhook_warned = False
+_no_token_warned = False
 
 
 def _truncate(s: str, n: int = MAX_BODY_LEN) -> str:
@@ -70,21 +87,49 @@ def _truncate(s: str, n: int = MAX_BODY_LEN) -> str:
     return s[: n - 20] + "\n…(truncated)"
 
 
-async def _post_to_discord(payload: dict) -> None:
-    """POST to Discord with a short timeout. Errors are logged but never
-    raised — alerting must never block or crash the caller."""
-    if not DISCORD_WEBHOOK_URL:
+def _build_text(
+    severity: str,
+    title: str,
+    body: str,
+    fields: dict[str, str] | None,
+) -> str:
+    """Build a Telegram HTML message body. Uses html.escape() on user-supplied
+    strings so a stack trace with '<' or '&' doesn't break Telegram's parser."""
+    emoji = _EMOJI.get(severity, _EMOJI["info"])
+    parts: list[str] = [f"{emoji} <b>{html.escape(title)}</b>", ""]
+    if body:
+        parts.append(html.escape(_truncate(body)))
+    if fields:
+        parts.append("")
+        for k, v in list(fields.items())[:25]:
+            parts.append(f"<b>{html.escape(str(k))}:</b> <code>{html.escape(str(v))}</code>")
+    parts.append("")
+    parts.append(f"<i>⏰ {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}</i>")
+    return "\n".join(parts)
+
+
+async def _send_to_telegram(text: str) -> None:
+    """POST sendMessage to Telegram. Errors logged but never raised — alerting
+    must never block or crash the caller."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(DISCORD_WEBHOOK_URL, json=payload)
+            resp = await client.post(url, json=payload)
             if resp.status_code >= 400:
                 logger.warning(
-                    "Discord webhook returned %d: %s",
+                    "Telegram sendMessage returned %d: %s",
                     resp.status_code, resp.text[:200],
                 )
     except Exception as e:
-        logger.warning("Discord webhook POST failed: %s", e)
+        logger.warning("Telegram sendMessage failed: %s", e)
 
 
 async def notify(
@@ -99,18 +144,20 @@ async def notify(
 
     Args:
         severity: "info" | "warning" | "critical"
-        title: short headline (Discord embed title)
-        body: details, stack traces, etc. (truncated to ~1800 chars)
+        title: short headline
+        body: details, stack traces, etc. (truncated to ~3500 chars)
         dedupe_key: stable string for rate limiting. Same root cause should
                     produce the same key (e.g. "sip_error_rate", "worker_crash:w0").
-        fields: optional dict of extra key/value pairs shown as embed fields
+        fields: optional dict of extra key/value pairs shown as bold lines
     """
-    global _no_webhook_warned
+    global _no_token_warned
 
-    if not DISCORD_WEBHOOK_URL:
-        if not _no_webhook_warned:
-            logger.warning("DISCORD_WEBHOOK_URL not set — alerts are disabled")
-            _no_webhook_warned = True
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        if not _no_token_warned:
+            logger.warning(
+                "TELEGRAM_BOT_TOKEN/CHAT_ID not set — alerts are disabled"
+            )
+            _no_token_warned = True
         return
 
     now = time.time()
@@ -132,8 +179,13 @@ async def notify(
                 f"{int((now - st.last_sent_at) / 60)} minutes. "
                 f"{st.suppressed_count} occurrence(s) suppressed since last notification."
             )
-            payload = _build_payload("warning", f"[still firing] {title}", summary_body, fields)
-            await _post_to_discord(payload)
+            text = _build_text(
+                "warning",
+                f"[still firing] {title}",
+                summary_body,
+                fields,
+            )
+            await _send_to_telegram(text)
             return
 
         # Fresh alert — send it and reset state
@@ -141,28 +193,8 @@ async def notify(
         st.last_firing_summary_at = now
         st.suppressed_count = 0
 
-    payload = _build_payload(severity, title, body, fields)
-    await _post_to_discord(payload)
-
-
-def _build_payload(
-    severity: str,
-    title: str,
-    body: str,
-    fields: dict[str, str] | None,
-) -> dict:
-    embed: dict = {
-        "title": title[:256],
-        "description": _truncate(body),
-        "color": _COLOR.get(severity, _COLOR["info"]),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
-    }
-    if fields:
-        embed["fields"] = [
-            {"name": k[:256], "value": str(v)[:1024], "inline": True}
-            for k, v in fields.items()
-        ][:25]  # Discord caps at 25 fields
-    return {"embeds": [embed]}
+    text = _build_text(severity, title, body, fields)
+    await _send_to_telegram(text)
 
 
 def notify_sync_fire_and_forget(

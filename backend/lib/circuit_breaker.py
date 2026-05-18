@@ -27,7 +27,7 @@ Inspecting state at runtime (e.g. for /readyz):
     cb = get_breaker("livekit")
     cb.state  # "closed" | "open" | "half_open"
 
-The breaker fires a Discord alert (rate-limited per-name) on every state
+The breaker fires a Telegram alert (rate-limited per-name) on every state
 transition to OPEN, so ops sees outages without manually grepping logs.
 """
 
@@ -147,7 +147,7 @@ class CircuitBreaker:
                 self._notify_state_change("open")
 
     def _notify_state_change(self, new_state: str) -> None:
-        """Fire a Discord alert on state transition. Never raises."""
+        """Fire a Telegram alert on state transition. Never raises."""
         try:
             # Late import so this module has no hard dep on the notifier
             from lib.notifier import notify  # type: ignore
@@ -166,7 +166,7 @@ class CircuitBreaker:
             ))
         except Exception:
             # Alerting must never break the call path
-            logger.exception("Discord notify failed for circuit %r (non-fatal)", self.name)
+            logger.exception("Telegram notify failed for circuit %r (non-fatal)", self.name)
 
 
 # ── Registry: one breaker per name, lazily created ──────────────────────────

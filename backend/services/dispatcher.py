@@ -314,7 +314,7 @@ class Dispatcher:
                     call_uuid,
                 )
                 # M5: ops-visible alert. Rate-limited so a misconfigured deploy
-                # doesn't flood Discord; ops just needs to see the issue once.
+                # doesn't flood Telegram; ops just needs to see the issue once.
                 try:
                     from lib.notifier import notify
                     await notify(

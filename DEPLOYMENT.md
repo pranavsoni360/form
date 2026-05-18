@@ -37,7 +37,8 @@ Required, set in `/root/vaani_los_form/backend/.env`:
 | `AISENSY_API_KEY`, `AISENSY_CAMPAIGN_NAME` | WhatsApp form delivery |
 | `RECORDING_BASE_URL` | Where LiveKit egress serves recordings (e.g. `http://164.52.217.236:7000`) |
 | `SENTRY_DSN_BACKEND` | Sentry project DSN (free tier OK) |
-| `DISCORD_WEBHOOK_URL` | Discord webhook for critical alerts |
+| `TELEGRAM_BOT_TOKEN` | From @BotFather (see §5.3) |
+| `TELEGRAM_CHAT_ID` | From `bot<TOKEN>/getUpdates` (see §5.3) |
 | `BACKUP_GPG_PASSPHRASE` | Symmetric passphrase for nightly DB dump encryption |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | DB pool sizing (defaults 10/40). See §6 |
 | `DISPATCHER_CONCURRENCY` | Concurrent in-flight calls (default 5). See §6 |
@@ -82,10 +83,10 @@ Add to root's crontab (`sudo crontab -e`):
 
 ```cron
 # Nightly Postgres backup at 02:30 IST = 21:00 UTC
-0 21 * * * BACKUP_GPG_PASSPHRASE='<passphrase>' DISCORD_WEBHOOK_URL='<webhook>' /root/vaani_los_form/scripts/pg_backup.sh >> /var/log/los/pg_backup.log 2>&1
+0 21 * * * BACKUP_GPG_PASSPHRASE='<passphrase>' TELEGRAM_BOT_TOKEN='<token>' TELEGRAM_CHAT_ID='<chat_id>' /root/vaani_los_form/scripts/pg_backup.sh >> /var/log/los/pg_backup.log 2>&1
 
 # Weekly restore drill, Sundays at 03:30 IST = 22:00 UTC Saturday
-0 22 * * 6 BACKUP_GPG_PASSPHRASE='<passphrase>' DISCORD_WEBHOOK_URL='<webhook>' /root/vaani_los_form/scripts/restore_test.sh >> /var/log/los/restore_test.log 2>&1
+0 22 * * 6 BACKUP_GPG_PASSPHRASE='<passphrase>' TELEGRAM_BOT_TOKEN='<token>' TELEGRAM_CHAT_ID='<chat_id>' /root/vaani_los_form/scripts/restore_test.sh >> /var/log/los/restore_test.log 2>&1
 ```
 
 The passphrase MUST match between backup and restore scripts.
@@ -97,15 +98,15 @@ The passphrase MUST match between backup and restore scripts.
   - Encrypts with `gpg --symmetric --cipher-algo AES256`
   - Uploads to `b2:voice-ops-backups/<yyyy>/<mm>/los_form-<UTC stamp>.dump.gpg`
   - Prunes local copies older than 14 days
-  - Discord ping on success (info color) or failure (critical color)
-  - Flags: `--dry-run` skips upload, `--no-discord` silences alerts
+  - Telegram ping on success (info) or failure (critical)
+  - Flags: `--dry-run` skips upload, `--no-telegram` silences alerts
 
 - `scripts/restore_test.sh`
   - Downloads the latest backup from B2
   - Spawns ephemeral `postgres:16` container on port 5499
   - Decrypts + `pg_restore`s
   - Runs row counts on `banks / loan_applications / agent_calls / agent_batches / bank_users / _migrations`
-  - Discord ping with counts on success, with stack on failure
+  - Telegram ping with counts on success, with stack on failure
   - Auto-tears-down the container (use `--keep` to inspect manually)
 
 ### 3.4 Manual restore (disaster recovery)
@@ -181,9 +182,36 @@ All unhandled exceptions auto-captured (M1 wiring). PII scrubber redacts PAN, Aa
 
 If `SENTRY_DSN_BACKEND` is unset, Sentry is disabled (the app boots fine).
 
-### 5.3 Discord alerts
+### 5.3 Telegram alerts
 
-Trigger points (M1 + M5):
+#### One-time setup
+
+```
+1. Open Telegram on your phone → search @BotFather
+2. Send /newbot to BotFather
+3. Choose a bot name (e.g. "LOS Production Alerts")
+4. Choose a bot username (must end in 'bot', e.g. "los_prod_alerts_bot")
+5. BotFather replies with the TOKEN like: 7654321098:AAEx...K9wQ
+   → save this as TELEGRAM_BOT_TOKEN
+
+6. Search for your bot by username, open the chat, send /start
+7. Visit in browser:
+     https://api.telegram.org/bot<TOKEN>/getUpdates
+8. Look for: "chat":{"id": 123456789, ...}
+   → save this number as TELEGRAM_CHAT_ID
+
+For a GROUP chat (recommended — team-wide visibility):
+- Create a Telegram group
+- Add your bot as a member
+- Send any message in the group (or /start)
+- getUpdates response will show a NEGATIVE chat_id like -100123456789
+- Use that as TELEGRAM_CHAT_ID
+
+To stop receiving: revoke the bot via @BotFather → /mybots → delete.
+```
+
+#### Trigger points (M1 + M5)
+
 - Migration failure on startup
 - Job worker pool failed to start
 - Job exhausted retries (per `job_type`, rate-limited 1/5min)
@@ -193,7 +221,7 @@ Trigger points (M1 + M5):
 - `pg_backup.sh` failure
 - `restore_test.sh` weekly result (success or failure)
 
-Rate-limited token bucket: 1 alert per 5-minute window per `dedupe_key`, plus a "still firing" summary every 30 minutes.
+Rate-limited token bucket: 1 alert per 5-minute window per `dedupe_key`, plus a "still firing" summary every 30 minutes. Same alert pattern as the previous Discord notifier — only the transport changed.
 
 ---
 

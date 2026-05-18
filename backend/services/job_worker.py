@@ -216,7 +216,7 @@ class JobWorker:
         logger.error("Job %s marked DEAD: %s", job_id, err)
 
         # M1: alert ops. Rate-limited per job_type so a broken handler doesn't
-        # flood Discord — one alert per 5 min per type.
+        # flood Telegram — one alert per 5 min per type.
         try:
             from lib.notifier import notify
             await notify(

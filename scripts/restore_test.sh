@@ -24,12 +24,14 @@ set -euo pipefail
 #
 # Optional env (with defaults):
 #   RCLONE_REMOTE=b2:voice-ops-backups
-#   DISCORD_WEBHOOK_URL=
+#   TELEGRAM_BOT_TOKEN=    (alerts disabled if unset)
+#   TELEGRAM_CHAT_ID=
 #   RESTORE_TEST_PORT=5499      (host port for the ephemeral pg container)
 # ══════════════════════════════════════════════════════════════════════════════
 
 RCLONE_REMOTE="${RCLONE_REMOTE:-b2:voice-ops-backups}"
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 RESTORE_TEST_PORT="${RESTORE_TEST_PORT:-5499}"
 
 KEEP_CONTAINER=0
@@ -52,17 +54,27 @@ die()  {
 }
 
 notify() {
-    [[ -z "$DISCORD_WEBHOOK_URL" ]] && return 0
-    local color
+    # $1=severity, $2=title, $3=body — Telegram sendMessage transport
+    [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]] && return 0
+    local emoji
     case "$1" in
-        critical) color=15158332 ;;
-        warning)  color=15844367 ;;
-        *)        color=3447003 ;;
+        critical) emoji='🚨' ;;
+        warning)  emoji='⚠️' ;;
+        *)        emoji='ℹ️' ;;
     esac
-    body_escaped=$(printf '%s' "$3" | sed 's/"/\\"/g' | tr '\n' ' ')
-    curl -fsS -X POST -H 'Content-Type: application/json' --max-time 5 \
-        -d "{\"embeds\":[{\"title\":\"$2\",\"description\":\"$body_escaped\",\"color\":$color}]}" \
-        "$DISCORD_WEBHOOK_URL" >/dev/null || true
+    local now_utc
+    now_utc=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+    local text="${emoji} <b>$2</b>
+
+$3
+
+<i>⏰ ${now_utc}</i>"
+    curl -fsS --max-time 5 -G \
+        --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=${text}" \
+        --data-urlencode "parse_mode=HTML" \
+        --data-urlencode "disable_web_page_preview=true" \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" >/dev/null || true
 }
 
 TMP_DIR="$(mktemp -d)"

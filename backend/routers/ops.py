@@ -126,6 +126,90 @@ async def version():
     }
 
 
+# ── /api/ops/phone-pools ────────────────────────────────────────────────────
+# Initial-state seed for /ops/phones. SSE "phones" topic merges deltas on top
+# of this snapshot. Returns one row per phone_number joined to its pool, so
+# the UI can render a flat table sortable by utilization / cooldown / total.
+#
+# This router is mounted WITHOUT a shared prefix (the probe endpoints live at
+# the root for k8s convention), so api-style routes spell their full path
+# in the decorator.
+
+@router.get("/api/ops/phone-pools")
+async def phone_pools():
+    """Snapshot of every phone pool + its numbers (live counters from DB).
+
+    Response shape:
+        {
+          "pools": [
+            {
+              "id": "...",  "name": "pusad-default",
+              "capacity": 5, "cooldown_seconds_min": 180, "cooldown_seconds_max": 300,
+              "bank_id": "...",
+              "numbers": [
+                {
+                  "id": "...",
+                  "phone_number": "+91...",
+                  "active_calls": 0, "total_calls": 142,
+                  "cooldown_until": "2026-05-20T..." | null,
+                  "status": "active" | "disabled" | "quarantined",
+                  "updated_at": "..."
+                }
+              ]
+            }
+          ]
+        }
+    """
+    from fastapi.responses import JSONResponse
+    pool = _module_db_pool()
+    if pool is None:
+        return JSONResponse({"pools": [], "error": "db pool not ready"}, status_code=503)
+
+    try:
+        # One round-trip: pools + their numbers, ordered for deterministic UI
+        rows = await pool.fetch(
+            """SELECT
+                 pp.id AS pool_id, pp.name AS pool_name, pp.bank_id, pp.capacity,
+                 pp.cooldown_seconds_min, pp.cooldown_seconds_max,
+                 pn.id AS pn_id, pn.phone_number, pn.active_calls, pn.total_calls,
+                 pn.cooldown_until, pn.status, pn.updated_at
+               FROM phone_pools pp
+               LEFT JOIN phone_numbers pn ON pn.pool_id = pp.id
+               ORDER BY pp.name ASC, pn.phone_number ASC NULLS LAST"""
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"pools": [], "error": f"{type(e).__name__}: {e}"},
+            status_code=503,
+        )
+
+    by_pool: dict[str, dict] = {}
+    for r in rows:
+        pid = str(r["pool_id"])
+        if pid not in by_pool:
+            by_pool[pid] = {
+                "id": pid,
+                "name": r["pool_name"],
+                "bank_id": str(r["bank_id"]) if r["bank_id"] else None,
+                "capacity": int(r["capacity"]) if r["capacity"] is not None else 5,
+                "cooldown_seconds_min": int(r["cooldown_seconds_min"] or 0),
+                "cooldown_seconds_max": int(r["cooldown_seconds_max"] or 0),
+                "numbers": [],
+            }
+        if r["pn_id"] is not None:
+            by_pool[pid]["numbers"].append({
+                "id": str(r["pn_id"]),
+                "phone_number": r["phone_number"],
+                "active_calls": int(r["active_calls"] or 0),
+                "total_calls": int(r["total_calls"] or 0),
+                "cooldown_until": r["cooldown_until"].isoformat() if r["cooldown_until"] else None,
+                "status": r["status"],
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            })
+
+    return {"pools": list(by_pool.values())}
+
+
 # ── Compatibility shims ─────────────────────────────────────────────────────
 # main.py keeps its db_pool / job_worker_pool as module-level globals rather
 # than on app.state. We try both paths so future refactors are smooth.

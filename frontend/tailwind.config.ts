@@ -45,6 +45,11 @@ const config: Config = {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
         },
+        // VirtualVaani "solid" — dark navy button used in Admin chrome
+        solid: {
+          DEFAULT: "hsl(var(--solid))",
+          foreground: "hsl(var(--solid-foreground))",
+        },
         popover: {
           DEFAULT: "hsl(var(--popover))",
           foreground: "hsl(var(--popover-foreground))",

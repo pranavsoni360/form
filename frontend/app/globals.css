@@ -3,102 +3,106 @@
 @tailwind utilities;
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Design tokens — Retell-style dark-first.
+   Design tokens — VirtualVaani aesthetic.
 
-   Two layers:
-   1. shadcn semantic tokens (--background, --primary, --border, …)
-      drive every shadcn primitive and Tremor chart.
-   2. Custom extras (--surface, --elevated, --glass, --success, --warning …)
-      drive our /ops/* and retrofitted pages.
+   Light-mode default (matches the admin/bank login + Banks management
+   screenshots): warm cream background with a subtle dot grid, white card
+   surfaces, dark navy text, purple accent for admin chrome + blue gradient
+   for primary CTAs. Dark mode is opt-in via the existing `los-theme`
+   toggle so the chrome stays usable at night.
 
-   Light mode is opt-in via `:root` without `.dark` — kept ONLY so the
-   existing customer-facing form pages don't break. The new ops surface is
-   dark-only by design.
+   The shadcn semantic token names are kept so every shadcn primitive +
+   Tremor chart inherits the palette without per-component edits.
    ────────────────────────────────────────────────────────────────────────── */
 
 @layer base {
   :root {
-    /* Light theme (legacy form pages) — high-level only */
-    --background: 0 0% 100%;
-    --foreground: 220 9% 12%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 9% 12%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 9% 12%;
-    --primary: 263 70% 50%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 220 9% 12%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 45%;
-    --accent: 220 14% 96%;
-    --accent-foreground: 220 9% 12%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 263 70% 50%;
-    --radius: 0.625rem;
+    /* Surfaces */
+    --background:        40 30% 97%;            /* #FAF8F4  warm cream */
+    --foreground:        222 47% 11%;           /* #0F172A  near-black navy */
+    --surface:           0 0% 100%;             /* #FFFFFF  cards */
+    --elevated:          40 30% 99%;            /* hover */
 
-    --surface: 0 0% 100%;
-    --elevated: 220 14% 96%;
-    --success: 142 70% 38%;
-    --success-foreground: 0 0% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 12%;
-    --info: 199 89% 48%;
-    --info-foreground: 0 0% 98%;
+    --card:              0 0% 100%;
+    --card-foreground:   222 47% 11%;
+    --popover:           0 0% 100%;
+    --popover-foreground: 222 47% 11%;
 
-    /* Legacy variables retained */
-    --foreground-rgb: 17, 24, 39;
-    --background-start-rgb: 214, 219, 220;
-    --background-end-rgb: 255, 255, 255;
+    /* Brand — admin purple. Used on icon badges + accent fills. */
+    --primary:           263 70% 55%;           /* #7C3AED */
+    --primary-foreground: 0 0% 100%;
+
+    /* "Solid" CTA — dark navy. Used on primary buttons in the admin chrome.
+       Bank-portal CTAs override this via Tailwind utility classes (blue
+       gradient) at the call site. */
+    --solid:             222 47% 11%;           /* #0F172A */
+    --solid-foreground:  0 0% 100%;
+
+    /* Accent — bright blue, used for headline highlight words ("efficiently") */
+    --accent:            217 91% 60%;           /* #3B82F6 */
+    --accent-foreground: 0 0% 100%;
+
+    /* Muted surfaces (input bg, soft fills) */
+    --muted:             40 18% 94%;            /* #F0EDE6 */
+    --muted-foreground:  217 19% 35%;           /* #475569 */
+    --secondary:         40 18% 94%;
+    --secondary-foreground: 222 47% 11%;
+
+    --destructive:       0 84% 60%;             /* #EF4444  also = "with confidence" red */
+    --destructive-foreground: 0 0% 100%;
+
+    --border:            40 12% 89%;            /* #EAE7E0  soft warm border */
+    --input:             40 12% 89%;
+    --ring:              263 70% 55%;
+
+    --success:           142 71% 38%;           /* #16A34A */
+    --success-foreground: 0 0% 100%;
+    --warning:           38 92% 50%;            /* #F59E0B */
+    --warning-foreground: 222 47% 11%;
+    --info:              217 91% 60%;
+    --info-foreground:   0 0% 100%;
+
+    --radius:            0.625rem;              /* 10px — matches buttons + cards */
   }
 
   .dark {
-    /* Retell-style dark — pure black-ish base, surfaces step lighter */
-    --background: 220 13% 5%;          /* #0a0b0d  page */
-    --foreground: 220 9% 98%;          /* #f9fafb  text */
+    /* Dark mode keeps the dotted-cream vibe replaced by a deep navy canvas */
+    --background:        222 47% 6%;            /* #0A0F1C */
+    --foreground:        40 30% 96%;
+    --surface:           222 47% 9%;            /* #131A2A */
+    --elevated:          222 40% 13%;
 
-    --card: 220 13% 9%;                /* #141618  cards */
-    --card-foreground: 220 9% 98%;
+    --card:              222 47% 9%;
+    --card-foreground:   40 30% 96%;
+    --popover:           222 47% 9%;
+    --popover-foreground: 40 30% 96%;
 
-    --popover: 220 13% 9%;
-    --popover-foreground: 220 9% 98%;
+    --primary:           263 75% 65%;           /* lifted violet for dark bg */
+    --primary-foreground: 0 0% 100%;
 
-    /* Brand violet — Retell-flavored */
-    --primary: 263 70% 60%;            /* CTAs, links, focus */
-    --primary-foreground: 0 0% 98%;
+    --solid:             0 0% 100%;             /* invert: white on dark */
+    --solid-foreground:  222 47% 11%;
 
-    --secondary: 220 13% 13%;          /* secondary surface */
-    --secondary-foreground: 220 9% 98%;
+    --accent:            217 91% 65%;
+    --accent-foreground: 222 47% 11%;
 
-    --muted: 220 13% 13%;
-    --muted-foreground: 220 9% 65%;    /* labels, captions */
+    --muted:             222 30% 16%;
+    --muted-foreground:  217 14% 65%;
+    --secondary:         222 30% 16%;
+    --secondary-foreground: 40 30% 96%;
 
-    --accent: 220 13% 13%;
-    --accent-foreground: 220 9% 98%;
+    --destructive:       0 84% 65%;
+    --destructive-foreground: 0 0% 100%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
+    --border:            222 25% 20%;
+    --input:             222 25% 20%;
+    --ring:              263 75% 65%;
 
-    --border: 220 13% 18%;             /* #2a2e34  card outlines */
-    --input: 220 13% 13%;
-    --ring: 263 70% 60%;
-
-    --surface: 220 13% 9%;             /* alias of --card for clarity */
-    --elevated: 220 13% 13%;           /* hover, dropdowns */
-    --success: 142 70% 45%;
-    --success-foreground: 0 0% 98%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 12%;
-    --info: 199 89% 48%;
-    --info-foreground: 0 0% 98%;
-
-    --foreground-rgb: 243, 244, 246;
+    --success:           142 71% 50%;
+    --warning:           38 92% 60%;
+    --info:              217 91% 65%;
   }
 
-  /* Apply border color globally — shadcn pattern */
   * {
     @apply border-border;
   }
@@ -106,50 +110,73 @@
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
   }
-  /* Tabular numbers everywhere mono is used (sparklines, durations, IDs) */
   .font-mono {
     font-variant-numeric: tabular-nums;
   }
-  /* Subtle scrollbars in dark mode — Retell-style */
-  .dark ::-webkit-scrollbar { width: 10px; height: 10px; }
-  .dark ::-webkit-scrollbar-track { background: hsl(var(--background)); }
-  .dark ::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
-    border-radius: 6px;
-    border: 2px solid hsl(var(--background));
-  }
-  .dark ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Legacy compatibility — kept verbatim from the old globals.css so existing
-   pages (admin, customer form, OTP screens) keep their original look. New
-   ops + retrofitted pages do NOT depend on any of this.
+   VirtualVaani specifics — patterns + helpers.
    ────────────────────────────────────────────────────────────────────────── */
-
-body {
-  color: rgb(var(--foreground-rgb));
-}
-
-.dark body {
-  color: rgb(243 244 246);
-}
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
-  /* Quick semantic helpers for ops UI */
-  .glass {
-    @apply backdrop-blur-xl bg-card/60 border border-border/60;
+
+  /* Subtle dot grid background — used on the page canvas + login hero panels.
+     Two layered radial gradients ~16px apart give the texture seen in the
+     VirtualVaani screenshots. */
+  .bg-dotgrid {
+    background-image: radial-gradient(
+      hsl(var(--foreground) / 0.045) 1px,
+      transparent 1px
+    );
+    background-size: 16px 16px;
+  }
+  .dark .bg-dotgrid {
+    background-image: radial-gradient(
+      hsl(var(--foreground) / 0.06) 1px,
+      transparent 1px
+    );
+  }
+
+  /* Hero panel for login pages — deep navy gradient + white dot grid. */
+  .bg-hero-navy {
+    background:
+      radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px) 0 0 / 18px 18px,
+      linear-gradient(135deg, #0F172A 0%, #1E293B 60%, #1E2D4A 100%);
+  }
+
+  /* Soft icon badge — rounded-square (~36px) with tinted fill + brand-color icon */
+  .badge-icon {
+    @apply grid h-9 w-9 place-items-center rounded-xl ring-1;
+  }
+
+  /* Primary CTA — dark navy with subtle hover lift, used on Admin Portal */
+  .btn-solid {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-[hsl(var(--solid))] px-5 py-2.5 text-sm font-medium text-[hsl(var(--solid-foreground))] shadow-sm transition-all hover:translate-y-[-1px] hover:shadow-md active:translate-y-0;
+  }
+
+  /* Blue gradient CTA — used on Bank Portal sign-in + Add bank */
+  .btn-gradient {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:shadow-md active:translate-y-[1px];
+    background-image: linear-gradient(135deg, #2563EB 0%, #3B82F6 100%);
+  }
+  .btn-gradient:hover {
+    background-image: linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%);
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Legacy compatibility — preserved verbatim so the existing customer-facing
+   form pages (admin, OTP, application form) keep their original look.
+   ────────────────────────────────────────────────────────────────────────── */
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-4px); }
@@ -157,33 +184,21 @@ body {
   60% { transform: translateX(-3px); }
   80% { transform: translateX(3px); }
 }
-
 @keyframes shrink {
   from { width: 100%; }
   to { width: 0%; }
 }
-
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-20px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Legacy dark-mode hooks for existing forms */
-.dark {
-  color-scheme: dark;
-}
-
+.dark { color-scheme: dark; }
 .dark select {
   background-color: #1e2433;
   color: rgb(243 244 246);
   border-color: rgb(75 85 99);
 }
-
 .dark input::placeholder,
-.dark textarea::placeholder {
-  color: rgb(156 163 175);
-}
-
-.dark select option {
-  background-color: #161b27;
-}
+.dark textarea::placeholder { color: rgb(156 163 175); }
+.dark select option { background-color: #161b27; }

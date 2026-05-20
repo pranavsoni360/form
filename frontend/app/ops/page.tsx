@@ -1,17 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import {
   Activity,
   ArrowUpRight,
+  Building2,
   CircleDot,
   Clock,
   Database,
   Flame,
   PhoneCall,
-  Server,
+  PlusCircle,
+  Radio,
   Sparkles,
   Users,
 } from "lucide-react";
+
 import { AppShell } from "@/components/shared/AppShell";
 import { StatusPill } from "@/components/shared/StatusPill";
 import { Button } from "@/components/ui/button";
@@ -24,77 +28,61 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 /**
- * PHASE 0 — Design system showcase.
+ * /ops — Overview dashboard.
  *
- * Once the look is approved, Phase 1 replaces this body with the real
- * Overview dashboard (live KPIs from the backend + Tremor charts +
- * SSE-driven active-calls list).
- *
- * Everything below renders with FAKE data so you can review the visual
- * language end-to-end.
+ * Visual language matches the VirtualVaani Admin Portal screenshots: white
+ * cards on a cream dot-grid canvas, dark-navy CTAs, soft pastel icon badges,
+ * generous spacing. Phase 1 already wires real SSE; this page renders the
+ * KPI grid + sections + design reference using fake placeholder values
+ * until /api/agent/dashboard-stats + the SSE reducers are hooked into the
+ * overview (Chunk E).
  */
 export default function OpsOverviewPage() {
   return (
     <AppShell
-      title="Overview"
-      subtitle="System health · today's calling activity · alerts"
+      title="Operations dashboard"
+      subtitle="Live calls, queue depth, worker health, and recent errors"
     >
-      <div className="mx-auto max-w-7xl space-y-8">
-        <PhaseBanner />
+      <div className="space-y-7">
+        <HeaderActions />
         <KpiGrid />
-        <SectionDivider title="Active calls" hint="Live preview · Phase 1 will wire SSE" />
-        <ActiveCallsPreview />
-        <SectionDivider title="Design language reference" hint="All primitives in one place" />
+        <ActiveCallsCard />
         <DesignReference />
       </div>
     </AppShell>
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────── */
+/* ────────────────────────────── Header actions ─────────────────────────── */
 
-function PhaseBanner() {
+function HeaderActions() {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-gradient-to-r from-primary/10 to-transparent px-5 py-3.5">
+    <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
-        <span className="grid h-8 w-8 place-items-center rounded-md bg-primary/20 ring-1 ring-primary/40">
-          <Sparkles className="h-4 w-4 text-primary" />
-        </span>
-        <div className="leading-tight">
-          <div className="text-sm font-semibold">Phase 0 — Foundation</div>
-          <div className="text-xs text-muted-foreground">
-            shadcn/ui + Tremor + Geist font + Retell-style dark theme. Approve this look
-            to unlock Phase 1 (live SSE dashboards).
-          </div>
-        </div>
+        <StatusPill tone="success" label="Backend healthy" />
+        <StatusPill tone="info" label="SSE · 0 listeners" dot={false} />
       </div>
-      <Button variant="outline" size="sm" className="border-primary/40 text-primary hover:bg-primary/10">
-        View plan
-        <ArrowUpRight className="h-3.5 w-3.5" />
-      </Button>
+      <div className="flex items-center gap-2">
+        <Link
+          href="/bank/batch"
+          className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+        >
+          <Building2 className="h-4 w-4" />
+          Batch upload
+        </Link>
+        <Link href="/ops/live" className="btn-solid">
+          <PlusCircle className="h-4 w-4" />
+          Start a batch
+        </Link>
+      </div>
     </div>
   );
 }
 
-function SectionDivider({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <div className="flex items-end justify-between">
-      <div className="space-y-0.5">
-        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {title}
-        </div>
-        {hint && <div className="text-[11px] text-muted-foreground/70">{hint}</div>}
-      </div>
-      <Separator className="ml-4 flex-1" />
-    </div>
-  );
-}
-
-/* ──────────────────────────── KPI Grid ──────────────────────────── */
+/* ─────────────────────────────── KPI grid ──────────────────────────────── */
 
 const KPI_DATA = [
   {
@@ -102,8 +90,8 @@ const KPI_DATA = [
     value: "0",
     delta: "—",
     icon: PhoneCall,
-    tone: "default" as const,
-    sub: "0 hot leads",
+    tone: "info" as const,
+    sub: "0 hot leads · 0 forms sent",
   },
   {
     label: "Active calls",
@@ -118,7 +106,7 @@ const KPI_DATA = [
     value: "0",
     delta: "—",
     icon: Activity,
-    tone: "default" as const,
+    tone: "warning" as const,
     sub: "transcript_analyze jobs",
   },
   {
@@ -126,26 +114,26 @@ const KPI_DATA = [
     value: "0.0%",
     delta: "—",
     icon: Flame,
-    tone: "default" as const,
+    tone: "danger" as const,
     sub: "0 of 0 requests",
   },
   {
     label: "DB pool",
     value: "0 / 40",
-    delta: "—",
+    delta: "healthy",
     icon: Database,
-    tone: "default" as const,
+    tone: "info" as const,
     sub: "min 10 · max 40",
   },
   {
-    label: "Workers",
+    label: "Workers alive",
     value: "4 / 4",
     delta: "healthy",
     icon: Users,
     tone: "success" as const,
-    sub: "4 job · 1 dispatcher",
+    sub: "4 job workers · 1 dispatcher",
   },
-];
+] as const;
 
 function KpiGrid() {
   return (
@@ -156,6 +144,13 @@ function KpiGrid() {
     </div>
   );
 }
+
+const TONE_STYLES = {
+  info:    "bg-info/10 text-info ring-info/20",
+  success: "bg-success/10 text-success ring-success/25",
+  warning: "bg-warning/15 text-[hsl(var(--warning))] ring-warning/25",
+  danger:  "bg-destructive/10 text-destructive ring-destructive/20",
+} as const;
 
 function KpiCard({
   label,
@@ -169,40 +164,34 @@ function KpiCard({
   value: string;
   delta: string;
   icon: React.ComponentType<{ className?: string }>;
-  tone: "default" | "success" | "warning" | "danger";
+  tone: keyof typeof TONE_STYLES;
   sub: string;
 }) {
   return (
-    <Card className="relative overflow-hidden">
+    <Card className="transition-shadow hover:shadow-md">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardDescription className="text-[11px] uppercase tracking-wider">
+        <div className="flex items-start justify-between">
+          <CardDescription className="text-[11px] font-medium uppercase tracking-[0.14em]">
             {label}
           </CardDescription>
-          <span
-            className={cn(
-              "grid h-7 w-7 place-items-center rounded-md ring-1",
-              tone === "success" && "bg-success/10 text-success ring-success/30",
-              tone === "warning" && "bg-warning/10 text-warning ring-warning/30",
-              tone === "danger" && "bg-destructive/10 text-destructive ring-destructive/30",
-              tone === "default" && "bg-muted/40 text-muted-foreground ring-border"
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
+          <span className={cn("badge-icon", TONE_STYLES[tone])}>
+            <Icon className="h-4 w-4" />
           </span>
         </div>
       </CardHeader>
-      <CardContent className="space-y-1">
-        <div className="font-mono text-kpi text-foreground">{value}</div>
+      <CardContent className="space-y-1.5 pt-0">
+        <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
+          {value}
+        </div>
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-muted-foreground">{sub}</span>
           <span
             className={cn(
               "font-mono",
               tone === "success" && "text-success",
-              tone === "warning" && "text-warning",
+              tone === "warning" && "text-[hsl(var(--warning))]",
               tone === "danger" && "text-destructive",
-              tone === "default" && "text-muted-foreground"
+              tone === "info" && "text-muted-foreground"
             )}
           >
             {delta}
@@ -213,128 +202,173 @@ function KpiCard({
   );
 }
 
-/* ──────────────────────────── Active calls preview ──────────────────────────── */
+/* ──────────────────────── Active calls (preview) ───────────────────────── */
 
-function ActiveCallsPreview() {
+function ActiveCallsCard() {
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between pb-4">
-        <div>
-          <CardTitle>Live call monitor</CardTitle>
-          <CardDescription>0 calls in-flight · refreshes via SSE (Phase 1)</CardDescription>
+      <CardHeader className="flex-row items-start justify-between pb-4">
+        <div className="space-y-1">
+          <CardTitle className="text-lg">Live call monitor</CardTitle>
+          <CardDescription>
+            Cards appear the moment the dispatcher picks a call up. Hop to{" "}
+            <Link href="/ops/live" className="font-medium text-primary hover:underline">
+              /ops/live
+            </Link>{" "}
+            for the full grid.
+          </CardDescription>
         </div>
-        <StatusPill tone="neutral" label="Idle" />
+        <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+          0 active
+        </Badge>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {/* Placeholder cards — Phase 1 replaces with <LiveCallCard /> driven by SSE */}
-          {[1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="rounded-lg border border-dashed border-border/60 bg-card/40 p-4"
-            >
-              <Skeleton className="mb-2 h-3 w-24" />
-              <Skeleton className="mb-3 h-5 w-40" />
-              <div className="flex items-center justify-between">
-                <Skeleton className="h-3 w-20" />
-                <Skeleton className="h-3 w-16" />
-              </div>
-              <div className="mt-3 flex h-12 items-end gap-1">
-                {Array.from({ length: 16 }).map((_, j) => (
-                  <Skeleton
-                    key={j}
-                    className="w-1.5"
-                    style={{ height: `${20 + ((i * 13 + j * 7) % 32)}px` }}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 flex items-center justify-center rounded-md border border-dashed border-border/40 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-          <Clock className="mr-2 h-3.5 w-3.5" />
-          Phase 1 wires this section to the real-time SSE stream.
+        <div className="grid place-items-center rounded-xl border border-dashed border-border bg-muted/30 px-6 py-12 text-center">
+          <div className="grid h-12 w-12 place-items-center rounded-xl bg-card shadow-sm">
+            <Radio className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div className="mt-3 text-sm font-semibold">No active calls right now</div>
+          <div className="mt-1 max-w-sm text-xs text-muted-foreground">
+            Upload a CSV from{" "}
+            <Link href="/bank/batch" className="font-medium text-primary hover:underline">
+              Batch
+            </Link>{" "}
+            or start a single call — the dispatcher will pick it up within seconds and
+            cards will appear live here.
+          </div>
+          <Link
+            href="/bank/batch"
+            className="btn-gradient mt-5"
+          >
+            <PlusCircle className="h-4 w-4" />
+            Upload a batch
+          </Link>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-/* ──────────────────────────── Design reference ──────────────────────────── */
+/* ─────────────────────────── Design reference ──────────────────────────── */
 
 function DesignReference() {
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Status pills</CardTitle>
-          <CardDescription>Used for call state, worker health, batch status</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <StatusPill tone="success" label="Connected" />
-          <StatusPill tone="info" label="Dialing" />
-          <StatusPill tone="warning" label="Cooldown 2m 14s" />
-          <StatusPill tone="danger" label="Circuit open" />
-          <StatusPill tone="neutral" label="Pending" />
-          <StatusPill tone="success" label="Healthy" dot={false} />
-        </CardContent>
-      </Card>
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="badge-icon bg-primary/10 text-primary ring-primary/20">
+            <Sparkles className="h-4 w-4" />
+          </span>
+          <div>
+            <CardTitle className="text-base">Design language</CardTitle>
+            <CardDescription className="text-xs">
+              VirtualVaani aesthetic · cream + dark navy + admin purple
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Status pills */}
+        <div>
+          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            Status pills
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <StatusPill tone="success" label="Connected" />
+            <StatusPill tone="info" label="Dialing" />
+            <StatusPill tone="warning" label="Cooldown 2m 14s" />
+            <StatusPill tone="danger" label="Circuit open" />
+            <StatusPill tone="neutral" label="Pending" />
+            <StatusPill tone="success" label="Healthy" dot={false} />
+          </div>
+        </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Badges & buttons</CardTitle>
-          <CardDescription>shadcn primitives wired to Retell tokens</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="default">Default</Badge>
-            <Badge variant="secondary">Secondary</Badge>
-            <Badge variant="success">Success</Badge>
-            <Badge variant="warning">Warning</Badge>
-            <Badge variant="destructive">Destructive</Badge>
-            <Badge variant="info">Info</Badge>
-            <Badge variant="outline">Outline</Badge>
-          </div>
-          <Separator />
-          <div className="flex flex-wrap gap-2">
-            <Button>Primary</Button>
-            <Button variant="secondary">Secondary</Button>
-            <Button variant="outline">Outline</Button>
-            <Button variant="ghost">Ghost</Button>
-            <Button variant="destructive">Stop calling</Button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm">Small</Button>
-            <Button size="default">Default</Button>
-            <Button size="lg">Large</Button>
-            <Button size="icon" aria-label="More">
-              <Server className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        <Separator />
 
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle>Typography</CardTitle>
-          <CardDescription>Geist Sans for UI · Geist Mono for data</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-baseline gap-6">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">Sans</span>
-            <span className="text-3xl font-semibold tracking-tight">Loan Origination System</span>
+        {/* Buttons */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              CTAs (admin chrome)
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-solid">
+                <PlusCircle className="h-4 w-4" />
+                Dark navy
+              </button>
+              <button className="btn-gradient">
+                <PlusCircle className="h-4 w-4" />
+                Blue gradient
+              </button>
+              <Button variant="outline">Outline</Button>
+              <Button variant="ghost">Ghost</Button>
+            </div>
           </div>
-          <div className="flex items-baseline gap-6">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">Mono</span>
-            <span className="font-mono text-2xl">+91-XXXXX98765 · 0:42 · 1,247 calls</span>
+
+          <div>
+            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Badges
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="default">Default</Badge>
+              <Badge variant="secondary">Secondary</Badge>
+              <Badge variant="success">Success</Badge>
+              <Badge variant="warning">Warning</Badge>
+              <Badge variant="destructive">Destructive</Badge>
+              <Badge variant="info">Info</Badge>
+              <Badge variant="outline">Outline</Badge>
+            </div>
           </div>
-          <div className="flex items-baseline gap-6">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">KPI</span>
-            <span className="font-mono text-kpi text-foreground">5000</span>
-            <span className="text-sm text-muted-foreground">calls / day target</span>
+        </div>
+
+        <Separator />
+
+        {/* Typography */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-border bg-muted/30 p-4">
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Heading
+            </div>
+            <div className="text-2xl font-bold tracking-tight">
+              Loan Origination System
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Reviews loan applications efficiently with AI-assisted pipelines.
+            </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+          <div className="rounded-xl border border-border bg-muted/30 p-4">
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Mono · data
+            </div>
+            <div className="space-y-1 font-mono text-sm">
+              <div>+91-XXXXX98765</div>
+              <div className="text-muted-foreground">0:42 · 1,247 calls</div>
+              <div className="text-3xl font-bold text-foreground">5000</div>
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Phase banner */}
+        <Link
+          href="/ops/live"
+          className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 transition-colors hover:bg-primary/10"
+        >
+          <div className="flex items-center gap-3">
+            <span className="badge-icon bg-primary/15 text-primary ring-primary/30">
+              <ArrowUpRight className="h-4 w-4" />
+            </span>
+            <div className="leading-tight">
+              <div className="text-sm font-semibold">View live calls</div>
+              <div className="text-xs text-muted-foreground">
+                Real-time SSE — cards appear in &lt;200ms after dispatch
+              </div>
+            </div>
+          </div>
+          <Clock className="h-4 w-4 text-muted-foreground" />
+        </Link>
+      </CardContent>
+    </Card>
   );
 }

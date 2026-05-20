@@ -1,12 +1,131 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
+/* ──────────────────────────────────────────────────────────────────────────
+   Design tokens — Retell-style dark-first.
+
+   Two layers:
+   1. shadcn semantic tokens (--background, --primary, --border, …)
+      drive every shadcn primitive and Tremor chart.
+   2. Custom extras (--surface, --elevated, --glass, --success, --warning …)
+      drive our /ops/* and retrofitted pages.
+
+   Light mode is opt-in via `:root` without `.dark` — kept ONLY so the
+   existing customer-facing form pages don't break. The new ops surface is
+   dark-only by design.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    /* Light theme (legacy form pages) — high-level only */
+    --background: 0 0% 100%;
+    --foreground: 220 9% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 9% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 9% 12%;
+    --primary: 263 70% 50%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 9% 12%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 45%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 220 9% 12%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 263 70% 50%;
+    --radius: 0.625rem;
+
+    --surface: 0 0% 100%;
+    --elevated: 220 14% 96%;
+    --success: 142 70% 38%;
+    --success-foreground: 0 0% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 12%;
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 98%;
+
+    /* Legacy variables retained */
+    --foreground-rgb: 17, 24, 39;
+    --background-start-rgb: 214, 219, 220;
+    --background-end-rgb: 255, 255, 255;
+  }
+
+  .dark {
+    /* Retell-style dark — pure black-ish base, surfaces step lighter */
+    --background: 220 13% 5%;          /* #0a0b0d  page */
+    --foreground: 220 9% 98%;          /* #f9fafb  text */
+
+    --card: 220 13% 9%;                /* #141618  cards */
+    --card-foreground: 220 9% 98%;
+
+    --popover: 220 13% 9%;
+    --popover-foreground: 220 9% 98%;
+
+    /* Brand violet — Retell-flavored */
+    --primary: 263 70% 60%;            /* CTAs, links, focus */
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 220 13% 13%;          /* secondary surface */
+    --secondary-foreground: 220 9% 98%;
+
+    --muted: 220 13% 13%;
+    --muted-foreground: 220 9% 65%;    /* labels, captions */
+
+    --accent: 220 13% 13%;
+    --accent-foreground: 220 9% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 220 13% 18%;             /* #2a2e34  card outlines */
+    --input: 220 13% 13%;
+    --ring: 263 70% 60%;
+
+    --surface: 220 13% 9%;             /* alias of --card for clarity */
+    --elevated: 220 13% 13%;           /* hover, dropdowns */
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 12%;
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 98%;
+
+    --foreground-rgb: 243, 244, 246;
+  }
+
+  /* Apply border color globally — shadcn pattern */
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  }
+  /* Tabular numbers everywhere mono is used (sparklines, durations, IDs) */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Subtle scrollbars in dark mode — Retell-style */
+  .dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+  .dark ::-webkit-scrollbar-track { background: hsl(var(--background)); }
+  .dark ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 6px;
+    border: 2px solid hsl(var(--background));
+  }
+  .dark ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Legacy compatibility — kept verbatim from the old globals.css so existing
+   pages (admin, customer form, OTP screens) keep their original look. New
+   ops + retrofitted pages do NOT depend on any of this.
+   ────────────────────────────────────────────────────────────────────────── */
 
 body {
   color: rgb(var(--foreground-rgb));
@@ -19,6 +138,10 @@ body {
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  /* Quick semantic helpers for ops UI */
+  .glass {
+    @apply backdrop-blur-xl bg-card/60 border border-border/60;
   }
 }
 
@@ -45,8 +168,7 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-
-/* Dark mode enhancements */
+/* Legacy dark-mode hooks for existing forms */
 .dark {
   color-scheme: dark;
 }

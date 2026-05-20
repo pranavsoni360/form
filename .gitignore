@@ -25,3 +25,4 @@ incident_report*
 dummy.xlsx
 dummy_test_*.csv
 dummy_test_*.xlsx
+frontend/tsconfig.tsbuildinfo

@@ -69,7 +69,7 @@ async def send_whatsapp_form(request: Request):
     bare_phone = _digits[-10:] if len(_digits) >= 10 else _digits
 
     if agent_type == "account_opening":
-        form_url = f"{FORM_BASE_URL}/account-form?call_id={call_id}"
+        form_url = f"{FORM_BASE_URL}/bank/account-form?call_id={call_id}"
     else:
         form_url = f"{FORM_BASE_URL}/?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/"
 

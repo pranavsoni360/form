@@ -33,8 +33,10 @@ Required, set in `/root/vaani_los_form/backend/.env`:
 | `JWT_SECRET` | ≥32 char random string |
 | `ENCRYPTION_KEY` | ≥32 char random string |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `SIP_TRUNK_ID` | LiveKit/SIP credentials |
-| `GEMINI_API_KEY`, `DEEPGRAM_API_KEY`, `SARVAM_API_KEY` | AI providers |
+| `GEMINI_API_KEY` | Backend transcript-analysis cron (Gemini only) |
 | `AISENSY_API_KEY`, `AISENSY_CAMPAIGN_NAME` | WhatsApp form delivery |
+
+> **Note:** `DEEPGRAM_API_KEY`, `SARVAM_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY` live in `agent/.env.local`, **not** here. They are consumed by the voice-agent worker (`agent/agent_core.py`), a separate process. The backend never touches them.
 | `RECORDING_BASE_URL` | Where LiveKit egress serves recordings (e.g. `http://164.52.217.236:7000`) |
 | `SENTRY_DSN_BACKEND` | Sentry project DSN (free tier OK) |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather (see §5.3) |
@@ -44,6 +46,25 @@ Required, set in `/root/vaani_los_form/backend/.env`:
 | `DISPATCHER_CONCURRENCY` | Concurrent in-flight calls (default 5). See §6 |
 
 Full template: `backend/.env.example`.
+
+### 2.1 Local smoke test (no real LiveKit)
+
+For end-to-end CSV → dispatch testing on a dev box without dialing real phones, set `AGENT_DEMO_MODE=true` before booting the backend. The dispatcher will simulate each call (3 s sleep, random outcome) instead of hitting LiveKit/SIP — same DB writes, same code path, no PSTN cost.
+
+```bash
+# Boot from backend/ cwd so `lib.*` imports resolve
+cd backend
+AGENT_DEMO_MODE=true venv/bin/uvicorn main:app --host 127.0.0.1 --port 8200
+
+# In another shell:
+curl -X POST "http://127.0.0.1:8200/api/agent/upload-excel?language=hindi&gender=male&agent_type=loan_enquiry" \
+     -F "file=@smoketest_batch.csv"
+curl "http://127.0.0.1:8200/api/agent/batch-status?batch_id=<from prev response>"
+```
+
+Expected: a 3-row batch finishes in ~5-8 s with `completed=3`. On Windows, prefix with PowerShell `$env:AGENT_DEMO_MODE='true';` instead.
+
+The env var name is **`AGENT_DEMO_MODE`** (read in `backend/agent/state.py`). Plain `DEMO_MODE` is ignored.
 
 ---
 

@@ -43,9 +43,19 @@ from typing import Optional
 from livekit import api
 
 from lib.circuit_breaker import protect, CircuitOpenError
+from lib.event_bus import event_bus
 
 
 logger = logging.getLogger(__name__)
+
+
+def _emit(topic: str, event: dict) -> None:
+    """Fire-and-forget pub. Never raises — keeps the dispatcher hot path
+    safe even if the event bus or SSE listeners misbehave."""
+    try:
+        event_bus.publish(topic, event)
+    except Exception:
+        pass
 
 # How many calls to launch in parallel. Below the dispatcher's actual ceiling
 # (which is min(this, total phone pool capacity)). For 500/day on a single
@@ -98,8 +108,16 @@ async def _acquire_trunk_from_db(db_pool) -> Optional[dict]:
                     WHERE id = $1""",
                 row["id"],
             )
+    phone_id = str(row["id"])
+    _emit("phones", {
+        "type": "pool_update",
+        "action": "acquire",
+        "phone_id": phone_id,
+        "phone_number": row["phone_number"],
+        "active_delta": 1,
+    })
     return {
-        "id": str(row["id"]),
+        "id": phone_id,
         "trunk_id": row["livekit_trunk_id"],
         "phone_number": row["phone_number"],
         "cooldown_min": int(row["cooldown_seconds_min"] or 0),
@@ -127,6 +145,15 @@ async def _release_trunk_to_db(db_pool, trunk: dict, success: bool) -> None:
             WHERE id = $1""",
         uuid.UUID(trunk["id"]),
     )
+    _emit("phones", {
+        "type": "pool_update",
+        "action": "release",
+        "phone_id": trunk["id"],
+        "phone_number": trunk.get("phone_number"),
+        "active_delta": -1,
+        "cooldown_started": bool(success and trunk["cooldown_max"] > 0),
+        "cooldown_seconds": trunk["cooldown_max"] if success else 0,
+    })
 
 
 def _env_fallback_trunk(sip_trunk_id: str) -> Optional[dict]:
@@ -237,6 +264,17 @@ class Dispatcher:
             "Dispatcher batch=%s starting | pending=%d | concurrency=%d",
             self.batch_id_uuid, len(pending), self.semaphore._value,
         )
+        _emit("batches", {
+            "type": "batch_progress",
+            "status": "running",
+            "batch_id": self.call_batch_id,
+            "batch_uuid": self.batch_id_uuid,
+            "bank_id": pending[0].get("bank_id") if pending else None,
+            "total": len(pending),
+            "completed": 0,
+            "failed": 0,
+            "successful": 0,
+        })
 
         # Launch one task per call; semaphore inside _dispatch_one bounds peak.
         tasks = [asyncio.create_task(self._dispatch_one(c), name=f"call-{c['id']}")
@@ -247,6 +285,15 @@ class Dispatcher:
             "Dispatcher batch=%s done | %s",
             self.batch_id_uuid, self.counts,
         )
+        _emit("batches", {
+            "type": "batch_progress",
+            "status": "done",
+            "batch_id": self.call_batch_id,
+            "batch_uuid": self.batch_id_uuid,
+            "bank_id": pending[0].get("bank_id") if pending else None,
+            "total": len(pending),
+            **self.counts,
+        })
 
         # M5: alert on sustained failure rate. Threshold: >=5 failures AND
         # >50% of attempts failed. dedupe_key includes the batch so we get
@@ -290,6 +337,20 @@ class Dispatcher:
             call_uuid = uuid.UUID(call["id"])
             name = call.get("customer_name") or "Customer"
             phone = call.get("phone") or ""
+
+            # Emit lifecycle event: dispatcher has picked this call up.
+            # UI uses this to insert a card into /ops/live instantly.
+            _emit("calls", {
+                "type": "call_state",
+                "status": "dispatching",
+                "call_id": str(call_uuid),
+                "batch_id": call.get("batch_id"),
+                "bank_id": call.get("bank_id"),
+                "customer_name": name,
+                "phone": phone,
+                "language": call.get("language"),
+                "agent_type": call.get("agent_type"),
+            })
 
             # Validate phone (same as old loop)
             if not phone or len(phone) < 10:
@@ -363,6 +424,17 @@ class Dispatcher:
                 await _release_trunk_to_db(self.db_pool, trunk, success=outcome_success)
                 await self._bump("successful" if outcome_success else "failed")
                 await self._bump("completed")
+                # Emit terminal lifecycle event so the UI card transitions
+                # to its final state (green check / red cross) + vanishes.
+                _emit("calls", {
+                    "type": "call_state",
+                    "status": "completed" if outcome_success else "failed",
+                    "call_id": str(call_uuid),
+                    "batch_id": call.get("batch_id"),
+                    "bank_id": call.get("bank_id"),
+                    "customer_name": name,
+                    "outcome_success": outcome_success,
+                })
 
     # ─── Per-call placement (real or demo) ───────────────────────────────────
 

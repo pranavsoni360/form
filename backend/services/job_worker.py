@@ -32,8 +32,18 @@ from typing import Awaitable, Callable
 
 import asyncpg
 
+from lib.event_bus import event_bus
+
 
 logger = logging.getLogger(__name__)
+
+
+def _emit(topic: str, event: dict) -> None:
+    """Best-effort SSE publish. Worker hot path must never raise from here."""
+    try:
+        event_bus.publish(topic, event)
+    except Exception:
+        pass
 
 HandlerFn = Callable[[dict, asyncpg.Pool], Awaitable[None]]
 
@@ -68,6 +78,8 @@ class JobWorker:
         self.handlers = handlers
         self.idle_interval = idle_interval
         self._stop = asyncio.Event()
+        self.jobs_processed = 0
+        self.started_at = None  # set in run_forever()
 
     def stop(self) -> None:
         """Signal the worker loop to exit after the current job (if any) finishes."""
@@ -75,7 +87,17 @@ class JobWorker:
 
     async def run_forever(self) -> None:
         """Main worker loop. Returns when stop() is called and current job done."""
+        import time as _time
+        self.started_at = _time.time()
         logger.info("Job worker %s starting", self.worker_id)
+        _emit("workers", {
+            "type": "worker_heartbeat",
+            "kind": "job_worker",
+            "worker_id": self.worker_id,
+            "status": "starting",
+            "jobs_processed": 0,
+            "uptime_seconds": 0,
+        })
         while not self._stop.is_set():
             try:
                 got_job = await self._process_one()
@@ -86,6 +108,17 @@ class JobWorker:
                 logger.exception("Worker %s top-level loop error", self.worker_id)
                 got_job = False
 
+            # Heartbeat once per loop iteration — busy worker emits between
+            # jobs, idle worker emits every IDLE_POLL_INTERVAL_SECONDS.
+            _emit("workers", {
+                "type": "worker_heartbeat",
+                "kind": "job_worker",
+                "worker_id": self.worker_id,
+                "status": "active" if got_job else "idle",
+                "jobs_processed": self.jobs_processed,
+                "uptime_seconds": int(_time.time() - (self.started_at or _time.time())),
+            })
+
             if not got_job:
                 # No work; sleep but wake early if stop is signalled.
                 try:
@@ -93,6 +126,14 @@ class JobWorker:
                 except asyncio.TimeoutError:
                     pass
         logger.info("Job worker %s exiting", self.worker_id)
+        _emit("workers", {
+            "type": "worker_heartbeat",
+            "kind": "job_worker",
+            "worker_id": self.worker_id,
+            "status": "stopped",
+            "jobs_processed": self.jobs_processed,
+            "uptime_seconds": int(_time.time() - (self.started_at or _time.time())),
+        })
 
     async def _process_one(self) -> bool:
         """Claim and process exactly one job. Returns True if a job was found."""
@@ -150,6 +191,11 @@ class JobWorker:
             await self._mark_dead(job_id, err)
             return
 
+        _emit("workers", {
+            "type": "job_event", "phase": "started",
+            "job_id": str(job_id), "job_type": job_type,
+            "attempts": attempts, "worker_id": self.worker_id,
+        })
         try:
             await handler(payload, self.db_pool)
         except NotImplementedError as e:
@@ -157,12 +203,30 @@ class JobWorker:
             # job doesn't loop forever burning retries.
             logger.warning("Job %s (%s) not implemented yet: %s", job_id, job_type, e)
             await self._mark_dead(job_id, f"not_implemented: {e}")
+            _emit("workers", {
+                "type": "job_event", "phase": "dead",
+                "job_id": str(job_id), "job_type": job_type,
+                "reason": "not_implemented", "worker_id": self.worker_id,
+            })
         except Exception as e:
             logger.exception("Job %s (%s) failed on attempt %d", job_id, job_type, attempts)
             await self._mark_failed_or_dead(job_id, attempts, max_attempts, str(e))
+            _emit("workers", {
+                "type": "job_event",
+                "phase": "dead" if attempts >= max_attempts else "failed",
+                "job_id": str(job_id), "job_type": job_type,
+                "attempts": attempts, "max_attempts": max_attempts,
+                "error": str(e)[:200], "worker_id": self.worker_id,
+            })
         else:
             await self._mark_done(job_id)
+            self.jobs_processed += 1
             logger.info("Job %s (%s) done", job_id, job_type)
+            _emit("workers", {
+                "type": "job_event", "phase": "done",
+                "job_id": str(job_id), "job_type": job_type,
+                "worker_id": self.worker_id,
+            })
 
     async def _mark_done(self, job_id: uuid.UUID) -> None:
         await self.db_pool.execute(
@@ -257,6 +321,7 @@ class JobWorkerPool:
         self.n_workers = n_workers
         self._workers: list[JobWorker] = []
         self._tasks: list[asyncio.Task] = []
+        self._depth_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Recover orphaned jobs, then launch worker tasks."""
@@ -269,10 +334,50 @@ class JobWorkerPool:
             )
             self._workers.append(w)
             self._tasks.append(asyncio.create_task(w.run_forever(), name=f"jobworker-{i}"))
+        # Background poller: emit queue_depth every 10s so /ops overview
+        # has a live number without N workers each running their own query.
+        self._depth_task = asyncio.create_task(self._poll_queue_depth(), name="queue-depth-poller")
         logger.info("JobWorkerPool started with %d worker(s)", self.n_workers)
+
+    async def _poll_queue_depth(self) -> None:
+        """Emit a queue_depth event every 10 seconds. Cheap COUNT(*) — the
+        partial index from migration_v8 makes it ~O(log n) on pending rows."""
+        while True:
+            try:
+                row = await self.db_pool.fetchrow(
+                    """SELECT
+                         COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                         COUNT(*) FILTER (WHERE status = 'failed')  AS failed,
+                         COUNT(*) FILTER (WHERE status = 'running') AS running,
+                         COUNT(*) FILTER (WHERE status = 'dead')    AS dead
+                       FROM call_processing_jobs"""
+                )
+                _emit("workers", {
+                    "type": "queue_depth",
+                    "pending": int(row["pending"] or 0),
+                    "failed": int(row["failed"] or 0),
+                    "running": int(row["running"] or 0),
+                    "dead": int(row["dead"] or 0),
+                    "workers_alive": sum(1 for t in self._tasks if not t.done()),
+                    "workers_total": self.n_workers,
+                })
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("queue_depth poll failed (non-fatal)")
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                raise
 
     async def stop(self) -> None:
         """Signal workers to exit; wait briefly then cancel any stragglers."""
+        if self._depth_task and not self._depth_task.done():
+            self._depth_task.cancel()
+            try:
+                await self._depth_task
+            except (asyncio.CancelledError, Exception):
+                pass
         for w in self._workers:
             w.stop()
         if not self._tasks:

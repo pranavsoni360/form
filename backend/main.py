@@ -134,12 +134,20 @@ async def correlation_id_middleware(request: Request, call_next):
 from routers.ops import router as ops_router  # noqa: E402
 app.include_router(ops_router)
 
+# M6: realtime SSE router — /api/realtime/stream-token + /api/realtime/events
+from routers.realtime import router as realtime_router  # noqa: E402
+app.include_router(realtime_router)
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
     """Catch-all for unhandled exceptions. Logs with correlation_id and
     returns a sanitized JSON response. Sentry, if initialized, has already
-    been notified via its FastApi integration."""
+    been notified via its FastApi integration.
+
+    Also fans the error out to the SSE "errors" topic so /ops/errors and
+    the top-bar status pill light up in real time.
+    """
     from fastapi.responses import JSONResponse
     cid = correlation_id_var.get() or "-"
     logger.exception(
@@ -150,6 +158,20 @@ async def _global_exception_handler(request: Request, exc: Exception):
             "exc_type": type(exc).__name__,
         },
     )
+    # Fire-and-forget event publish. Never raise from here — we're already
+    # inside the error path.
+    try:
+        from lib.event_bus import event_bus
+        event_bus.publish("errors", {
+            "type": "error",
+            "correlation_id": cid,
+            "route": str(request.url.path),
+            "method": request.method,
+            "exc_type": type(exc).__name__,
+            "message": str(exc)[:300],
+        })
+    except Exception:
+        pass
     return JSONResponse(
         status_code=500,
         content={"error": "internal", "correlation_id": cid},

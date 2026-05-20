@@ -1,9 +1,19 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
+import { Sen } from "next/font/google";
 
 import { Providers } from "./providers";
+
+// Sen — matches the VirtualVaani master frontend + login/dashboard screenshots.
+// Self-hosted via next/font (no runtime Google Fonts call). Used for both UI
+// and tabular numbers (Sen has OpenType `tnum` feature, enabled via the
+// .font-mono utility in globals.css).
+const sen = Sen({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500", "700", "800"],
+  variable: "--font-sans",
+});
 
 export const metadata: Metadata = {
   title: "LOS — Loan Origination System",
@@ -26,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      className={sen.variable}
     >
       <head>
         <script

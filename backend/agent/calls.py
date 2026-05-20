@@ -435,6 +435,90 @@ async def get_dashboard_stats(
     return {"date": date or now_ist().strftime("%Y-%m-%d"), **stats}
 
 
+@router.get("/funnel")
+async def get_funnel(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """Conversion funnel for the /ops/funnel dashboard.
+
+    Stages (in order of progression):
+        queued    — Pending or Scheduled
+        attempted — anything past Pending (Calling or terminal)
+        connected — completed call states (Called - …)
+        interested — call_analysis.lead_quality in ('hot','warm')
+        form_sent — form_sent = true
+        application — has an application_id linked
+
+    Defaults to today (IST) if no date range supplied.
+    """
+    where = "TRUE"
+    params: list = []
+    idx = 1
+
+    def _parse(d: str) -> Optional[datetime]:
+        try:
+            return datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    if date_from:
+        dt = _parse(date_from)
+        if dt:
+            where += f" AND created_at >= ${idx}"
+            params.append(dt)
+            idx += 1
+    if date_to:
+        dt = _parse(date_to)
+        if dt:
+            where += f" AND created_at < ${idx}"
+            params.append(dt + timedelta(days=1))
+            idx += 1
+
+    if not date_from and not date_to:
+        # Default: today (IST midnight)
+        today = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+        where += f" AND created_at >= ${idx}"
+        params.append(today)
+        idx += 1
+
+    base = f"SELECT COUNT(*) FROM agent_calls WHERE {where}"
+
+    queued = await _state.db_pool.fetchval(
+        f"{base} AND status IN ('Pending', 'Scheduled')", *params
+    )
+    attempted = await _state.db_pool.fetchval(
+        f"{base} AND status NOT IN ('Pending', 'Scheduled')", *params
+    )
+    connected = await _state.db_pool.fetchval(
+        f"{base} AND status LIKE 'Called%'", *params
+    )
+    interested = await _state.db_pool.fetchval(
+        f"{base} AND call_analysis->>'lead_quality' IN ('hot', 'warm')", *params
+    )
+    form_sent = await _state.db_pool.fetchval(
+        f"{base} AND form_sent = true", *params
+    )
+    application = await _state.db_pool.fetchval(
+        f"{base} AND application_id IS NOT NULL", *params
+    )
+    total = queued + attempted
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "total": total,
+        "stages": [
+            {"key": "queued", "label": "Queued", "count": int(queued or 0)},
+            {"key": "attempted", "label": "Attempted", "count": int(attempted or 0)},
+            {"key": "connected", "label": "Connected", "count": int(connected or 0)},
+            {"key": "interested", "label": "Interested", "count": int(interested or 0)},
+            {"key": "form_sent", "label": "Form sent", "count": int(form_sent or 0)},
+            {"key": "application", "label": "Application", "count": int(application or 0)},
+        ],
+    }
+
+
 @router.get("/analytics")
 async def get_analytics():
     """Analytics summary (all calls)."""

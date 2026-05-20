@@ -1,23 +1,24 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   ArrowUpRight,
-  Building2,
   CircleDot,
-  Clock,
-  Database,
+  Cpu,
   Flame,
   PhoneCall,
   PlusCircle,
   Radio,
   Sparkles,
-  Users,
 } from "lucide-react";
 
 import { AppShell } from "@/components/shared/AppShell";
 import { StatusPill } from "@/components/shared/StatusPill";
+import { StatCard, type StatTone } from "@/components/ops/StatCard";
+import { ActivityChart } from "@/components/ops/ActivityChart";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,227 +30,290 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { API_URL } from "@/lib/api";
+import { useEventStream } from "@/lib/realtime/useEventStream";
+import { useRealtimeConnection } from "@/lib/realtime/RealtimeProvider";
+import {
+  callsReducer,
+  initialCallsState,
+  workersReducer,
+  initialWorkersState,
+  errorsReducer,
+  initialErrorsState,
+  type CallsState,
+  type WorkersState,
+  type ErrorsState,
+} from "@/lib/realtime/reducers";
+import {
+  activityReducer,
+  bucketActivity,
+  initialActivityState,
+  type ActivityState,
+} from "@/lib/realtime/activity-buffer";
 
-/**
- * /ops — Overview dashboard.
- *
- * Visual language matches the VirtualVaani Admin Portal screenshots: white
- * cards on a cream dot-grid canvas, dark-navy CTAs, soft pastel icon badges,
- * generous spacing. Phase 1 already wires real SSE; this page renders the
- * KPI grid + sections + design reference using fake placeholder values
- * until /api/agent/dashboard-stats + the SSE reducers are hooked into the
- * overview (Chunk E).
- */
+/* ───────────────────────── Backend response shape ────────────────────── */
+
+interface DashboardStats {
+  total_calls: number;
+  whatsapp_forms_sent: number;
+  hot_leads: number;
+  by_status?: Record<string, number>;
+  by_category?: Record<string, number>;
+}
+
+/* ───────────────────────────── Page ──────────────────────────────────── */
+
 export default function OpsOverviewPage() {
+  // REST snapshot — today's volume + lead counts
+  const stats = useQuery<DashboardStats>({
+    queryKey: ["dashboard-stats"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/agent/dashboard-stats`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  // SSE — live state
+  const calls = useEventStream<CallsState>("calls", callsReducer, initialCallsState);
+  const workers = useEventStream<WorkersState>("workers", workersReducer, initialWorkersState);
+  const errors = useEventStream<ErrorsState>("errors", errorsReducer, initialErrorsState);
+  const activity = useEventStream<ActivityState>(
+    ["calls", "errors", "batches"],
+    activityReducer,
+    initialActivityState
+  );
+  const { state: connState } = useRealtimeConnection();
+
+  // 1Hz tick so the 5-minute error window + activity chart re-derive
+  const [tickNow, setTickNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const id = setInterval(() => setTickNow(Date.now()), 5_000);
+    return () => clearInterval(id);
+  }, []);
+
+  /* ─── Derived metrics ──────────────────────────────────────────────── */
+
+  const activeCallsCount = React.useMemo(
+    () =>
+      Object.values(calls.byId).filter(
+        (c) => c.status === "dispatching" || c.status === "calling"
+      ).length,
+    [calls]
+  );
+
+  const errorsLast5m = React.useMemo(() => {
+    const cutoff = tickNow - 5 * 60_000;
+    return errors.recent.filter((e) => e.ts >= cutoff).length;
+  }, [errors, tickNow]);
+
+  const queue = workers.queueDepth;
+
+  // Activity chart series: last 2 minutes, 10-second buckets
+  const activitySeries = React.useMemo(
+    () => bucketActivity(activity.events, 2 * 60_000, 10_000),
+    [activity, tickNow]
+  );
+
+  /* ─── KPIs ─────────────────────────────────────────────────────────── */
+
+  const KPIS = [
+    {
+      label: "CALLS TODAY",
+      value: stats.data?.total_calls ?? 0,
+      icon: PhoneCall,
+      tone: "info" as StatTone,
+      hint: `${stats.data?.hot_leads ?? 0} hot · ${stats.data?.whatsapp_forms_sent ?? 0} forms`,
+    },
+    {
+      label: "ACTIVE NOW",
+      value: activeCallsCount,
+      icon: CircleDot,
+      tone: (activeCallsCount > 0 ? "success" : "neutral") as StatTone,
+      hint: connState === "open" ? "live SSE" : "stream offline",
+    },
+    {
+      label: "QUEUE PENDING",
+      value: queue?.pending ?? 0,
+      icon: Activity,
+      tone: ((queue?.pending ?? 0) > 50 ? "warning" : "info") as StatTone,
+      hint: queue ? `${queue.running} running · ${queue.dead} dead` : undefined,
+    },
+    {
+      label: "ERRORS · 5M",
+      value: errorsLast5m,
+      icon: Flame,
+      tone: (errorsLast5m > 0 ? "danger" : "success") as StatTone,
+      hint: errorsLast5m === 0 ? "all clear" : "see /ops/errors",
+    },
+    {
+      label: "WORKERS",
+      value: queue ? `${queue.workers_alive} / ${queue.workers_total}` : "—",
+      icon: Cpu,
+      tone: (queue && queue.workers_alive < queue.workers_total ? "warning" : "success") as StatTone,
+      hint: "job_worker pool",
+    },
+    {
+      label: "HOT LEADS",
+      value: stats.data?.hot_leads ?? 0,
+      icon: Sparkles,
+      tone: "info" as StatTone,
+      hint: "interested + form_sent",
+    },
+  ];
+
   return (
     <AppShell
       title="Operations dashboard"
-      subtitle="Live calls, queue depth, worker health, and recent errors"
+      subtitle="Live calls · queue depth · worker health · recent errors"
     >
       <div className="space-y-7">
-        <HeaderActions />
-        <KpiGrid />
-        <ActiveCallsCard />
+        <HeaderActions connState={connState} />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {KPIS.map((k) => (
+            <StatCard key={k.label} {...k} />
+          ))}
+        </div>
+        <RecentActivityCard series={activitySeries} activeCalls={activeCallsCount} errors5m={errorsLast5m} />
+        <ActiveCallsPreview activeCount={activeCallsCount} />
         <DesignReference />
       </div>
     </AppShell>
   );
 }
 
-/* ────────────────────────────── Header actions ─────────────────────────── */
+/* ────────────────────────────────────────────────────────────────────── */
 
-function HeaderActions() {
+function HeaderActions({ connState }: { connState: string }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
-        <StatusPill tone="success" label="Backend healthy" />
-        <StatusPill tone="info" label="SSE · 0 listeners" dot={false} />
+        <StatusPill
+          tone={connState === "open" ? "success" : connState === "connecting" ? "warning" : "danger"}
+          label={
+            connState === "open"
+              ? "Backend healthy"
+              : connState === "connecting"
+              ? "Connecting…"
+              : connState === "error"
+              ? "Realtime stream down"
+              : "Not connected"
+          }
+        />
+        <StatusPill tone="info" label="SSE pipeline" dot={false} />
       </div>
       <div className="flex items-center gap-2">
         <Link
           href="/bank/batch"
           className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
         >
-          <Building2 className="h-4 w-4" />
+          <PlusCircle className="h-4 w-4" />
           Batch upload
         </Link>
         <Link href="/ops/live" className="btn-solid">
-          <PlusCircle className="h-4 w-4" />
-          Start a batch
+          <Radio className="h-4 w-4" />
+          Live calls
         </Link>
       </div>
     </div>
   );
 }
 
-/* ─────────────────────────────── KPI grid ──────────────────────────────── */
-
-const KPI_DATA = [
-  {
-    label: "Calls today",
-    value: "0",
-    delta: "—",
-    icon: PhoneCall,
-    tone: "info" as const,
-    sub: "0 hot leads · 0 forms sent",
-  },
-  {
-    label: "Active calls",
-    value: "0",
-    delta: "live",
-    icon: CircleDot,
-    tone: "success" as const,
-    sub: "of 5 trunk capacity",
-  },
-  {
-    label: "Queue depth",
-    value: "0",
-    delta: "—",
-    icon: Activity,
-    tone: "warning" as const,
-    sub: "transcript_analyze jobs",
-  },
-  {
-    label: "Error rate (5m)",
-    value: "0.0%",
-    delta: "—",
-    icon: Flame,
-    tone: "danger" as const,
-    sub: "0 of 0 requests",
-  },
-  {
-    label: "DB pool",
-    value: "0 / 40",
-    delta: "healthy",
-    icon: Database,
-    tone: "info" as const,
-    sub: "min 10 · max 40",
-  },
-  {
-    label: "Workers alive",
-    value: "4 / 4",
-    delta: "healthy",
-    icon: Users,
-    tone: "success" as const,
-    sub: "4 job workers · 1 dispatcher",
-  },
-] as const;
-
-function KpiGrid() {
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {KPI_DATA.map((kpi) => (
-        <KpiCard key={kpi.label} {...kpi} />
-      ))}
-    </div>
-  );
-}
-
-const TONE_STYLES = {
-  info:    "bg-info/10 text-info ring-info/20",
-  success: "bg-success/10 text-success ring-success/25",
-  warning: "bg-warning/15 text-[hsl(var(--warning))] ring-warning/25",
-  danger:  "bg-destructive/10 text-destructive ring-destructive/20",
-} as const;
-
-function KpiCard({
-  label,
-  value,
-  delta,
-  icon: Icon,
-  tone,
-  sub,
+function RecentActivityCard({
+  series,
+  activeCalls,
+  errors5m,
 }: {
-  label: string;
-  value: string;
-  delta: string;
-  icon: React.ComponentType<{ className?: string }>;
-  tone: keyof typeof TONE_STYLES;
-  sub: string;
+  series: ReturnType<typeof bucketActivity>;
+  activeCalls: number;
+  errors5m: number;
 }) {
+  const totalCalls = series.reduce((a, b) => a + b.calls, 0);
+  const totalErrors = series.reduce((a, b) => a + b.errors, 0);
   return (
-    <Card className="transition-shadow hover:shadow-md">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <CardDescription className="text-[11px] font-medium uppercase tracking-[0.14em]">
-            {label}
+    <Card>
+      <CardHeader className="flex-row items-start justify-between pb-4">
+        <div className="space-y-1">
+          <CardTitle className="text-lg">Recent activity</CardTitle>
+          <CardDescription>
+            Last 2 minutes · 10-second buckets · {totalCalls} call event
+            {totalCalls === 1 ? "" : "s"} · {totalErrors} error
+            {totalErrors === 1 ? "" : "s"}
           </CardDescription>
-          <span className={cn("badge-icon", TONE_STYLES[tone])}>
-            <Icon className="h-4 w-4" />
-          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="info" className="gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-info animate-pulse-dot" />
+            Calls · {activeCalls}
+          </Badge>
+          {errors5m > 0 && (
+            <Badge variant="destructive" className="gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+              Errors · {errors5m}
+            </Badge>
+          )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-1.5 pt-0">
-        <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
-          {value}
-        </div>
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-muted-foreground">{sub}</span>
-          <span
-            className={cn(
-              "font-mono",
-              tone === "success" && "text-success",
-              tone === "warning" && "text-[hsl(var(--warning))]",
-              tone === "danger" && "text-destructive",
-              tone === "info" && "text-muted-foreground"
-            )}
-          >
-            {delta}
-          </span>
-        </div>
+      <CardContent>
+        <ActivityChart data={series} />
       </CardContent>
     </Card>
   );
 }
 
-/* ──────────────────────── Active calls (preview) ───────────────────────── */
-
-function ActiveCallsCard() {
+function ActiveCallsPreview({ activeCount }: { activeCount: number }) {
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between pb-4">
         <div className="space-y-1">
           <CardTitle className="text-lg">Live call monitor</CardTitle>
           <CardDescription>
-            Cards appear the moment the dispatcher picks a call up. Hop to{" "}
-            <Link href="/ops/live" className="font-medium text-primary hover:underline">
-              /ops/live
-            </Link>{" "}
-            for the full grid.
+            {activeCount === 0
+              ? "No calls in-flight right now. Cards appear here within ~200 ms of dispatch."
+              : `${activeCount} call${activeCount === 1 ? "" : "s"} in-flight — hop to /ops/live for the full grid.`}
           </CardDescription>
         </div>
-        <Badge variant="secondary" className="font-mono text-[10px] uppercase">
-          0 active
+        <Badge variant={activeCount > 0 ? "info" : "secondary"} className="font-mono text-[10px] uppercase">
+          {activeCount} active
         </Badge>
       </CardHeader>
       <CardContent>
-        <div className="grid place-items-center rounded-xl border border-dashed border-border bg-muted/30 px-6 py-12 text-center">
+        <div className="grid place-items-center rounded-xl border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
           <div className="grid h-12 w-12 place-items-center rounded-xl bg-card shadow-sm">
             <Radio className="h-5 w-5 text-muted-foreground" />
           </div>
-          <div className="mt-3 text-sm font-semibold">No active calls right now</div>
+          <div className="mt-3 text-sm font-semibold">
+            {activeCount === 0 ? "Ready for the next batch" : "Cards on /ops/live"}
+          </div>
           <div className="mt-1 max-w-sm text-xs text-muted-foreground">
             Upload a CSV from{" "}
             <Link href="/bank/batch" className="font-medium text-primary hover:underline">
               Batch
             </Link>{" "}
-            or start a single call — the dispatcher will pick it up within seconds and
-            cards will appear live here.
+            — the dispatcher picks it up within seconds, and live cards appear at{" "}
+            <Link href="/ops/live" className="font-medium text-primary hover:underline">
+              /ops/live
+            </Link>
+            .
           </div>
-          <Link
-            href="/bank/batch"
-            className="btn-gradient mt-5"
-          >
-            <PlusCircle className="h-4 w-4" />
-            Upload a batch
-          </Link>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Link href="/bank/batch" className="btn-gradient">
+              <PlusCircle className="h-4 w-4" />
+              Upload a batch
+            </Link>
+            <Link href="/ops/live" className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
+              View live grid
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         </div>
       </CardContent>
     </Card>
   );
 }
-
-/* ─────────────────────────── Design reference ──────────────────────────── */
 
 function DesignReference() {
   return (
@@ -262,13 +326,12 @@ function DesignReference() {
           <div>
             <CardTitle className="text-base">Design language</CardTitle>
             <CardDescription className="text-xs">
-              VirtualVaani aesthetic · cream + dark navy + admin purple
+              VirtualVaani aesthetic · Sen font · cream + dark navy + admin purple
             </CardDescription>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Status pills */}
         <div>
           <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Status pills
@@ -282,14 +345,11 @@ function DesignReference() {
             <StatusPill tone="success" label="Healthy" dot={false} />
           </div>
         </div>
-
         <Separator />
-
-        {/* Buttons */}
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              CTAs (admin chrome)
+              CTAs
             </div>
             <div className="flex flex-wrap gap-2">
               <button className="btn-solid">
@@ -304,7 +364,6 @@ function DesignReference() {
               <Button variant="ghost">Ghost</Button>
             </div>
           </div>
-
           <div>
             <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               Badges
@@ -320,54 +379,6 @@ function DesignReference() {
             </div>
           </div>
         </div>
-
-        <Separator />
-
-        {/* Typography */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl border border-border bg-muted/30 p-4">
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Heading
-            </div>
-            <div className="text-2xl font-bold tracking-tight">
-              Loan Origination System
-            </div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              Reviews loan applications efficiently with AI-assisted pipelines.
-            </div>
-          </div>
-          <div className="rounded-xl border border-border bg-muted/30 p-4">
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Mono · data
-            </div>
-            <div className="space-y-1 font-mono text-sm">
-              <div>+91-XXXXX98765</div>
-              <div className="text-muted-foreground">0:42 · 1,247 calls</div>
-              <div className="text-3xl font-bold text-foreground">5000</div>
-            </div>
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* Phase banner */}
-        <Link
-          href="/ops/live"
-          className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 transition-colors hover:bg-primary/10"
-        >
-          <div className="flex items-center gap-3">
-            <span className="badge-icon bg-primary/15 text-primary ring-primary/30">
-              <ArrowUpRight className="h-4 w-4" />
-            </span>
-            <div className="leading-tight">
-              <div className="text-sm font-semibold">View live calls</div>
-              <div className="text-xs text-muted-foreground">
-                Real-time SSE — cards appear in &lt;200ms after dispatch
-              </div>
-            </div>
-          </div>
-          <Clock className="h-4 w-4 text-muted-foreground" />
-        </Link>
       </CardContent>
     </Card>
   );

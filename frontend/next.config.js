@@ -5,7 +5,11 @@ const nextConfig = {
   images: {
     domains: ['supabase.co'],
   },
-  webpack: (config, { isServer }) => {
+  // Production source maps stay on the server so Sentry can symbolicate
+  // stack traces, but `hideSourceMaps: true` below strips the public .map.js
+  // references from client bundles (avoids leaking source to end users).
+  productionBrowserSourceMaps: false,
+  webpack: (config) => {
     // Suppress noisy warnings that come from @sentry/nextjs pulling in
     // OpenTelemetry, which uses dynamic require()s that webpack can't
     // statically analyze. These are runtime-fine; the warnings are
@@ -19,4 +23,55 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+// ─── Sentry wrapping ──────────────────────────────────────────────────────
+// withSentryConfig uploads source maps to Sentry on build, auto-instruments
+// API routes, and tunnels Sentry events through `/monitoring` to bypass
+// ad-blockers. Becomes a no-op if `SENTRY_AUTH_TOKEN` is unset — base build
+// still works, just no source-map upload (errors show minified traces).
+//
+// Required env at build time:
+//   SENTRY_AUTH_TOKEN     — only needed for source-map upload (production)
+//   SENTRY_ORG            — your Sentry org slug
+//   SENTRY_PROJECT        — your Sentry frontend project slug
+// Required env at runtime:
+//   NEXT_PUBLIC_SENTRY_DSN — public DSN for browser SDK
+//   NEXT_PUBLIC_LOS_ENV   — environment tag ("production", "staging", "dev")
+let exportedConfig = nextConfig;
+try {
+  // Lazy-require so a missing @sentry/nextjs doesn't crash the build during
+  // development. In practice it IS installed (package.json), but defensive.
+  const { withSentryConfig } = require('@sentry/nextjs');
+
+  exportedConfig = withSentryConfig(nextConfig, {
+    // Build-time options
+    org: process.env.SENTRY_ORG,           // e.g. "los-org"
+    project: process.env.SENTRY_PROJECT,   // e.g. "los-frontend"
+    authToken: process.env.SENTRY_AUTH_TOKEN, // needed for source-map upload
+
+    // Print only errors during build; full output during local debugging
+    silent: !process.env.CI,
+
+    // Upload a larger set of source maps for prettier stack traces.
+    widenClientFileUpload: true,
+
+    // Route browser Sentry requests through /monitoring so ad-blockers don't
+    // drop them. Server-side proxy automatically forwards to Sentry's ingest.
+    tunnelRoute: '/monitoring',
+
+    // Hide .map.js references from the browser bundle so users can't pull the
+    // un-minified source. Maps still go to Sentry for symbolication.
+    hideSourceMaps: true,
+
+    // Disable Sentry's own logger inside the SDK to avoid console noise.
+    disableLogger: true,
+
+    // Auto-instrument Vercel Cron / Next.js Route Handlers.
+    automaticVercelMonitors: true,
+  });
+} catch (err) {
+  // Missing @sentry/nextjs at install time, or auth token errors — fall
+  // back to the un-wrapped config so the app still builds and runs.
+  console.warn('[next.config] Sentry wrap skipped:', err.message);
+}
+
+module.exports = exportedConfig;

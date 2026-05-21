@@ -1,14 +1,51 @@
+"use client";
+
 import * as React from "react";
+import { usePathname, useRouter } from "next/navigation";
+
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
+import { getAccessToken } from "@/lib/auth";
 
 /**
- * /ops/* route group layout. Each leaf page renders its own <AppShell> with
- * a page-specific title/subtitle, so the sidebar nav highlights the right
- * item via usePathname().
+ * /ops/* route group layout.
  *
- * Auth gate (admin / bank-supervisor) lands in Phase 1 once we wire JWT
- * checks against /api/auth/me here as a Server Component.
+ * Auth gate: requires an admin JWT in localStorage (`los_admin_token`). If
+ * absent, we redirect to /admin/login WITH the current path attached as a
+ * `?redirect=...` param, so after a successful login the user lands back
+ * exactly where they tried to go (not on /admin/dashboard).
+ *
+ * We render a tiny "checking" placeholder for the first paint so unauthenticated
+ * users never see a degraded /ops UI (broken SSE, empty stat cards, etc.)
+ * before the redirect fires.
+ *
+ * Each leaf page renders its own <AppShell> with a page-specific title/subtitle
+ * — the sidebar nav highlights the right item via usePathname().
  */
 export default function OpsLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [status, setStatus] = React.useState<"checking" | "authed" | "redirecting">("checking");
+
+  React.useEffect(() => {
+    const token = getAccessToken("admin");
+    if (!token) {
+      setStatus("redirecting");
+      const dest = pathname && pathname.startsWith("/ops") ? pathname : "/ops";
+      router.replace(`/admin/login?redirect=${encodeURIComponent(dest)}`);
+      return;
+    }
+    setStatus("authed");
+  }, [router, pathname]);
+
+  if (status !== "authed") {
+    return (
+      <div className="grid min-h-screen place-items-center bg-background text-muted-foreground">
+        <div className="text-sm">
+          {status === "checking" ? "Verifying admin session…" : "Redirecting to login…"}
+        </div>
+      </div>
+    );
+  }
+
   return <ErrorBoundary>{children}</ErrorBoundary>;
 }

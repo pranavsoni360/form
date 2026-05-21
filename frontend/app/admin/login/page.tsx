@@ -1,17 +1,59 @@
-﻿'use client';
+'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
 import { Shield, Loader2 } from 'lucide-react';
 
+/**
+ * Admin login.
+ *
+ * Post-login redirect logic:
+ *   1. If a `?redirect=` query param is present AND it points to a same-origin
+ *      path under /ops, /admin, or /bank — go there.
+ *   2. Otherwise default to /ops (the new VirtualVaani dashboard — operator's
+ *      primary destination).
+ *
+ * Why a redirect param: /ops/layout.tsx (auth gate) bounces unauthenticated
+ * users here with the original path attached. After login they end up exactly
+ * where they meant to go — no manual URL re-typing.
+ */
 export default function AdminLoginPage() {
+  // Wrap in Suspense because useSearchParams() requires it under Next.js 14
+  // App Router's static rendering rules.
+  return (
+    <Suspense>
+      <AdminLoginInner />
+    </Suspense>
+  );
+}
+
+function AdminLoginInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  /** Allow-list of post-login destinations to defeat open-redirect abuse. */
+  const safeRedirect = (raw: string | null): string => {
+    if (!raw) return '/ops';
+    // Must start with / (relative path), must not be // (protocol-relative),
+    // must point to a known section of the app.
+    if (!raw.startsWith('/') || raw.startsWith('//')) return '/ops';
+    if (
+      raw === '/ops' ||
+      raw.startsWith('/ops/') ||
+      raw === '/admin/dashboard' ||
+      raw.startsWith('/admin/banks') ||
+      raw.startsWith('/admin/applications')
+    ) {
+      return raw;
+    }
+    return '/ops';
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,13 +62,9 @@ export default function AdminLoginPage() {
 
     try {
       const response = await adminLogin(email, password);
-      
-      // Store token
       setAccessToken('admin', response.token);
       setCurrentUser('admin', response.user);
-      
-      // Redirect to dashboard
-      router.push('/admin/dashboard');
+      router.push(safeRedirect(searchParams.get('redirect')));
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -41,7 +79,7 @@ export default function AdminLoginPage() {
           <div className="mb-4"><Shield className="w-14 h-14 text-blue-600 mx-auto" /></div>
           <h1 className="text-3xl font-bold text-gray-900">Admin Login</h1>
           <p className="text-gray-600 mt-2">
-            Bank Loan Application System
+            VirtualVaani · Loan Operations
           </p>
         </div>
 
@@ -55,6 +93,7 @@ export default function AdminLoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoFocus
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
               placeholder="admin@bank.com"
             />
@@ -83,8 +122,9 @@ export default function AdminLoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>

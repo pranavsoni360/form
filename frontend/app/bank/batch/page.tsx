@@ -6,6 +6,8 @@ import { API_URL, formatDateTime } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import { ArrowLeft, Upload, Play, Square, RefreshCw, FileSpreadsheet, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import { useEventStream } from '@/lib/realtime/useEventStream';
+import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
 
 export default function BatchPage() {
   const router = useRouter();
@@ -17,6 +19,11 @@ export default function BatchPage() {
   const [language, setLanguage] = useState('hindi');
   const [gender, setGender] = useState('male');
   const [agentType, setAgentType] = useState<string>('loan_enquiry');
+
+  // SSE subscription: every batch_progress event triggers a debounced refetch
+  // of /api/agent/batch-status. Replaces the previous 5s polling loop
+  // (~17K useless requests/day per open tab → ~0 idle requests).
+  const liveBatches = useEventStream<BatchesState>('batches', batchesReducer, initialBatchesState);
 
   useEffect(() => {
     const t = getAccessToken('bank');
@@ -42,11 +49,29 @@ export default function BatchPage() {
     } catch { }
   };
 
+  // Initial fetch on login.
   useEffect(() => {
     if (!token) return;
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
-    return () => clearInterval(interval);
+  }, [token]);
+
+  // Live refresh: any batch_progress event over SSE → debounced refetch.
+  // The reducer's `byId` reference changes on each event, so the effect
+  // re-runs only when something genuinely moved.
+  useEffect(() => {
+    if (!token) return;
+    // Skip the very first run while reducer state is still empty.
+    if (Object.keys(liveBatches.byId).length === 0) return;
+    const timer = setTimeout(fetchStatus, 500);
+    return () => clearTimeout(timer);
+  }, [token, liveBatches.byId]);
+
+  // Window focus → refetch (user came back to tab after time away).
+  useEffect(() => {
+    if (!token) return;
+    const onFocus = () => fetchStatus();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [token]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

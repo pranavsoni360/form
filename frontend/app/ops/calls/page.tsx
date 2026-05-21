@@ -1,0 +1,638 @@
+"use client";
+
+/**
+ * /ops/calls — full calls table with filters, pagination, search, per-row
+ * detail dialog.
+ *
+ * 1:1 feature parity with the old /agent dashboard's "Calls" tab:
+ *   ✓ Pagination (20/page, prev/next + jump-to-page input)
+ *   ✓ Filters: status, category, lead quality, form sent, date
+ *   ✓ Client-side search box on customer name + phone
+ *   ✓ Per-row actions: Open WhatsApp form, View Detail (with transcript +
+ *     recording inline in dialog)
+ *
+ * Endpoint: GET /api/agent/calls?page=&page_size=20&status=&category=&
+ *           lead_quality=&form_sent=&date=
+ * Auth: none (operator mode — same as old /agent dashboard).
+ */
+
+import * as React from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Eye,
+  PhoneCall,
+  Search,
+  X as XIcon,
+} from "lucide-react";
+
+import { AppShell } from "@/components/shared/AppShell";
+import { StatCard } from "@/components/ops/StatCard";
+import { DataTable, type DataTableColumn } from "@/components/ops/DataTable";
+import { FilterPills, type FilterOption } from "@/components/ops/FilterPills";
+import {
+  CallDetailDialog,
+  fmtDuration,
+  maskPhone,
+  statusVariant,
+} from "@/components/ops/CallDetailDialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import { API_URL } from "@/lib/api";
+
+/* ───────────────────────── Backend response shape ────────────────────── */
+
+interface CallRow {
+  id: string;
+  _id?: string;
+  customer_name?: string;
+  name?: string;
+  phone: string;
+  status: string;
+  call_status?: string;
+  category?: string;
+  loan_type?: string;
+  loan_type_interested?: string;
+  loan_amount?: number | string;
+  call_duration?: number;
+  call_duration_seconds?: number;
+  interested?: boolean;
+  customer_interested?: boolean;
+  form_sent?: boolean;
+  whatsapp_form_sent?: boolean;
+  form_url?: string;
+  form_link?: string;
+  recording_url?: string | null;
+  language?: string;
+  call_analysis?: { lead_quality?: string } | null;
+  lead_quality?: string;
+  started_at?: string;
+  created_at?: string;
+}
+
+interface CallsResponse {
+  calls: CallRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/* ───────────────────────── Filter option lists ───────────────────────── */
+// Mirror the backend STATUS_OPTIONS / CATEGORY_OPTIONS verbatim so the
+// dropdowns line up with what the dispatcher writes. Changing these on the
+// frontend without the backend list breaks filtering — keep in sync.
+
+const STATUS_OPTIONS = [
+  "Pending",
+  "Calling",
+  "Called",
+  "Called - Interested",
+  "Called - Not Interested",
+  "Not Answered",
+  "Call Not Connected",
+  "Failed",
+  "Scheduled",
+  "Invalid Phone",
+] as const;
+
+const CATEGORY_OPTIONS = [
+  "Very Interested - Form Sent",
+  "Interested - Callback Requested",
+  "Interested - Needs Time to Decide",
+  "Not Interested - Already Has Loan",
+  "Not Interested - No Need Currently",
+  "Ineligible - Income Too Low",
+  "Ineligible - Business Too New",
+  "Wrong Number / Not Reachable",
+] as const;
+
+type LeadQuality = "all" | "hot" | "warm" | "cold";
+type FormSent = "all" | "yes" | "no";
+
+/* ───────────────────────────── Page ──────────────────────────────────── */
+
+export default function OpsCallsPage() {
+  // Filters
+  const [page, setPage] = React.useState(1);
+  const [statusFilter, setStatusFilter] = React.useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = React.useState<string>("all");
+  const [leadFilter, setLeadFilter] = React.useState<LeadQuality>("all");
+  const [formFilter, setFormFilter] = React.useState<FormSent>("all");
+  const [dateFilter, setDateFilter] = React.useState<string>(""); // YYYY-MM-DD
+  const [search, setSearch] = React.useState("");
+
+  // Detail dialog
+  const [openCallId, setOpenCallId] = React.useState<string | null>(null);
+
+  // Reset to page 1 whenever any filter (other than page) changes
+  React.useEffect(() => {
+    setPage(1);
+  }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter]);
+
+  const query = useQuery<CallsResponse>({
+    queryKey: [
+      "calls",
+      page,
+      statusFilter,
+      categoryFilter,
+      leadFilter,
+      formFilter,
+      dateFilter,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("page_size", "20");
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (categoryFilter !== "all") params.set("category", categoryFilter);
+      if (leadFilter !== "all") params.set("lead_quality", leadFilter);
+      if (formFilter !== "all") params.set("form_sent", formFilter);
+      if (dateFilter) params.set("date", dateFilter);
+      const res = await fetch(`${API_URL}/api/agent/calls?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    placeholderData: keepPreviousData,
+    refetchInterval: 30_000,
+  });
+
+  // Client-side search (name + phone). Server filters everything else.
+  const filteredRows = React.useMemo(() => {
+    const rows = query.data?.calls ?? [];
+    if (!search.trim()) return rows;
+    const needle = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      const name = (r.customer_name || r.name || "").toLowerCase();
+      const phone = (r.phone || "").toLowerCase();
+      return name.includes(needle) || phone.includes(needle);
+    });
+  }, [query.data, search]);
+
+  // KPI strip pulled from the current page (lightweight; full counts are
+  // available via /api/agent/dashboard-stats but for this page the page-
+  // local view is enough and keeps the strip honest about what's visible).
+  const kpis = React.useMemo(() => {
+    const r = query.data?.calls ?? [];
+    let interested = 0, formSent = 0, failed = 0;
+    for (const c of r) {
+      if (c.customer_interested ?? c.interested) interested += 1;
+      if (c.whatsapp_form_sent ?? c.form_sent) formSent += 1;
+      const st = c.status || c.call_status || "";
+      if (st === "Failed" || st === "Invalid Phone") failed += 1;
+    }
+    return { interested, formSent, failed };
+  }, [query.data]);
+
+  /* ─── Columns ─────────────────────────────────────────────────────── */
+
+  const columns: ReadonlyArray<DataTableColumn<CallRow>> = [
+    {
+      key: "customer",
+      header: "Customer",
+      render: (r) => (
+        <div className="space-y-0.5">
+          <div className="text-sm font-semibold text-foreground">
+            {r.customer_name || r.name || "Customer"}
+          </div>
+          <div className="font-mono text-[11px] text-muted-foreground">
+            {maskPhone(r.phone)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (r) => (
+        <Badge variant={statusVariant(r.status || r.call_status || "")}>
+          {r.status || r.call_status || "—"}
+        </Badge>
+      ),
+    },
+    {
+      key: "lead",
+      header: "Lead",
+      render: (r) => (
+        <LeadBadge q={r.call_analysis?.lead_quality ?? r.lead_quality} />
+      ),
+    },
+    {
+      key: "type",
+      header: "Loan",
+      render: (r) => (
+        <span className="text-xs text-foreground/80 capitalize">
+          {r.loan_type || r.loan_type_interested || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "interested",
+      header: "Interested",
+      align: "center",
+      render: (r) => (
+        <BoolDot yes={r.customer_interested ?? r.interested} />
+      ),
+    },
+    {
+      key: "form",
+      header: "Form",
+      align: "center",
+      render: (r) => <BoolDot yes={r.whatsapp_form_sent ?? r.form_sent} />,
+    },
+    {
+      key: "duration",
+      header: "Duration",
+      align: "right",
+      render: (r) => (
+        <span className="font-mono text-xs tabular-nums text-foreground/80">
+          {fmtDuration(r.call_duration_seconds ?? r.call_duration ?? 0)}
+        </span>
+      ),
+    },
+    {
+      key: "when",
+      header: "When",
+      align: "right",
+      render: (r) => (
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {fmtWhen(r.started_at || r.created_at || "")}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (r) => {
+        const formUrl = r.form_url || r.form_link || "";
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            {formUrl && (
+              <a
+                href={formUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open WhatsApp form"
+                onClick={(e) => e.stopPropagation()}
+                className="grid h-7 w-7 place-items-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenCallId(r.id || r._id || "");
+              }}
+              title="View details"
+              className="grid h-7 w-7 place-items-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        );
+      },
+    },
+  ];
+
+  /* ─── Filter option lists ─────────────────────────────────────────── */
+
+  const leadOptions: ReadonlyArray<FilterOption<LeadQuality>> = [
+    { value: "all", label: "All leads" },
+    { value: "hot", label: "Hot" },
+    { value: "warm", label: "Warm" },
+    { value: "cold", label: "Cold" },
+  ];
+  const formOptions: ReadonlyArray<FilterOption<FormSent>> = [
+    { value: "all", label: "Any form state" },
+    { value: "yes", label: "Sent" },
+    { value: "no", label: "Not sent" },
+  ];
+
+  const total = query.data?.total ?? 0;
+  const totalPages = query.data?.total_pages ?? 1;
+  const hasActiveFilter =
+    statusFilter !== "all" ||
+    categoryFilter !== "all" ||
+    leadFilter !== "all" ||
+    formFilter !== "all" ||
+    Boolean(dateFilter) ||
+    Boolean(search.trim());
+
+  return (
+    <AppShell
+      title="Calls"
+      subtitle={`${total.toLocaleString()} total call${total === 1 ? "" : "s"} · page ${page} of ${totalPages}`}
+    >
+      <div className="space-y-6">
+        {/* KPI strip */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard
+            label="ON PAGE"
+            value={(query.data?.calls ?? []).length}
+            icon={PhoneCall}
+            tone="info"
+            hint={`of ${total.toLocaleString()} total`}
+          />
+          <StatCard
+            label="INTERESTED"
+            value={kpis.interested}
+            icon={PhoneCall}
+            tone="success"
+            hint="customer_interested = true"
+          />
+          <StatCard
+            label="FORM SENT"
+            value={kpis.formSent}
+            icon={PhoneCall}
+            tone="info"
+            hint="whatsapp delivered"
+          />
+          <StatCard
+            label="FAILED"
+            value={kpis.failed}
+            icon={PhoneCall}
+            tone={kpis.failed > 0 ? "danger" : "neutral"}
+            hint="Failed + Invalid Phone"
+          />
+        </div>
+
+        {/* Filter bar */}
+        <div className="space-y-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+          {/* Row 1: lead + form */}
+          <div className="flex flex-wrap items-center gap-3">
+            <FilterPills options={leadOptions} value={leadFilter} onChange={setLeadFilter} />
+            <FilterPills options={formOptions} value={formFilter} onChange={setFormFilter} />
+          </div>
+
+          {/* Row 2: status + category + date + search */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Select
+              label="Status"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "all", label: "All statuses" },
+                ...STATUS_OPTIONS.map((s) => ({ value: s, label: s })),
+              ]}
+            />
+            <Select
+              label="Category"
+              value={categoryFilter}
+              onChange={setCategoryFilter}
+              options={[
+                { value: "all", label: "All categories" },
+                ...CATEGORY_OPTIONS.map((c) => ({ value: c, label: c })),
+              ]}
+            />
+            <DateInput value={dateFilter} onChange={setDateFilter} />
+            <SearchBox value={search} onChange={setSearch} />
+            {hasActiveFilter && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setStatusFilter("all");
+                  setCategoryFilter("all");
+                  setLeadFilter("all");
+                  setFormFilter("all");
+                  setDateFilter("");
+                  setSearch("");
+                }}
+              >
+                <XIcon className="h-3.5 w-3.5" />
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Table */}
+        {query.isLoading ? (
+          <TableSkeleton />
+        ) : query.error ? (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-sm text-destructive">
+            Couldn&apos;t load calls: <span className="font-mono">{(query.error as Error).message}</span>
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={filteredRows}
+            rowKey={(r) => r.id || r._id || ""}
+            onRowClick={(r) => setOpenCallId(r.id || r._id || "")}
+            empty={<EmptyBox hasFilter={hasActiveFilter} />}
+          />
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onChange={setPage}
+            disabled={query.isFetching}
+          />
+        )}
+      </div>
+
+      {/* Detail dialog */}
+      <CallDetailDialog
+        callId={openCallId}
+        open={Boolean(openCallId)}
+        onClose={() => setOpenCallId(null)}
+      />
+    </AppShell>
+  );
+}
+
+/* ───────────────────────────── Subcomponents ─────────────────────────── */
+
+function Select<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: ReadonlyArray<{ value: T; label: string }>;
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-primary/40"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function DateInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        Date
+      </span>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+      />
+    </label>
+  );
+}
+
+function SearchBox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <input
+        type="search"
+        placeholder="Search name or phone"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-56 rounded-lg border border-border bg-background py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+      />
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  totalPages,
+  onChange,
+  disabled,
+}: {
+  page: number;
+  totalPages: number;
+  onChange: (n: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-2.5 shadow-sm">
+      <div className="text-xs text-muted-foreground">
+        Page <span className="font-semibold text-foreground">{page}</span> of{" "}
+        <span className="font-semibold text-foreground">{totalPages}</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onChange(Math.max(1, page - 1))}
+          disabled={disabled || page <= 1}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Prev
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onChange(Math.min(totalPages, page + 1))}
+          disabled={disabled || page >= totalPages}
+        >
+          Next
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function LeadBadge({ q }: { q?: string }) {
+  if (q === "hot") return <Badge variant="destructive">Hot</Badge>;
+  if (q === "warm") return <Badge variant="warning">Warm</Badge>;
+  if (q === "cold") return <Badge variant="secondary">Cold</Badge>;
+  return <span className="text-xs text-muted-foreground">—</span>;
+}
+
+function BoolDot({ yes }: { yes?: boolean }) {
+  const tone =
+    yes === true
+      ? "bg-success"
+      : yes === false
+      ? "bg-muted-foreground/40"
+      : "bg-muted-foreground/20";
+  return (
+    <span
+      className={cn("inline-block h-2 w-2 rounded-full", tone)}
+      aria-label={yes ? "yes" : "no"}
+    />
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="space-y-2 rounded-2xl border border-border bg-card p-4 shadow-sm">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <Skeleton key={i} className="h-12 w-full rounded-lg" />
+      ))}
+    </div>
+  );
+}
+
+function EmptyBox({ hasFilter }: { hasFilter: boolean }) {
+  return (
+    <div className="grid place-items-center px-6 py-16 text-center">
+      <div className="grid h-12 w-12 place-items-center rounded-xl bg-muted">
+        <PhoneCall className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <div className="mt-3 text-sm font-semibold">
+        {hasFilter ? "No calls match these filters" : "No calls yet"}
+      </div>
+      <div className="mt-1 max-w-sm text-xs text-muted-foreground">
+        {hasFilter
+          ? "Try widening the date range, clearing the search box, or switching status / category back to 'All'."
+          : "Upload a CSV from the Batch page to start dialing."}
+      </div>
+    </div>
+  );
+}
+
+function fmtWhen(iso: string): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}

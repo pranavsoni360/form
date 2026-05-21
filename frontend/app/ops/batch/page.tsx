@@ -1,0 +1,724 @@
+"use client";
+
+/**
+ * /ops/batch — operator-side batch upload + dispatcher controls.
+ *
+ * Sister page to /bank/batch (bank-user side). Functionally mirrors the
+ * "Upload Excel" tab of the old /agent dashboard (lines 1471–1602 of
+ * agent-dashboard.html). Six action buttons + uploads history + per-batch
+ * detail modal + live status banner.
+ *
+ * Endpoints (all unauthenticated — operator mode):
+ *   POST /api/agent/upload-excel?language=&gender=&agent_type= (multipart)
+ *   GET  /api/agent/uploads                        → { uploads: [...] }
+ *   GET  /api/agent/upload/{batch_id}              → { calls: [...], total }
+ *   GET  /api/agent/batch-status                   → counters + is_complete
+ *   POST /api/agent/batch-call                     → starts most-recent pending batch
+ *   POST /api/agent/batch-retry                    → retries failed calls
+ *   POST /api/agent/emergency-stop                 → pauses, kills active, sets flag
+ *   POST /api/agent/resume-calling                 → un-pauses
+ *   POST /api/agent/stale-cleanup                  → fixes calls stuck in 'Calling'
+ *
+ * Lives at /ops/batch so operators get all the controls in one place; the
+ * bank-user version at /bank/batch keeps a slimmer UX appropriate to that
+ * role.
+ */
+
+import * as React from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  FileSpreadsheet,
+  Hammer,
+  Loader2,
+  PhoneOff,
+  Play,
+  PlayCircle,
+  RefreshCw,
+  RotateCcw,
+  Square,
+  Upload,
+} from "lucide-react";
+
+import { AppShell } from "@/components/shared/AppShell";
+import { StatCard } from "@/components/ops/StatCard";
+import { DataTable, type DataTableColumn } from "@/components/ops/DataTable";
+import { Dialog } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { maskPhone, statusVariant, fmtDuration } from "@/components/ops/CallDetailDialog";
+import { API_URL } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+/* ───────────────────────── Backend response shapes ───────────────────── */
+
+interface BatchStatus {
+  status: string;
+  is_complete: boolean;
+  message: string;
+  pending: number;
+  active_calls: number;
+  failed: number;
+  completed: number;
+  total: number;
+}
+
+interface Upload {
+  id: string;
+  _id?: string;
+  created_at?: string;
+  uploaded_at?: string;
+  total_records?: number;
+  record_count?: number;
+  status?: string;
+  filename?: string;
+  file_name?: string;
+  language?: string;
+  agent_voice?: string;
+  agent_type?: string;
+}
+
+interface BatchCall {
+  id: string;
+  customer_name?: string;
+  phone: string;
+  status: string;
+  call_duration?: number;
+  interested?: boolean;
+  form_sent?: boolean;
+  created_at?: string;
+}
+
+/* ───────────────────────────── Page ──────────────────────────────────── */
+
+export default function OpsBatchPage() {
+  const qc = useQueryClient();
+
+  // Upload config
+  const [language, setLanguage] = React.useState<"hindi" | "marathi" | "english">("hindi");
+  const [gender, setGender] = React.useState<"male" | "female">("male");
+  const [agentType, setAgentType] = React.useState<"loan_enquiry" | "account_opening">("loan_enquiry");
+
+  // Selected batch for detail dialog
+  const [openBatchId, setOpenBatchId] = React.useState<string | null>(null);
+
+  /* ─── Queries ──────────────────────────────────────────────────────── */
+
+  // batch-status — polled while a batch is active, paused otherwise
+  const status = useQuery<BatchStatus>({
+    queryKey: ["batch-status"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/agent/batch-status`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: (q) => {
+      // Poll fast while calls are in flight, slow once everything is at rest.
+      const d = q.state.data;
+      if (!d) return 5_000;
+      return d.active_calls > 0 || d.pending > 0 ? 5_000 : 30_000;
+    },
+  });
+
+  const uploads = useQuery<{ uploads: Upload[] }>({
+    queryKey: ["uploads"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/agent/uploads`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  /* ─── Mutations ────────────────────────────────────────────────────── */
+
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const qs = `language=${language}&gender=${gender}&agent_type=${agentType}`;
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${qs}`, {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Uploaded ${data?.inserted_count ?? "?"} record${data?.inserted_count === 1 ? "" : "s"}`);
+      qc.invalidateQueries({ queryKey: ["uploads"] });
+      qc.invalidateQueries({ queryKey: ["batch-status"] });
+    },
+    onError: (e: Error) => toast.error(`Upload failed: ${e.message}`),
+  });
+
+  // Only invalidate the queries this page actually shows, so we don't
+  // accidentally clobber unrelated caches (recent_calls on /ops, funnel
+  // on /ops/funnel, etc) every time the operator presses a button.
+  const refreshBatchViews = React.useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["batch-status"] });
+    qc.invalidateQueries({ queryKey: ["uploads"] });
+  }, [qc]);
+
+  const start = useMutation({
+    mutationFn: postJson("/api/agent/batch-call"),
+    onSuccess: (d) => { toast.success(d?.message || "Batch started"); refreshBatchViews(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const retry = useMutation({
+    mutationFn: postJson("/api/agent/batch-retry"),
+    onSuccess: (d) => { toast.success(d?.message || "Retry queued"); refreshBatchViews(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const resume = useMutation({
+    mutationFn: postJson("/api/agent/resume-calling"),
+    onSuccess: (d) => { toast.success(d?.message || "Resumed"); refreshBatchViews(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const stop = useMutation({
+    mutationFn: postJson("/api/agent/emergency-stop"),
+    onSuccess: (d) => {
+      toast.warning(d?.message || "Emergency stop activated");
+      refreshBatchViews();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const cleanup = useMutation({
+    mutationFn: postJson("/api/agent/stale-cleanup"),
+    onSuccess: (d) => {
+      toast.success(`Cleaned ${d?.cleaned ?? "?"} stuck call${d?.cleaned === 1 ? "" : "s"}`);
+      refreshBatchViews();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  /* ─── Upload input handler ─────────────────────────────────────────── */
+
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) upload.mutate(f);
+    // reset so picking the same file again triggers onChange
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  /* ─── Stop confirm ─────────────────────────────────────────────────── */
+
+  const [confirmStop, setConfirmStop] = React.useState(false);
+
+  /* ─── Render ───────────────────────────────────────────────────────── */
+
+  const s = status.data;
+  const live = s ? s.active_calls > 0 || s.pending > 0 : false;
+
+  return (
+    <AppShell
+      title="Batch operations"
+      subtitle="Upload CSV/Excel, start dialing, retry failed, emergency stop · operator only"
+    >
+      <div className="space-y-6">
+        {/* Live status banner */}
+        <LiveStatusBanner s={s} loading={status.isLoading} live={live} />
+
+        {/* KPI strip */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard
+            label="ACTIVE NOW"
+            value={s?.active_calls ?? 0}
+            icon={Activity}
+            tone={(s?.active_calls ?? 0) > 0 ? "info" : "neutral"}
+          />
+          <StatCard
+            label="PENDING"
+            value={s?.pending ?? 0}
+            icon={Activity}
+            tone={(s?.pending ?? 0) > 0 ? "warning" : "neutral"}
+          />
+          <StatCard
+            label="COMPLETED"
+            value={s?.completed ?? 0}
+            icon={CheckCircle2}
+            tone="success"
+          />
+          <StatCard
+            label="FAILED"
+            value={s?.failed ?? 0}
+            icon={PhoneOff}
+            tone={(s?.failed ?? 0) > 0 ? "danger" : "neutral"}
+          />
+        </div>
+
+        {/* Voice config + upload + actions */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Voice config &amp; upload</CardTitle>
+            <CardDescription>
+              These are baked into every row at upload time. Existing batches keep their original config.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Select
+                label="Language"
+                value={language}
+                onChange={(v) => setLanguage(v as typeof language)}
+                options={[
+                  { value: "hindi", label: "🇮🇳 Hindi" },
+                  { value: "marathi", label: "🏛️ Marathi" },
+                  { value: "english", label: "🌍 English" },
+                ]}
+              />
+              <Select
+                label="Voice"
+                value={gender}
+                onChange={(v) => setGender(v as typeof gender)}
+                options={[
+                  { value: "male", label: "👨 Male (Rajesh)" },
+                  { value: "female", label: "👩 Female (Diya)" },
+                ]}
+              />
+              <Select
+                label="Agent type"
+                value={agentType}
+                onChange={(v) => setAgentType(v as typeof agentType)}
+                options={[
+                  { value: "loan_enquiry", label: "Loan enquiry — Pusad" },
+                  { value: "account_opening", label: "Account opening — Union Bank" },
+                ]}
+              />
+            </div>
+
+            <Separator />
+
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={onFile}
+                className="hidden"
+              />
+              <Button
+                onClick={() => fileRef.current?.click()}
+                disabled={upload.isPending}
+                className="btn-solid"
+              >
+                {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Upload Excel / CSV
+              </Button>
+              <Button
+                onClick={() => start.mutate()}
+                disabled={start.isPending}
+                className="btn-gradient"
+              >
+                {start.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                Start batch
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => retry.mutate()}
+                disabled={retry.isPending}
+              >
+                {retry.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                Retry failed
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => resume.mutate()}
+                disabled={resume.isPending}
+              >
+                {resume.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+                Resume calling
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => cleanup.mutate()}
+                disabled={cleanup.isPending}
+              >
+                {cleanup.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hammer className="h-4 w-4" />}
+                Cleanup stuck
+              </Button>
+              <Button
+                onClick={() => setConfirmStop(true)}
+                disabled={stop.isPending}
+                variant="outline"
+                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                {stop.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
+                Emergency stop
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { status.refetch(); uploads.refetch(); }}
+                className="ml-auto"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", status.isFetching && "animate-spin")} />
+                Refresh
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Uploads history */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Upload history</CardTitle>
+            <CardDescription>
+              Last 50 batches · click a row to see its calls
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {uploads.isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full rounded-lg" />
+                ))}
+              </div>
+            ) : uploads.error ? (
+              <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                Couldn&apos;t load uploads: <span className="font-mono">{(uploads.error as Error).message}</span>
+              </div>
+            ) : (
+              <UploadsTable
+                uploads={uploads.data?.uploads ?? []}
+                onRowClick={(u) => setOpenBatchId(u.id || u._id || null)}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Per-batch detail dialog */}
+      <BatchDetailDialog
+        batchId={openBatchId}
+        open={Boolean(openBatchId)}
+        onClose={() => setOpenBatchId(null)}
+      />
+
+      {/* Emergency stop confirm */}
+      <Dialog
+        open={confirmStop}
+        onClose={() => setConfirmStop(false)}
+        size="sm"
+        title={
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="h-4 w-4" />
+            Emergency stop?
+          </div>
+        }
+        description="This will pause all running batches and kill any active call mid-dial. Customer mid-conversation will be cut off."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setConfirmStop(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirmStop(false);
+                stop.mutate();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              <Square className="h-4 w-4" />
+              Stop now
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-foreground/80">
+          Use this only if something is going wrong — wrong recipients, bad audio, regulatory issue.
+          The pause is reversible via the &quot;Resume calling&quot; button.
+        </p>
+      </Dialog>
+    </AppShell>
+  );
+}
+
+/* ───────────────────────── Live status banner ────────────────────────── */
+
+function LiveStatusBanner({
+  s, loading, live,
+}: { s?: BatchStatus; loading: boolean; live: boolean }) {
+  if (loading) return <Skeleton className="h-16 w-full rounded-2xl" />;
+  if (!s) return null;
+  const tone = live ? "info" : s.failed > 0 ? "warning" : "neutral";
+  return (
+    <div className={cn(
+      "flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm",
+      tone === "info" && "border-info/40 bg-info/5"
+    )}>
+      <div className="flex items-center gap-3">
+        <span className={cn(
+          "grid h-10 w-10 place-items-center rounded-xl ring-1",
+          live ? "bg-info/10 text-info ring-info/30" : "bg-muted text-muted-foreground ring-border"
+        )}>
+          {live ? <Activity className="h-5 w-5 animate-pulse" /> : <CheckCircle2 className="h-5 w-5" />}
+        </span>
+        <div className="space-y-0.5">
+          <div className="text-sm font-semibold text-foreground">
+            {live ? "Dispatcher running" : s.is_complete ? "All calls completed" : "Idle"}
+          </div>
+          <div className="text-xs text-muted-foreground">{s.message}</div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {live && <Badge variant="info">Live</Badge>}
+        {s.failed > 0 && <Badge variant="destructive">{s.failed} failed</Badge>}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Uploads table ─────────────────────────────── */
+
+function UploadsTable({
+  uploads,
+  onRowClick,
+}: {
+  uploads: Upload[];
+  onRowClick: (u: Upload) => void;
+}) {
+  const columns: ReadonlyArray<DataTableColumn<Upload>> = [
+    {
+      key: "file",
+      header: "File",
+      render: (u) => (
+        <div className="space-y-0.5">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+            <FileSpreadsheet className="h-3.5 w-3.5 text-primary" />
+            {u.filename || u.file_name || "batch"}
+          </div>
+          <div className="font-mono text-[10px] text-muted-foreground">{(u.id || u._id || "").slice(0, 8)}</div>
+        </div>
+      ),
+    },
+    {
+      key: "records",
+      header: "Records",
+      align: "right",
+      render: (u) => (
+        <span className="font-mono text-sm font-semibold tabular-nums">
+          {(u.total_records ?? u.record_count ?? 0).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: "config",
+      header: "Config",
+      render: (u) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {u.language && <Badge variant="secondary" className="capitalize">{u.language}</Badge>}
+          {u.agent_voice && <Badge variant="secondary">{u.agent_voice}</Badge>}
+          {u.agent_type && <Badge variant="outline" className="capitalize">{u.agent_type.replace(/_/g, " ")}</Badge>}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (u) => <Badge variant={uploadStatusTone(u.status)}>{u.status || "uploaded"}</Badge>,
+    },
+    {
+      key: "when",
+      header: "Uploaded",
+      align: "right",
+      render: (u) => (
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {fmtWhen(u.uploaded_at || u.created_at || "")}
+        </span>
+      ),
+    },
+  ];
+  return (
+    <DataTable
+      columns={columns}
+      rows={uploads}
+      rowKey={(u) => u.id || u._id || ""}
+      onRowClick={onRowClick}
+      empty={
+        <div className="grid place-items-center px-6 py-16 text-center">
+          <div className="grid h-12 w-12 place-items-center rounded-xl bg-muted">
+            <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div className="mt-3 text-sm font-semibold">No batches uploaded yet</div>
+          <div className="mt-1 max-w-sm text-xs text-muted-foreground">
+            Use the Upload button above to ship in your first Excel.
+          </div>
+        </div>
+      }
+    />
+  );
+}
+
+/* ───────────────────────── Batch detail dialog ───────────────────────── */
+
+function BatchDetailDialog({
+  batchId,
+  open,
+  onClose,
+}: {
+  batchId: string | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const q = useQuery<{ calls: BatchCall[]; batch_id: string; total: number }>({
+    queryKey: ["batch-detail", batchId],
+    enabled: Boolean(batchId && open),
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/agent/upload/${batchId}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+  const rows = q.data?.calls ?? [];
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      size="xl"
+      title={`Batch ${batchId?.slice(0, 8) ?? ""}`}
+      description={q.data ? `${q.data.total} call${q.data.total === 1 ? "" : "s"} · first 50 shown` : "Loading…"}
+    >
+      {q.isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : q.error ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {(q.error as Error).message}
+        </div>
+      ) : (
+        <div className="max-h-[60vh] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card">
+              <tr className="border-b border-border text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                <th className="px-3 py-2 text-left">Customer</th>
+                <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-right">Duration</th>
+                <th className="px-3 py-2 text-center">Interested</th>
+                <th className="px-3 py-2 text-center">Form</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.slice(0, 50).map((c, i) => (
+                // Fall back to phone+index so the row still has a stable key
+                // even if backend ever returns a row without `id`.
+                <tr key={c.id || `${c.phone}-${i}`}>
+                  <td className="px-3 py-2">
+                    <div className="text-sm font-medium">{c.customer_name || "Customer"}</div>
+                    <div className="font-mono text-[10px] text-muted-foreground">{maskPhone(c.phone)}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">
+                    {fmtDuration(c.call_duration ?? 0)}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={cn("inline-block h-2 w-2 rounded-full", c.interested ? "bg-success" : "bg-muted-foreground/30")} />
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={cn("inline-block h-2 w-2 rounded-full", c.form_sent ? "bg-success" : "bg-muted-foreground/30")} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+/* ───────────────────────── Small helpers ─────────────────────────────── */
+
+function Select<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: ReadonlyArray<{ value: T; label: string }>;
+}) {
+  return (
+    <label className="block">
+      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function postJson(path: string) {
+  return async () => {
+    const res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    // Backend may return a non-JSON body on hard errors (e.g. HTML 502 from
+    // a misconfigured proxy). Detect via content-type so we don't silently
+    // swallow the real message under a useless "HTTP 502".
+    const ct = res.headers.get("content-type") ?? "";
+    let payload: any = {};
+    if (ct.includes("application/json")) {
+      payload = await res.json().catch(() => ({}));
+    } else {
+      const txt = await res.text().catch(() => "");
+      payload = { detail: txt.slice(0, 200) };
+    }
+    if (!res.ok) {
+      throw new Error(payload.detail || `${res.status} ${res.statusText || "Error"}`);
+    }
+    return payload;
+  };
+}
+
+function uploadStatusTone(s?: string): "success" | "warning" | "destructive" | "secondary" | "info" {
+  if (!s) return "secondary";
+  if (s === "completed") return "success";
+  if (s === "running") return "info";
+  if (s === "paused") return "warning";
+  if (s === "failed") return "destructive";
+  return "secondary";
+}
+
+function fmtWhen(iso: string): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString("en-IN", {
+      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}

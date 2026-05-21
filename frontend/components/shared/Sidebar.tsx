@@ -7,15 +7,21 @@ import {
   AlertOctagon,
   BarChart3,
   Building2,
+  CalendarClock,
+  Download,
+  FileText,
+  ListChecks,
   LogOut,
   Mic,
   PhoneCall,
   Radio,
-  Settings,
+  TrendingUp,
+  Upload,
   Users,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { clearAuth } from "@/lib/auth";
 
 /**
  * VirtualVaani-style sidebar.
@@ -34,19 +40,60 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
-const NAV: ReadonlyArray<NavItem> = [
-  { href: "/ops", label: "Dashboard", icon: BarChart3 },
-  { href: "/ops/live", label: "Live Calls", icon: Radio },
-  { href: "/ops/phones", label: "Phone Pool", icon: PhoneCall },
-  { href: "/ops/workers", label: "Workers", icon: Users },
-  { href: "/ops/errors", label: "Errors", icon: AlertOctagon },
-  { href: "/ops/funnel", label: "Funnel", icon: Activity },
-  { href: "/ops/recordings", label: "Recordings", icon: Mic },
-  { href: "/ops/settings", label: "Settings", icon: Settings },
+// Sidebar groups — matches the way an operator thinks about the system:
+// "Show me state" (Dashboard / Live) → "Show me data" (Calls / Recordings /
+// Callbacks / Analytics) → "Take action" (Batch / Exports) → "Show me the
+// system" (Phones / Workers / Errors / Funnel).
+type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
+
+const NAV_GROUPS: ReadonlyArray<NavGroup> = [
+  {
+    label: "Overview",
+    items: [
+      { href: "/ops", label: "Dashboard", icon: BarChart3 },
+      { href: "/ops/live", label: "Live Calls", icon: Radio },
+    ],
+  },
+  {
+    label: "Calls",
+    items: [
+      { href: "/ops/calls", label: "All Calls", icon: ListChecks },
+      { href: "/ops/recordings", label: "Recordings", icon: Mic },
+      { href: "/ops/callbacks", label: "Callbacks", icon: CalendarClock },
+      { href: "/ops/analytics", label: "Analytics", icon: TrendingUp },
+    ],
+  },
+  {
+    label: "Operate",
+    items: [
+      { href: "/ops/batch", label: "Batch", icon: Upload },
+      { href: "/ops/exports", label: "Exports", icon: Download },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { href: "/ops/phones", label: "Phone Pool", icon: PhoneCall },
+      { href: "/ops/workers", label: "Workers", icon: Users },
+      { href: "/ops/errors", label: "Errors", icon: AlertOctagon },
+      { href: "/ops/funnel", label: "Funnel", icon: Activity },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { href: "/admin/banks", label: "Banks", icon: Building2 },
+      { href: "/admin/dashboard", label: "Applications", icon: FileText },
+    ],
+  },
 ];
 
 export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
+  const handleLogout = () => {
+    clearAuth("admin");
+    window.location.href = "/admin/login";
+  };
   return (
     <aside
       className={cn(
@@ -78,34 +125,41 @@ export function Sidebar({ className }: { className?: string }) {
         <div className="mb-2 mt-2 px-3 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
           Navigation
         </div>
-        <nav className="flex flex-col gap-1">
-          {NAV.map((item) => {
-            const isActive =
-              item.href === "/ops"
-                ? pathname === "/ops"
-                : pathname?.startsWith(item.href);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all",
-                  isActive
-                    ? "bg-[hsl(var(--solid))] text-[hsl(var(--solid-foreground))] shadow-sm"
-                    : "text-foreground/70 hover:bg-muted hover:text-foreground"
-                )}
-              >
-                <Icon
-                  className={cn(
-                    "h-4 w-4 shrink-0",
-                    isActive ? "text-white" : "text-muted-foreground group-hover:text-foreground"
-                  )}
-                />
-                <span className="font-medium">{item.label}</span>
-              </Link>
-            );
-          })}
+        <nav className="flex flex-col gap-3">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="space-y-0.5">
+              <div className="mb-1 px-3 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+                {group.label}
+              </div>
+              {group.items.map((item) => {
+                const isActive =
+                  item.href === "/ops"
+                    ? pathname === "/ops"
+                    : pathname?.startsWith(item.href);
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "group flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all",
+                      isActive
+                        ? "bg-[hsl(var(--solid))] text-[hsl(var(--solid-foreground))] shadow-sm"
+                        : "text-foreground/70 hover:bg-muted hover:text-foreground"
+                    )}
+                  >
+                    <Icon
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        isActive ? "text-white" : "text-muted-foreground group-hover:text-foreground"
+                      )}
+                    />
+                    <span className="font-medium">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </div>
 
@@ -122,6 +176,8 @@ export function Sidebar({ className }: { className?: string }) {
             </div>
           </div>
           <button
+            type="button"
+            onClick={handleLogout}
             aria-label="Sign out"
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-card hover:text-destructive"
           >

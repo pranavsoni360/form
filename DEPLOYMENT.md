@@ -29,7 +29,7 @@ Required, set in `/root/vaani_los_form/backend/.env`:
 | Var | Purpose |
 |---|---|
 | `LOS_ENV` | `prod` — turns on the boot-time check that refuses to start with default JWT/encryption secrets |
-| `DATABASE_URL` | `postgresql://los_admin:<pw>@localhost:5434/los_form` |
+| `DATABASE_URL` | `postgresql://los_admin:<pw>@localhost:5435/los_form` |
 | `JWT_SECRET` | ≥32 char random string |
 | `ENCRYPTION_KEY` | ≥32 char random string |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `SIP_TRUNK_ID` | LiveKit/SIP credentials |

@@ -144,8 +144,14 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
                     )
                     row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
                     return _row_to_dict(row)
-            except Exception:
-                pass
+            except Exception as e:
+                # Don't drop on the floor — a real LiveKit/DB error here means
+                # the poll loop continues and may eventually time out, but at
+                # least the operator sees a trail in logs.
+                logger.warning(
+                    "wait_for_call_completion poll iteration failed for %s: %s",
+                    call_uuid, e,
+                )
 
     # Global timeout
     await _state.db_pool.execute(
@@ -279,10 +285,29 @@ async def upload_excel(
 
         contents = await file.read()
         if filename.endswith(".csv"):
+            # Try UTF-8 first (Excel exports include a BOM). Many vendors
+            # ship files in Windows-1252 / latin-1, so fall back to that.
             try:
                 df = pd.read_csv(io.StringIO(contents.decode("utf-8-sig")))
-            except Exception:
-                df = pd.read_csv(io.StringIO(contents.decode("latin-1")))
+            except Exception as utf_err:
+                logger.warning(
+                    "CSV decode failed as UTF-8 (%s); retrying as latin-1",
+                    utf_err,
+                )
+                try:
+                    df = pd.read_csv(io.StringIO(contents.decode("latin-1")))
+                except Exception as latin_err:
+                    # Both encodings failed — bubble up a clean 400 so the
+                    # operator sees "fix your file encoding" instead of a
+                    # cryptic pandas trace deep in the stack.
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Could not decode CSV — tried UTF-8 ({utf_err}) "
+                            f"and latin-1 ({latin_err}). Re-export the file "
+                            "as UTF-8 from Excel and try again."
+                        ),
+                    ) from latin_err
         else:
             df = pd.read_excel(io.BytesIO(contents))
 

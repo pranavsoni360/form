@@ -151,6 +151,14 @@ app.include_router(realtime_router)
 from routers.internal import router as internal_router  # noqa: E402
 app.include_router(internal_router)
 
+# Phase G — vendor portal: admin CRUD, partnerships, bank assignment, vendor self-serve.
+# Schema lives in migration_v11_vendors.sql. Vendor JWTs carry user_type='vendor'
+# and the local get_current_vendor dependency rejects anything else.
+from routers.vendors import admin_router as vendor_admin_router, bank_router as vendor_bank_router, vendor_router  # noqa: E402
+app.include_router(vendor_admin_router)
+app.include_router(vendor_bank_router)
+app.include_router(vendor_router)
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):

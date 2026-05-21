@@ -85,6 +85,30 @@ export default function OpsErrorsPage() {
 
   /* Filter + filtered list */
   const [filter, setFilter] = React.useState<Filter>("1h");
+  // Tracks whether the user has manually picked a filter. While false, the
+  // page auto-widens the window so a fresh visit never lands on an empty
+  // table when the buffer has older events (the most common case on first
+  // login: ring buffer has yesterday's errors, current "1h" window is empty,
+  // user thinks the page is broken).
+  const [filterPinned, setFilterPinned] = React.useState(false);
+  const onFilterChange = React.useCallback((f: Filter) => {
+    setFilterPinned(true);
+    setFilter(f);
+  }, []);
+  React.useEffect(() => {
+    if (filterPinned || errors.recent.length === 0) return;
+    // Pick the narrowest window that contains at least one event. Order:
+    // 5m → 1h → today → all. This is recomputed live, so as fresh errors
+    // arrive the page snaps back to the tightest meaningful window.
+    const has5m = errors.recent.some((e) => e.ts >= cutoffs["5m"]);
+    if (has5m) { if (filter !== "5m") setFilter("5m"); return; }
+    const has1h = errors.recent.some((e) => e.ts >= cutoffs["1h"]);
+    if (has1h) { if (filter !== "1h") setFilter("1h"); return; }
+    const hasToday = errors.recent.some((e) => e.ts >= cutoffs.today);
+    if (hasToday) { if (filter !== "today") setFilter("today"); return; }
+    if (filter !== "all") setFilter("all");
+  }, [filterPinned, errors, cutoffs, filter]);
+
   const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>("all");
   const filtered = React.useMemo(() => {
     let rows = errors.recent;
@@ -244,7 +268,7 @@ export default function OpsErrorsPage() {
           <ActivityChart data={series} height={180} />
         </div>
 
-        <FilterPills options={filterOptions} value={filter} onChange={setFilter} counts={filterCounts} />
+        <FilterPills options={filterOptions} value={filter} onChange={onFilterChange} counts={filterCounts} />
 
         {/* Source filter — only show sources that actually have events in the current window. */}
         <SourceFilterRow

@@ -290,19 +290,26 @@ export function errorsReducer(state: ErrorsState, event: RealtimeEvent): ErrorsS
       : Date.now(),
   };
 
-  // Dedup by (correlation_id, ts). The backend replays the 500-event errors
-  // ring buffer to every new SSE subscriber, so transient reconnects (network
-  // blip, token refresh, React StrictMode double-mount in dev) would otherwise
-  // multiply the row count (8 → 16 → 24 …). correlation_id is a uuid hex from
-  // the backend, guaranteed unique per real error.
-  if (
-    entry.correlation_id !== "-" &&
-    state.recent.some(
-      (e) => e.correlation_id === entry.correlation_id && e.ts === entry.ts,
-    )
-  ) {
-    return state;
-  }
+  // Dedup. The backend replays the 500-event errors ring buffer to every new
+  // SSE subscriber, so transient reconnects (network blip, token refresh,
+  // React StrictMode double-mount in dev, opening another tab) would otherwise
+  // multiply the row count.
+  //
+  // Primary key: correlation_id + ts (uuid hex from the backend, unique per
+  // real error). Fallback key: (source, exc_type, ts, message) — needed when
+  // correlation_id is "-" (backend exceptions raised before the request id
+  // middleware populates it; also true of some webhook events). Without this
+  // fallback the "-" events accumulate on every reconnect (8 → 9 → 10 …).
+  const isDup = state.recent.some((e) =>
+    entry.correlation_id !== "-"
+      ? e.correlation_id === entry.correlation_id && e.ts === entry.ts
+      : e.correlation_id === "-" &&
+        e.source === entry.source &&
+        e.exc_type === entry.exc_type &&
+        e.ts === entry.ts &&
+        e.message === entry.message,
+  );
+  if (isDup) return state;
 
   return { recent: [entry, ...state.recent].slice(0, ERROR_RING_SIZE) };
 }

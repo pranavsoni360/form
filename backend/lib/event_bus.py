@@ -101,6 +101,15 @@ class EventBus:
         # Normalize: ensure every event carries its topic + server timestamp
         payload = {**event, "topic": topic, "ts": time.time()}
 
+        # Persist errors to system_errors so /ops/errors survives backend
+        # restarts. Fire-and-forget — never blocks the publisher even if the
+        # DB is slow or unavailable (we still fan out via SSE either way).
+        # Only the "errors" topic gets persisted; other topics are high-
+        # frequency live state (workers heartbeat every 2s, calls fire many
+        # per dispatch) that wouldn't survive any reasonable retention policy.
+        if topic == "errors":
+            self._schedule_db_persist(payload)
+
         # Buffer for replay on subscribe (only if this topic has capacity).
         # Stored BEFORE fan-out so a brand-new subscriber that connects mid-
         # publish would see this event in its replay window.
@@ -178,6 +187,65 @@ class EventBus:
 
     def subscriber_count(self) -> int:
         return len(self._subscriptions)
+
+    # ── DB persistence for errors topic ─────────────────────────────────
+    # Why a wrapper: publish() is sync (it's called from inside Sentry
+    # hooks, FastAPI exception handlers, even non-async code paths). The DB
+    # write must happen on the event loop. We schedule it as a task and
+    # absorb every failure — the in-memory broadcast already happened.
+
+    def _schedule_db_persist(self, payload: dict[str, Any]) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g. called from sync test code) — skip.
+            return
+        loop.create_task(self._persist_error(payload))
+
+    async def _persist_error(self, payload: dict[str, Any]) -> None:
+        import json as _json
+        try:
+            # Lazy import to avoid a circular import at module load
+            # (main imports lib.event_bus before db_pool exists).
+            import main as _main
+            pool = getattr(_main, "db_pool", None)
+            if pool is None:
+                return  # backend still booting; we accept the drop
+
+            source = str(payload.get("source", "backend"))[:20]
+            level = str(payload.get("level", "error"))
+            if level not in ("error", "warning"):
+                level = "error"
+            exc_type = str(payload.get("exc_type", "Unknown"))[:200]
+            message = str(payload.get("message", ""))[:2000]
+            cid = payload.get("correlation_id")
+            cid = str(cid)[:100] if cid and cid != "-" else None
+            route = payload.get("route")
+            route = str(route)[:300] if route is not None else None
+            method = payload.get("method")
+            method = str(method)[:10] if method is not None else None
+            trace = payload.get("trace")
+            trace = str(trace)[:8000] if trace is not None else None
+            metadata = payload.get("metadata")
+            metadata_json = _json.dumps(metadata, default=str)[:8000] if metadata is not None else None
+            ts = float(payload.get("ts", time.time()))
+
+            # ON CONFLICT (correlation_id, ts) DO NOTHING — defeats double-
+            # publish from publisher retries. The partial unique idx in the
+            # migration makes this O(1).
+            await pool.execute(
+                """
+                INSERT INTO system_errors
+                  (source, level, exc_type, message, correlation_id, route, method, trace, metadata, ts)
+                VALUES
+                  ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+                ON CONFLICT (correlation_id, ts) WHERE correlation_id IS NOT NULL DO NOTHING
+                """,
+                source, level, exc_type, message, cid, route, method, trace, metadata_json, ts,
+            )
+        except Exception:
+            # Never let DB failure break the in-memory broadcast.
+            logger.exception("event_bus._persist_error failed (event dropped from DB)")
 
 
 # Module-level singleton. Import as `from lib.event_bus import event_bus`.

@@ -210,6 +210,79 @@ async def phone_pools():
     return {"pools": list(by_pool.values())}
 
 
+# ── /api/ops/errors ─────────────────────────────────────────────────────────
+# Durable history for /ops/errors. The page mounts → GET this for the recent
+# history → then subscribes to SSE for live additions on top. Reducer dedups
+# on (correlation_id, ts) so the two paths overlap safely.
+#
+# This is the FIX for "ring buffer wiped on every backend restart" — DB is
+# now the source of truth. Ring buffer remains as the within-session hot
+# path for SSE replay.
+#
+# No auth: matches the rest of /api/ops/* (operator visibility).
+
+@router.get("/api/ops/errors")
+async def list_recent_errors(
+    limit: int = 100,
+    source: str | None = None,
+    since_ts: float | None = None,
+):
+    """Return recent errors from system_errors, newest first.
+
+    Args:
+        limit: max rows (default 100, capped at 500).
+        source: optional filter (agent / livekit / sip / docker / postgres / backend / frontend).
+        since_ts: Unix epoch float — only rows with ts > this. Useful for
+                  pagination ("load older" by passing the oldest seen ts).
+    """
+    pool = _module_db_pool()
+    if pool is None:
+        return {"errors": [], "note": "db pool not ready"}
+
+    # Clamp
+    if limit < 1: limit = 1
+    if limit > 500: limit = 500
+
+    where: list[str] = []
+    args: list = []
+    if source:
+        args.append(source); where.append(f"source = ${len(args)}")
+    if since_ts is not None:
+        args.append(since_ts); where.append(f"ts > ${len(args)}")
+    args.append(limit)
+
+    sql = (
+        "SELECT id, source, level, exc_type, message, correlation_id, route, "
+        "method, trace, metadata, ts, created_at "
+        "FROM system_errors "
+    )
+    if where:
+        sql += "WHERE " + " AND ".join(where) + " "
+    sql += f"ORDER BY ts DESC LIMIT ${len(args)}"
+
+    rows = await pool.fetch(sql, *args)
+    return {
+        "errors": [
+            {
+                "type": "error",  # shape match for the SSE reducer
+                "id": str(r["id"]),
+                "source": r["source"],
+                "level": r["level"],
+                "exc_type": r["exc_type"],
+                "message": r["message"],
+                "correlation_id": r["correlation_id"] or "-",
+                "route": r["route"],
+                "method": r["method"],
+                "trace": r["trace"],
+                "metadata": r["metadata"],
+                "ts": float(r["ts"]),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 # ── Compatibility shims ─────────────────────────────────────────────────────
 # main.py keeps its db_pool / job_worker_pool as module-level globals rather
 # than on app.state. We try both paths so future refactors are smooth.

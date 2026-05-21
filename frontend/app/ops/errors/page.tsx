@@ -47,12 +47,30 @@ const SOURCE_STYLES: Record<ErrorSource, string> = {
   frontend: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
 };
 
+// Seed loader — fetches durable error history from system_errors so the
+// page is never empty after a backend restart. The reducer dedupes on
+// (correlation_id, ts), so any overlap with SSE replay is silently absorbed.
+async function seedErrorsFromDb() {
+  try {
+    const { API_URL } = await import("@/lib/api");
+    const res = await fetch(`${API_URL}/api/ops/errors?limit=200`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.errors ?? []) as any[];
+  } catch {
+    return [];
+  }
+}
+
 export default function OpsErrorsPage() {
-  const errors = useEventStream<ErrorsState>("errors", errorsReducer, initialErrorsState);
+  const errors = useEventStream<ErrorsState>("errors", errorsReducer, initialErrorsState, {
+    seed: seedErrorsFromDb,
+  });
   const activity = useEventStream<ActivityState>(
     "errors",
     activityReducer,
-    initialActivityState
+    initialActivityState,
+    { seed: seedErrorsFromDb }  // bucket history into the chart too
   );
   const { state: connState } = useRealtimeConnection();
 

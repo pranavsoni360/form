@@ -226,12 +226,30 @@ export function batchesReducer(state: BatchesState, event: RealtimeEvent): Batch
 
 /* ───────────────────────────── errors topic ──────────────────────────── */
 
+// Where the error came from — drives the badge color on /ops/errors.
+// `backend` = FastAPI global handler. Others arrive via POST /api/internal/errors
+// (HMAC-signed) from off-process sources.
+export type ErrorSource =
+  | "backend"
+  | "agent"
+  | "livekit"
+  | "sip"
+  | "docker"
+  | "postgres"
+  | "frontend";
+
+export type ErrorLevel = "error" | "warning";
+
 export interface ErrorEntry {
   correlation_id: string;
+  source: ErrorSource;
+  level: ErrorLevel;
   route: string;
   method: string;
   exc_type: string;
   message: string;
+  trace?: string;
+  metadata?: Record<string, unknown>;
   ts: number;
 }
 
@@ -245,12 +263,28 @@ const ERROR_RING_SIZE = 100;
 
 export function errorsReducer(state: ErrorsState, event: RealtimeEvent): ErrorsState {
   if (event.type !== "error") return state;
+  const rawSource = (event.source as string | undefined)?.toLowerCase();
+  const source: ErrorSource =
+    rawSource === "agent" ||
+    rawSource === "livekit" ||
+    rawSource === "sip" ||
+    rawSource === "docker" ||
+    rawSource === "postgres" ||
+    rawSource === "frontend"
+      ? rawSource
+      : "backend"; // default for legacy events without source field
+  const rawLevel = (event.level as string | undefined)?.toLowerCase();
+  const level: ErrorLevel = rawLevel === "warning" ? "warning" : "error";
   const entry: ErrorEntry = {
     correlation_id: (event.correlation_id as string) ?? "-",
+    source,
+    level,
     route: (event.route as string) ?? "?",
     method: (event.method as string) ?? "?",
     exc_type: (event.exc_type as string) ?? "?",
     message: (event.message as string) ?? "",
+    trace: (event.trace as string | undefined) ?? undefined,
+    metadata: (event.metadata as Record<string, unknown> | undefined) ?? undefined,
     ts: (event.ts as number | undefined)
       ? (event.ts as number) * 1000
       : Date.now(),

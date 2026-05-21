@@ -31,12 +31,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import AsyncIterator, Any
+from collections import deque
+from typing import AsyncIterator, Any, Deque
 
 logger = logging.getLogger(__name__)
 
 VALID_TOPICS = frozenset({"calls", "phones", "workers", "errors", "batches"})
 QUEUE_SIZE = 1000
+
+# Per-topic ring-buffer capacity. Events on these topics get held in memory
+# and replayed to new subscribers on connect — so a page refresh doesn't wipe
+# the user's view.
+#
+# `errors` is the only topic we replay: low-frequency, high-value events.
+# Other topics are HIGH-frequency live state (workers heartbeat every 2s,
+# calls fire many per dispatch) and replaying them would just spam reducers
+# with stale snapshots — better to refetch from REST on mount.
+#
+# Capacity of 0 = no buffering. Default for unlisted topics also 0.
+HISTORY_CAPACITY: dict[str, int] = {
+    "errors": 500,
+    "calls": 0,
+    "phones": 0,
+    "workers": 0,
+    "batches": 0,
+}
 
 
 class _Subscription:
@@ -60,6 +79,14 @@ class EventBus:
         # single-threaded under asyncio, but iteration during mutation is
         # what we want to guard).
         self._lock = asyncio.Lock()
+        # Per-topic ring buffer for replay-on-subscribe. Sized via
+        # HISTORY_CAPACITY above. Topics with capacity 0 still get a deque
+        # of maxlen=1 (skipped at publish time) to keep `_history[topic]`
+        # always indexable — cleaner than `if topic in self._history`.
+        self._history: dict[str, Deque[dict[str, Any]]] = {
+            topic: deque(maxlen=max(1, HISTORY_CAPACITY.get(topic, 0)))
+            for topic in VALID_TOPICS
+        }
 
     def publish(self, topic: str, event: dict[str, Any]) -> None:
         """Fire-and-forget. Never blocks. Drops oldest on per-subscriber overflow.
@@ -73,6 +100,12 @@ class EventBus:
 
         # Normalize: ensure every event carries its topic + server timestamp
         payload = {**event, "topic": topic, "ts": time.time()}
+
+        # Buffer for replay on subscribe (only if this topic has capacity).
+        # Stored BEFORE fan-out so a brand-new subscriber that connects mid-
+        # publish would see this event in its replay window.
+        if HISTORY_CAPACITY.get(topic, 0) > 0:
+            self._history[topic].append(payload)
 
         # Iterate a snapshot — subscribers added mid-publish just miss this one.
         for sub in list(self._subscriptions):
@@ -107,6 +140,26 @@ class EventBus:
         logger.info("event_bus subscribed topics=%s (n=%d)", sorted(topics), len(self._subscriptions))
 
         try:
+            # ── Replay phase: drain any buffered history for subscribed topics
+            # in chronological order so reducers see them in correct sequence.
+            # Tag each replayed event with `_replay=True` so client code can
+            # distinguish backfill from real-time (e.g. skip animation, mark
+            # rows as "historical"). Page reducers that just append to a list
+            # need no change — `_replay` is purely informational.
+            replay_events: list[dict[str, Any]] = []
+            for topic in topics:
+                if HISTORY_CAPACITY.get(topic, 0) > 0:
+                    replay_events.extend(self._history[topic])
+            replay_events.sort(key=lambda e: e.get("ts", 0.0))
+            if replay_events:
+                logger.info(
+                    "event_bus replaying %d historical events on subscribe topics=%s",
+                    len(replay_events), sorted(topics),
+                )
+                for old_evt in replay_events:
+                    yield {**old_evt, "_replay": True}
+
+            # ── Live phase: standard loop.
             while True:
                 event = await sub.queue.get()
                 # If we've dropped since last yield, prepend a lag marker.

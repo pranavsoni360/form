@@ -6,6 +6,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+# IST timezone for any user-facing timestamp (PDFs, audit trails, etc).
+# Server may be running in UTC (Docker default), so naive datetime.now()
+# would produce wrong dates when labeled "IST". Always do datetime.now(IST_TZ).
+IST_TZ = ZoneInfo("Asia/Kolkata")
 import secrets
 import bcrypt
 import re
@@ -138,6 +144,13 @@ app.include_router(ops_router)
 from routers.realtime import router as realtime_router  # noqa: E402
 app.include_router(realtime_router)
 
+# Internal HMAC-signed ingest — POST /api/internal/errors for off-process
+# error sources (LiveKit agent, SIP, docker, postgres). Lands in the same
+# event_bus "errors" topic that the FastAPI global handler uses, so
+# /ops/errors shows everything in one place.
+from routers.internal import router as internal_router  # noqa: E402
+app.include_router(internal_router)
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
@@ -164,6 +177,8 @@ async def _global_exception_handler(request: Request, exc: Exception):
         from lib.event_bus import event_bus
         event_bus.publish("errors", {
             "type": "error",
+            "source": "backend",  # tag origin so /ops/errors source-filter works
+            "level": "error",
             "correlation_id": cid,
             "route": str(request.url.path),
             "method": request.method,
@@ -414,7 +429,7 @@ def generate_aadhaar_pdf(name: str, dob: str, gender: str, address: str, masked_
     pdf.set_font('Helvetica', '', 8)
     pdf.set_text_color(140, 140, 150)
     pdf.set_xy(W - M - 60, 14)
-    pdf.cell(60, 5, f'Date: {datetime.now().strftime("%d %b %Y")}', align='R')
+    pdf.cell(60, 5, f'Date: {datetime.now(IST_TZ).strftime("%d %b %Y")}', align='R')
 
     # Thin separator
     y += 4
@@ -535,7 +550,7 @@ def generate_aadhaar_pdf(name: str, dob: str, gender: str, address: str, masked_
         ('Source', 'DigiLocker (Aadhaar XML via UIDAI)'),
         ('Signature Status', 'XML Signature Verified (xmlSignatureVerified: true)'),
         ('Document Type', 'Masked Aadhaar - First 8 digits hidden for privacy'),
-        ('Fetched On', datetime.now().strftime("%d %B %Y, %I:%M %p IST")),
+        ('Fetched On', datetime.now(IST_TZ).strftime("%d %B %Y, %I:%M %p IST")),
     ]
     for label, val in details:
         pdf.set_font('Helvetica', '', 8)

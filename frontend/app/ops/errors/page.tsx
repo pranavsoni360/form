@@ -23,6 +23,7 @@ import {
   errorsReducer,
   initialErrorsState,
   type ErrorEntry,
+  type ErrorSource,
   type ErrorsState,
 } from "@/lib/realtime/reducers";
 import {
@@ -33,6 +34,18 @@ import {
 } from "@/lib/realtime/activity-buffer";
 
 type Filter = "all" | "5m" | "1h" | "today";
+type SourceFilter = "all" | ErrorSource;
+
+/** Tailwind classes per source — match design-upgrade aesthetic. */
+const SOURCE_STYLES: Record<ErrorSource, string> = {
+  backend: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+  agent: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
+  livekit: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
+  sip: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300",
+  docker: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
+  postgres: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+  frontend: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
+};
 
 export default function OpsErrorsPage() {
   const errors = useEventStream<ErrorsState>("errors", errorsReducer, initialErrorsState);
@@ -72,9 +85,20 @@ export default function OpsErrorsPage() {
 
   /* Filter + filtered list */
   const [filter, setFilter] = React.useState<Filter>("1h");
+  const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>("all");
   const filtered = React.useMemo(() => {
-    if (filter === "all") return errors.recent;
-    return errors.recent.filter((e) => e.ts >= cutoffs[filter]);
+    let rows = errors.recent;
+    if (filter !== "all") rows = rows.filter((e) => e.ts >= cutoffs[filter]);
+    if (sourceFilter !== "all") rows = rows.filter((e) => e.source === sourceFilter);
+    return rows;
+  }, [errors, filter, sourceFilter, cutoffs]);
+
+  /* Per-source counts in current time-window (drives source filter pills) */
+  const sourceCounts = React.useMemo(() => {
+    const inWindow = filter === "all" ? errors.recent : errors.recent.filter((e) => e.ts >= cutoffs[filter]);
+    const c: Partial<Record<SourceFilter, number>> = { all: inWindow.length };
+    for (const e of inWindow) c[e.source] = (c[e.source] ?? 0) + 1;
+    return c;
   }, [errors, filter, cutoffs]);
 
   /* Activity chart — last hour, 1-min buckets */
@@ -107,12 +131,19 @@ export default function OpsErrorsPage() {
       ),
     },
     {
+      key: "source",
+      header: "Source",
+      render: (e) => <SourceBadge source={e.source} />,
+    },
+    {
       key: "route",
-      header: "Route",
+      header: "Origin",
       render: (e) => (
         <div className="space-y-0.5">
           <div className="font-mono text-xs font-semibold text-foreground">
-            {e.method} {e.route}
+            {e.route === "?" && e.method === "?"
+              ? <span className="text-muted-foreground italic">non-HTTP</span>
+              : <>{e.method} {e.route}</>}
           </div>
           <CorrIdPill cid={e.correlation_id} />
         </div>
@@ -121,13 +152,29 @@ export default function OpsErrorsPage() {
     {
       key: "type",
       header: "Type",
-      render: (e) => <Badge variant="destructive">{e.exc_type}</Badge>,
+      render: (e) => (
+        <Badge variant={e.level === "warning" ? "warning" : "destructive"}>
+          {e.exc_type}
+        </Badge>
+      ),
     },
     {
       key: "msg",
       header: "Message",
       render: (e) => (
-        <div className="max-w-md truncate text-xs text-foreground/80">{e.message || "—"}</div>
+        <div className="max-w-md text-xs text-foreground/80">
+          <div className="truncate">{e.message || "—"}</div>
+          {e.trace && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
+                stack trace ({e.trace.length} chars)
+              </summary>
+              <pre className="mt-1 max-h-48 overflow-y-auto rounded bg-muted/40 p-2 font-mono text-[10px] whitespace-pre-wrap">
+                {e.trace}
+              </pre>
+            </details>
+          )}
+        </div>
       ),
     },
     {
@@ -199,11 +246,18 @@ export default function OpsErrorsPage() {
 
         <FilterPills options={filterOptions} value={filter} onChange={setFilter} counts={filterCounts} />
 
+        {/* Source filter — only show sources that actually have events in the current window. */}
+        <SourceFilterRow
+          counts={sourceCounts}
+          active={sourceFilter}
+          onChange={setSourceFilter}
+        />
+
         <DataTable
           columns={columns}
           rows={filtered}
           rowKey={(e, i) => `${e.correlation_id}-${i}`}
-          empty={<EmptyBox />}
+          empty={<EmptyBox hasSourceFilter={sourceFilter !== "all"} />}
         />
       </div>
     </AppShell>
@@ -248,18 +302,94 @@ function CorrIdPill({ cid }: { cid: string }) {
   );
 }
 
-function EmptyBox() {
+function EmptyBox({ hasSourceFilter }: { hasSourceFilter?: boolean }) {
   return (
     <div className="grid place-items-center px-6 py-16 text-center">
       <div className="grid h-12 w-12 place-items-center rounded-xl bg-success/10 ring-1 ring-success/20">
         <CheckCircle2 className="h-5 w-5 text-success" />
       </div>
-      <div className="mt-3 text-sm font-semibold">No errors right now</div>
-      <div className="mt-1 max-w-sm text-xs text-muted-foreground">
-        The backend&apos;s global exception handler is quiet. Any unhandled
-        exception will appear here within milliseconds and also flow to Sentry
-        + Telegram.
+      <div className="mt-3 text-sm font-semibold">
+        {hasSourceFilter ? "No errors for this source" : "No errors right now"}
       </div>
+      <div className="mt-1 max-w-sm text-xs text-muted-foreground">
+        {hasSourceFilter
+          ? "Switch source filter back to 'All' to see everything, or wait for an event."
+          : "Backend + every wired external service (agent, livekit, sip, docker, postgres) is quiet. New errors will appear here within milliseconds."}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Source badge + filter ─────────────────────── */
+
+function SourceBadge({ source }: { source: ErrorSource }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+        SOURCE_STYLES[source],
+      )}
+    >
+      {source}
+    </span>
+  );
+}
+
+const SOURCE_LABELS: Record<ErrorSource, string> = {
+  backend: "Backend",
+  agent: "Voice agent",
+  livekit: "LiveKit",
+  sip: "SIP",
+  docker: "Docker",
+  postgres: "Postgres",
+  frontend: "Frontend",
+};
+
+function SourceFilterRow({
+  counts,
+  active,
+  onChange,
+}: {
+  counts: Partial<Record<SourceFilter, number>>;
+  active: SourceFilter;
+  onChange: (s: SourceFilter) => void;
+}) {
+  // Always show "All" + only sources that have at least one event in window.
+  const order: ErrorSource[] = ["backend", "agent", "livekit", "sip", "docker", "postgres", "frontend"];
+  const visible = order.filter((s) => (counts[s] ?? 0) > 0);
+  if (visible.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        Source:
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange("all")}
+        className={cn(
+          "rounded-full px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors",
+          active === "all"
+            ? "bg-foreground text-background"
+            : "bg-muted text-muted-foreground hover:bg-muted/80",
+        )}
+      >
+        All <span className="ml-1 font-mono">{counts.all ?? 0}</span>
+      </button>
+      {visible.map((s) => (
+        <button
+          key={s}
+          type="button"
+          onClick={() => onChange(s)}
+          className={cn(
+            "rounded-full px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors",
+            active === s
+              ? SOURCE_STYLES[s] + " ring-1 ring-foreground/30"
+              : "bg-muted text-muted-foreground hover:bg-muted/80",
+          )}
+        >
+          {SOURCE_LABELS[s]} <span className="ml-1 font-mono">{counts[s] ?? 0}</span>
+        </button>
+      ))}
     </div>
   );
 }

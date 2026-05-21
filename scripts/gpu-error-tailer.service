@@ -1,0 +1,30 @@
+[Unit]
+Description=LOS GPU error tailer — forwards LiveKit/SIP/Egress/Docker errors to /ops/errors
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+# Drop privileges if you can — root only required if docker socket needs it.
+# If your `docker` group is set up: User=adil
+ExecStart=/usr/local/bin/gpu-error-tailer.sh
+Restart=always
+RestartSec=5
+
+# Required env vars — store in /etc/los/gpu-tailer.env (chmod 600, owner root)
+# Contents of that file:
+#   LOS_BACKEND_URL=http://<backend-host>:8200
+#   LOS_INTERNAL_HMAC_SECRET=<same value as backend/.env>
+EnvironmentFile=/etc/los/gpu-tailer.env
+
+# Logging — sent to journald, view with: journalctl -u gpu-error-tailer -f
+StandardOutput=journal
+StandardError=journal
+
+# Don't let a flood of errors swamp the box
+LimitNOFILE=1024
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

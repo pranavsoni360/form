@@ -17,6 +17,7 @@ export function getAccessToken(type: AuthType): string | null {
 
 export function setAccessToken(type: AuthType, token: string): void {
   localStorage.setItem(TOKEN_KEYS[type], token);
+  notifyAuthChange(type, "login");
 }
 
 export function getCurrentUser(type: AuthType): any | null {
@@ -37,6 +38,30 @@ export function setCurrentUser(type: AuthType, user: any): void {
 export function clearAuth(type: AuthType): void {
   localStorage.removeItem(TOKEN_KEYS[type]);
   localStorage.removeItem(USER_KEYS[type]);
+  notifyAuthChange(type, "logout");
+}
+
+// ── Auth-change broadcast (for RealtimeProvider, etc.) ──────
+// The RealtimeProvider mounts before the user has logged in, so it sees no
+// token in localStorage and stays in "closed" state. Without a signal it
+// never re-attempts — the user has to hard-refresh after login to get SSE.
+//
+// We fire a custom DOM event here on every login/logout. Listeners in the
+// same tab pick it up via window.addEventListener("los-auth-changed", ...).
+// (The native `storage` event only fires in OTHER tabs, not the writer, so
+// it's not enough on its own.)
+export const AUTH_CHANGED_EVENT = "los-auth-changed";
+
+function notifyAuthChange(type: AuthType, action: "login" | "logout"): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent(AUTH_CHANGED_EVENT, { detail: { type, action } }),
+    );
+  } catch {
+    // Old browsers without CustomEvent constructor — fall back to a plain Event.
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+  }
 }
 
 export function isLoggedIn(type: AuthType): boolean {

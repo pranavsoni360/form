@@ -20,7 +20,7 @@
 
 import * as React from "react";
 import { API_URL } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth";
+import { getAccessToken, AUTH_CHANGED_EVENT } from "@/lib/auth";
 
 export type ConnectionState = "connecting" | "open" | "closed" | "error";
 
@@ -225,9 +225,48 @@ export function RealtimeProvider({
     };
     document.addEventListener("visibilitychange", handleVisibility);
 
+    // Reconnect on auth change. The Provider mounts ABOVE the login page in
+    // the tree, so on first paint there is no token and connect() bails into
+    // "closed". When the user logs in, lib/auth/setAccessToken dispatches
+    // los-auth-changed — we grab the new token and connect immediately. On
+    // logout we close cleanly and stay closed. Without this, the user has to
+    // hard-reload to get the SSE stream after logging in.
+    const handleAuthChange = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { type?: string; action?: "login" | "logout" }
+        | undefined;
+      if (detail?.action === "logout") {
+        cleanup();
+        setState("closed");
+        setAllowedTopics([]);
+        return;
+      }
+      // login (or anything else with a token now in storage) — reset backoff
+      // and connect fresh.
+      reconnectIndex = 0;
+      connect();
+    };
+    window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChange);
+
+    // Cross-tab: if user logs in/out in another tab, mirror the state here so
+    // both tabs converge. The native `storage` event fires only in OTHER tabs.
+    const handleStorage = (e: StorageEvent) => {
+      if (
+        e.key === "los_admin_token" ||
+        e.key === "los_bank_token" ||
+        e.key === "los_vendor_token"
+      ) {
+        reconnectIndex = 0;
+        connect();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChange);
+      window.removeEventListener("storage", handleStorage);
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

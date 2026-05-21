@@ -7,7 +7,17 @@ import { Banknote, Loader2, Lock, User } from "lucide-react";
 import { vendorLogin } from "@/lib/api/vendor";
 import { setAccessToken, setCurrentUser } from "@/lib/auth";
 
+// useSearchParams forces client-side bail-out — Next.js requires a Suspense
+// boundary so the rest of the route group can still pre-render.
 export default function VendorLoginPage() {
+  return (
+    <React.Suspense fallback={<div className="min-h-screen grid place-items-center text-slate-500">Loading…</div>}>
+      <VendorLoginForm />
+    </React.Suspense>
+  );
+}
+
+function VendorLoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const redirectTo = params.get("redirect") || "/vendor/dashboard";

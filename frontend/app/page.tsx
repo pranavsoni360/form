@@ -153,8 +153,15 @@ function OTPPage() {
           </div>
         )}
 
-        <div className="mt-6 pt-4 border-t dark:border-gray-700 text-center">
+        <div className="mt-6 pt-4 border-t dark:border-gray-700 text-center space-y-2">
           <p className="text-xs text-gray-400 dark:text-gray-500">Secure loan application portal</p>
+          <div className="flex justify-center gap-3 text-xs">
+            <a href="/bank/login" className="text-blue-600 hover:underline">Bank staff</a>
+            <span className="text-gray-300">·</span>
+            <a href="/admin/login" className="text-blue-600 hover:underline">Admin</a>
+            <span className="text-gray-300">·</span>
+            <a href="/vendor/login" className="text-emerald-600 hover:underline">NBFC vendor</a>
+          </div>
         </div>
       </div>
     </div>

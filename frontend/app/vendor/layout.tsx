@@ -17,13 +17,23 @@ export default function VendorLayout({ children }: { children: React.ReactNode }
   const pathname = usePathname();
   const isLogin = pathname === "/vendor/login";
 
+  // Login route is public — render immediately, no gate. Avoids the SSR
+  // "Verifying…" flash before useEffect runs.
+  if (isLogin) return <>{children}</>;
+
+  return <VendorAuthGate router={router} pathname={pathname}>{children}</VendorAuthGate>;
+}
+
+function VendorAuthGate({
+  router, pathname, children,
+}: {
+  router: ReturnType<typeof useRouter>;
+  pathname: string | null;
+  children: React.ReactNode;
+}) {
   const [ready, setReady] = React.useState(false);
 
   React.useEffect(() => {
-    if (isLogin) {
-      setReady(true);
-      return;
-    }
     const token = getAccessToken("vendor");
     if (!token) {
       const dest = pathname || "/vendor/dashboard";
@@ -31,7 +41,7 @@ export default function VendorLayout({ children }: { children: React.ReactNode }
       return;
     }
     setReady(true);
-  }, [router, pathname, isLogin]);
+  }, [router, pathname]);
 
   if (!ready) {
     return (

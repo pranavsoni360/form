@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAdminStats, getAdminApplications, seedMockData, getBanks, STATUS_LABELS, STATUS_COLORS, formatCurrency, formatDate } from '@/lib/api';
-import { LogOut, Loader2, Building2, Users, FileText, TrendingUp, ChevronRight, Plus, Database, BarChart3 } from 'lucide-react';
+import { LogOut, Loader2, Building2, Users, FileText, TrendingUp, ChevronRight, Plus, Database, BarChart3, Briefcase, Activity } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 
@@ -76,6 +76,14 @@ export default function AdminDashboardPage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">Loan Application Management System</p>
             </div>
             <div className="flex items-center gap-3">
+              <button onClick={() => router.push('/admin/vendors')}
+                className="flex items-center gap-1 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition shadow-sm">
+                <Briefcase className="w-4 h-4" /> Vendors
+              </button>
+              <button onClick={() => router.push('/ops')}
+                className="flex items-center gap-1 px-3 py-2 text-sm bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+                <Activity className="w-4 h-4" /> Ops Console
+              </button>
               <button onClick={handleSeed} disabled={seeding}
                 className="flex items-center gap-1 px-3 py-2 text-sm bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900/50 transition disabled:opacity-50">
                 <Database className="w-4 h-4" /> {seeding ? 'Seeding...' : 'Seed Mock Data'}

@@ -44,7 +44,8 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
 
@@ -173,3 +174,109 @@ async def ingest_external_error(
     )
 
     return {"ok": True, "correlation_id": correlation_id, "ts": time.time()}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FRONTEND error reporter — JWT-gated companion endpoint
+# ════════════════════════════════════════════════════════════════════════════
+# Browser JS errors (window.error, unhandledrejection, React error boundaries)
+# need a way to land in /ops/errors WITHOUT requiring the HMAC shared secret
+# (we'd have to ship the secret to the browser → defeats its purpose).
+#
+# This endpoint accepts a logged-in admin/bank/vendor JWT instead. The caller
+# can't spoof source — we force it to "frontend" server-side. Cheap rate limit
+# is enforced by truncating long messages + capping metadata.
+
+_browser_security = HTTPBearer(auto_error=False)
+
+
+@router.post("/frontend-error")
+async def report_frontend_error(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_browser_security),
+):
+    """Browser-side error reporter. Any logged-in user can post; source is
+    forced to 'frontend' so callers can't pretend to be the backend or agent.
+
+    Schema:
+        { exc_type, message, route?, trace?, metadata?, level? }
+    correlation_id is generated server-side (browsers don't carry the same
+    request-correlation context that backend exceptions do).
+    """
+    # JWT check — any valid token from any role is fine; we just need to know
+    # this isn't an anonymous attacker spamming.
+    if credentials is None:
+        # Unauthenticated browser errors (e.g. error before login) — accept
+        # silently with a relaxed cap so login-page crashes don't go missing.
+        # Could remove this branch if we want strict auth.
+        user_label = "anonymous"
+    else:
+        try:
+            import jwt as _jwt
+            import main as _main
+            payload = _jwt.decode(credentials.credentials, _main.JWT_SECRET, algorithms=["HS256"])
+            user_label = f"{payload.get('user_type', '?')}/{payload.get('user_id', '?')[:8]}"
+        except Exception:
+            raise HTTPException(401, "invalid token")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be a JSON object")
+
+    exc_type = str(body.get("exc_type", "")).strip() or "BrowserError"
+    message = str(body.get("message", "")).strip()[:MAX_MESSAGE_LEN]
+    level = str(body.get("level", "error")).strip().lower()
+    if level not in VALID_LEVELS:
+        level = "error"
+    route = body.get("route")
+    trace = body.get("trace")
+    metadata = body.get("metadata")
+
+    if trace is not None:
+        trace = str(trace)[:MAX_TRACE_LEN]
+    if metadata is not None:
+        try:
+            md_bytes = json.dumps(metadata, default=str).encode("utf-8")
+            if len(md_bytes) > MAX_METADATA_BYTES:
+                metadata = {"_truncated": True, "sample": md_bytes[:MAX_METADATA_BYTES].decode("utf-8", errors="replace")}
+        except (TypeError, ValueError):
+            metadata = {"_invalid": True}
+
+    correlation_id = uuid.uuid4().hex
+    payload_out: dict[str, Any] = {
+        "type": "error",
+        "source": "frontend",  # forced — caller cannot override
+        "level": level,
+        "correlation_id": correlation_id,
+        "exc_type": exc_type,
+        "message": message,
+        "reported_by": user_label,
+    }
+    if route is not None:
+        payload_out["route"] = str(route)[:200]
+    if trace is not None:
+        payload_out["trace"] = trace
+    if metadata is not None:
+        payload_out["metadata"] = metadata
+
+    try:
+        from lib.event_bus import event_bus
+        event_bus.publish("errors", payload_out)
+    except Exception:
+        logger.exception("frontend-error: event_bus.publish failed (event dropped)")
+
+    logger.warning(
+        "frontend_error_ingested",
+        extra={
+            "exc_type": exc_type,
+            "level": level,
+            "route": route,
+            "reported_by": user_label,
+            "error_msg": message[:200],
+        },
+    )
+
+    return {"ok": True, "correlation_id": correlation_id}

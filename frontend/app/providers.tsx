@@ -6,6 +6,7 @@ import { Toaster } from "sonner";
 
 import { makeQueryClient } from "@/lib/query-client";
 import { RealtimeProvider } from "@/lib/realtime/RealtimeProvider";
+import { installBrowserErrorReporter } from "@/lib/browser-error-reporter";
 
 /**
  * Root client-side providers. Mounted from app/layout.tsx so the entire app
@@ -24,6 +25,13 @@ import { RealtimeProvider } from "@/lib/realtime/RealtimeProvider";
 export function Providers({ children }: { children: React.ReactNode }) {
   // Lazy-create once per browser tab — React StrictMode double-invoke safe.
   const [client] = React.useState(makeQueryClient);
+
+  // Wire window.error + window.unhandledrejection → /api/internal/frontend-error
+  // so browser crashes show up in /ops/errors alongside backend exceptions.
+  // installBrowserErrorReporter() is idempotent — safe to call on every render.
+  React.useEffect(() => {
+    installBrowserErrorReporter();
+  }, []);
 
   return (
     <QueryClientProvider client={client}>

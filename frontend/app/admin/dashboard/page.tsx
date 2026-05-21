@@ -76,6 +76,10 @@ export default function AdminDashboardPage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">Loan Application Management System</p>
             </div>
             <div className="flex items-center gap-3">
+              <button onClick={() => router.push('/admin/applications')}
+                className="flex items-center gap-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm">
+                <FileText className="w-4 h-4" /> Applications
+              </button>
               <button onClick={() => router.push('/admin/vendors')}
                 className="flex items-center gap-1 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition shadow-sm">
                 <Briefcase className="w-4 h-4" /> Vendors

@@ -146,6 +146,18 @@ export default function BankDashboardPage() {
           </div>
         </div>
 
+        {/* Quick link to the full applications index — added for multi-bank
+            rollout so bank users can paginate / search the whole queue
+            instead of only seeing what fits in this inline table. */}
+        <div className="flex justify-end -mt-2 mb-2">
+          <button
+            onClick={() => router.push('/bank/applications')}
+            className="text-xs font-medium text-blue-600 hover:underline"
+          >
+            View all applications →
+          </button>
+        </div>
+
         {/* Applications Table */}
         {loading ? (
           <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">

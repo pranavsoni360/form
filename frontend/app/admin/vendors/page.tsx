@@ -348,6 +348,7 @@ function VendorDrawer({
                   vendorId={vendorId}
                   banks={banks}
                   existing={partnerships}
+                  bankCaps={partQ.data?.bank_caps || {}}
                   onDone={() => {
                     setShowAddPart(false);
                     qc.invalidateQueries({ queryKey: ["admin", "partnerships", vendorId] });
@@ -422,12 +423,23 @@ function AddVendorUserForm({
 }
 
 function AddPartnershipForm({
-  token, vendorId, banks, existing, onDone,
-}: { token: string; vendorId: string; banks: any[]; existing: any[]; onDone: () => void }) {
+  token, vendorId, banks, existing, bankCaps, onDone,
+}: { token: string; vendorId: string; banks: any[]; existing: any[]; bankCaps: Record<string, { vendor_limit: number; active_count: number }>; onDone: () => void }) {
   const usedBankIds = new Set(existing.filter((p) => p.status !== "terminated").map((p) => p.bank_id));
-  const available = banks.filter((b) => !usedBankIds.has(b.id));
+  // Each bank gets a small annotation: usage out of its vendor_limit. Picking
+  // a bank that's already at its cap will fail server-side with 409, so we
+  // disable the option pre-emptively too.
+  const available = banks
+    .filter((b) => !usedBankIds.has(b.id))
+    .map((b) => {
+      const cap = bankCaps[b.id];
+      const atCap = cap ? cap.active_count >= cap.vendor_limit : false;
+      const label = cap ? `${b.name} (${b.code}) — ${cap.active_count}/${cap.vendor_limit} vendors` : `${b.name} (${b.code})`;
+      return { ...b, atCap, label };
+    });
   const [bank, setBank] = React.useState("");
   const [comm, setComm] = React.useState<string>("");
+  const selectedAtCap = available.find((b) => b.id === bank)?.atCap === true;
   const m = useMutation({
     mutationFn: () => adminCreatePartnership(token, {
       bank_id: bank,
@@ -450,12 +462,19 @@ function AddPartnershipForm({
           className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
         >
           <option value="">— pick bank —</option>
-          {available.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.code})</option>)}
+          {available.map((b) => (
+            <option key={b.id} value={b.id} disabled={b.atCap}>
+              {b.label}{b.atCap ? "  (cap reached)" : ""}
+            </option>
+          ))}
         </select>
+        {selectedAtCap && (
+          <p className="mt-1 text-[10px] text-rose-600">This bank has reached its vendor_limit. Raise it from /admin/banks first.</p>
+        )}
       </div>
       <FormInput label="Commission %" value={comm} onChange={setComm} type="number" small placeholder="e.g. 10" />
       <button
-        disabled={!bank || m.isPending}
+        disabled={!bank || selectedAtCap || m.isPending}
         onClick={() => m.mutate()}
         className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
       >

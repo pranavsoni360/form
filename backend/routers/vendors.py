@@ -313,7 +313,7 @@ async def list_partnerships(
     admin: dict = Depends(get_current_admin_dep),
 ):
     sql = (
-        "SELECT bvp.*, b.name AS bank_name, b.code AS bank_code, "
+        "SELECT bvp.*, b.name AS bank_name, b.code AS bank_code, b.vendor_limit, "
         "v.name AS vendor_name, v.code AS vendor_code "
         "FROM bank_vendor_partnerships bvp "
         "JOIN banks b ON b.id = bvp.bank_id "
@@ -326,7 +326,16 @@ async def list_partnerships(
         args.append(uuid.UUID(vendor_id)); sql += f" AND bvp.vendor_id = ${len(args)}"
     sql += " ORDER BY bvp.created_at DESC"
     rs = await _db().fetch(sql, *args)
-    return {"partnerships": _rows(rs)}
+
+    # Per-bank active counts so UI can show "5/10 used" without an extra round-trip.
+    cap_rows = await _db().fetch(
+        "SELECT b.id, b.vendor_limit, "
+        "  COALESCE(SUM(CASE WHEN bvp.status='active' THEN 1 ELSE 0 END), 0)::int AS active_count "
+        "FROM banks b LEFT JOIN bank_vendor_partnerships bvp ON bvp.bank_id = b.id "
+        "GROUP BY b.id, b.vendor_limit"
+    )
+    bank_caps = {str(r["id"]): {"vendor_limit": r["vendor_limit"], "active_count": r["active_count"]} for r in cap_rows}
+    return {"partnerships": _rows(rs), "bank_caps": bank_caps}
 
 
 @admin_router.post("/partnerships")
@@ -335,16 +344,38 @@ async def create_partnership(payload: PartnershipCreate, admin: dict = Depends(g
         buid, vuid = uuid.UUID(payload.bank_id), uuid.UUID(payload.vendor_id)
     except ValueError:
         raise HTTPException(400, "invalid bank_id or vendor_id")
-    try:
-        row = await _db().fetchrow(
-            "INSERT INTO bank_vendor_partnerships (bank_id, vendor_id, commission_pct, notes) "
-            "VALUES ($1,$2,$3,$4) RETURNING *",
-            buid, vuid, payload.commission_pct, payload.notes,
-        )
-    except asyncpg.UniqueViolationError:
-        raise HTTPException(409, "partnership already exists for this bank+vendor")
-    except asyncpg.ForeignKeyViolationError:
-        raise HTTPException(404, "bank or vendor not found")
+
+    # Enforce banks.vendor_limit — commercial cap per bank. Counted in the
+    # same transaction as the insert so two simultaneous POSTs from the UI
+    # can't both slip past the check.
+    async with _db().acquire() as conn:
+        async with conn.transaction():
+            bank = await conn.fetchrow(
+                "SELECT vendor_limit FROM banks WHERE id = $1 FOR UPDATE", buid,
+            )
+            if not bank:
+                raise HTTPException(404, "bank not found")
+            active_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM bank_vendor_partnerships "
+                "WHERE bank_id = $1 AND status = 'active'",
+                buid,
+            )
+            if active_count >= bank["vendor_limit"]:
+                raise HTTPException(
+                    409,
+                    f"bank vendor_limit reached ({active_count}/{bank['vendor_limit']}). "
+                    f"Raise the limit in /admin/banks before adding more partnerships.",
+                )
+            try:
+                row = await conn.fetchrow(
+                    "INSERT INTO bank_vendor_partnerships (bank_id, vendor_id, commission_pct, notes) "
+                    "VALUES ($1,$2,$3,$4) RETURNING *",
+                    buid, vuid, payload.commission_pct, payload.notes,
+                )
+            except asyncpg.UniqueViolationError:
+                raise HTTPException(409, "partnership already exists for this bank+vendor")
+            except asyncpg.ForeignKeyViolationError:
+                raise HTTPException(404, "vendor not found")
     return _row(row)
 
 

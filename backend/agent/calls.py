@@ -770,8 +770,15 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
 
 
 @router.post("/stale-cleanup")
-async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
-    """Clean up calls stuck in 'Calling' status."""
+async def stale_cleanup():
+    """Clean up calls stuck in 'Calling' status.
+
+    Operator action (no auth) — matches /emergency-stop, /resume-calling,
+    /batch-call and the other recovery endpoints in this file. The function
+    body already ignores bank scoping (`bank_uuid = None`), so requiring a
+    bank-user JWT was an inconsistency: /ops/batch is admin-context and
+    the button was silently failing.
+    """
     bank_uuid = None  # operator — no bank scoping
 
     # 1. Delete broken calls (no room_name)

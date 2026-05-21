@@ -6,6 +6,7 @@ import {
   Activity,
   AlertOctagon,
   BarChart3,
+  Briefcase,
   Building2,
   CalendarClock,
   Download,
@@ -83,6 +84,7 @@ const NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: "Administration",
     items: [
       { href: "/admin/banks", label: "Banks", icon: Building2 },
+      { href: "/admin/vendors", label: "Vendors", icon: Briefcase },
       { href: "/admin/dashboard", label: "Applications", icon: FileText },
     ],
   },

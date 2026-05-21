@@ -6,6 +6,7 @@ import { API_URL, getApplicationDetail, officerApprove, officerReject, superviso
 import { ArrowLeft, User, Briefcase, FileText, ClipboardCheck, CheckCircle2, XCircle, Clock, AlertTriangle, Eye, CreditCard, Shield, Upload, Loader2, ChevronDown, ChevronUp, Banknote } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
+import { AssignVendorPanel } from '@/components/bank/AssignVendorPanel';
 
 interface TimelineEvent {
   id: string;
@@ -330,6 +331,17 @@ export default function ApplicationDetailPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Vendor-channel disbursement (alternative to in-house "Approve & Disburse").
+            Renders only when app.status === 'approved' — i.e. final supervisor approval
+            done, ready to either pay out in-house or hand off to an NBFC partner. */}
+        {isSupervisor && (
+          <AssignVendorPanel
+            token={token}
+            applicationId={appId}
+            applicationStatus={app.status}
+          />
         )}
       </div>
     </div>

@@ -93,17 +93,32 @@ export {
 } from "./apply";
 
 export {
+  // vendor self-serve
   vendorLogin,
+  getVendorMe,
   getVendorApplications,
   getVendorApplicationDetail,
-  vendorDisburse,
+  vendorAccept,
   vendorReject,
+  vendorDisburse,
   getVendorSettlements,
-  getVendorStats,
-  getVendors,
-  createVendor,
-  updateVendor,
-  assignApplicationToVendor,
+  // admin-facing vendor CRUD
+  adminListVendors,
+  adminGetVendor,
+  adminCreateVendor,
+  adminUpdateVendor,
+  adminDeactivateVendor,
+  adminCreateVendorUser,
+  // partnerships
+  adminListPartnerships,
+  adminCreatePartnership,
+  adminUpdatePartnership,
+  adminTerminatePartnership,
+  // bank-side
+  bankListPartneredVendors,
+  bankAssignVendor,
+  bankWithdrawAssignment,
+  bankGetAssignmentHistory,
 } from "./vendor";
 
 // ── Utility re-exports for backward compat ───────────────────

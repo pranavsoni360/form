@@ -1,86 +1,96 @@
-// lib/api/vendor.ts — vendor (NBFC / disbursement partner) endpoints
+// lib/api/vendor.ts — vendor portal client (matches backend routers/vendors.py)
 //
-// NOTE: Backend endpoints for vendor are NOT yet implemented (Phase G work).
-// These functions WILL 404 until the vendor backend is built. Frontend can
-// already be wired up against these signatures.
+// Routes (live on origin/feature/m6-realtime-backbone):
+//   POST /api/vendor/login                          — JWT
+//   GET  /api/vendor/me
+//   GET  /api/vendor/applications[?status=...]      — assigned apps
+//   GET  /api/vendor/applications/{aid}             — detail
+//   POST /api/vendor/assignments/{ava_id}/accept
+//   POST /api/vendor/assignments/{ava_id}/reject    — { reason }
+//   POST /api/vendor/assignments/{ava_id}/disburse  — { disbursed_amount, disbursement_ref }
+//   GET  /api/vendor/settlements[?status=...]
 import { apiFetch, authHeaders } from "./index";
 
 // ── AUTH ──────────────────────────────────────────
 export async function vendorLogin(username: string, password: string) {
-  return apiFetch("/api/auth/vendor-login", {
+  return apiFetch("/api/vendor/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
 }
 
-// ── APPLICATIONS ──────────────────────────────────
-export async function getVendorApplications(token: string, status?: string) {
+export async function getVendorMe(token: string) {
+  return apiFetch("/api/vendor/me", { headers: authHeaders(token) });
+}
+
+// ── ASSIGNED APPLICATIONS ─────────────────────────
+export type VendorAssignmentStatus =
+  | "pending" | "accepted" | "disbursed" | "vendor_rejected" | "withdrawn";
+
+export async function getVendorApplications(
+  token: string,
+  status?: VendorAssignmentStatus,
+) {
   const qs = status ? `?status=${status}` : "";
-  return apiFetch(`/api/vendor/applications${qs}`, {
+  return apiFetch(`/api/vendor/applications${qs}`, { headers: authHeaders(token) });
+}
+
+export async function getVendorApplicationDetail(token: string, appId: string) {
+  return apiFetch(`/api/vendor/applications/${appId}`, { headers: authHeaders(token) });
+}
+
+// ── ASSIGNMENT ACTIONS (vendor side) ──────────────
+// All three target the assignment_id (ava_id), NOT the application_id.
+export async function vendorAccept(token: string, avaId: string) {
+  return apiFetch(`/api/vendor/assignments/${avaId}/accept`, {
+    method: "POST",
     headers: authHeaders(token),
   });
 }
 
-export async function getVendorApplicationDetail(
-  token: string,
-  appId: string,
-) {
-  return apiFetch(`/api/vendor/applications/${appId}`, {
+export async function vendorReject(token: string, avaId: string, reason: string) {
+  return apiFetch(`/api/vendor/assignments/${avaId}/reject`, {
+    method: "POST",
     headers: authHeaders(token),
+    body: JSON.stringify({ reason }),
   });
 }
 
 export async function vendorDisburse(
   token: string,
-  appId: string,
-  notes?: string,
+  avaId: string,
+  disbursed_amount: number,
+  disbursement_ref: string,
 ) {
-  return apiFetch(`/api/vendor/applications/${appId}/disburse`, {
+  return apiFetch(`/api/vendor/assignments/${avaId}/disburse`, {
     method: "POST",
     headers: authHeaders(token),
-    body: JSON.stringify({ notes }),
-  });
-}
-
-export async function vendorReject(
-  token: string,
-  appId: string,
-  notes?: string,
-  rejection_reason?: string,
-) {
-  return apiFetch(`/api/vendor/applications/${appId}/reject`, {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify({ notes, rejection_reason }),
+    body: JSON.stringify({ disbursed_amount, disbursement_ref }),
   });
 }
 
 // ── SETTLEMENTS ───────────────────────────────────
-export async function getVendorSettlements(
-  token: string,
-  filters?: { from_date?: string; to_date?: string },
-) {
-  const params = new URLSearchParams();
-  if (filters?.from_date) params.set("from_date", filters.from_date);
-  if (filters?.to_date) params.set("to_date", filters.to_date);
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  return apiFetch(`/api/vendor/settlements${qs}`, {
-    headers: authHeaders(token),
-  });
+export type SettlementStatus = "pending" | "paid" | "failed" | "disputed";
+
+export async function getVendorSettlements(token: string, status?: SettlementStatus) {
+  const qs = status ? `?status=${status}` : "";
+  return apiFetch(`/api/vendor/settlements${qs}`, { headers: authHeaders(token) });
 }
 
-// ── DASHBOARD ─────────────────────────────────────
-export async function getVendorStats(token: string) {
-  return apiFetch("/api/vendor/stats", { headers: authHeaders(token) });
+// ════════════════════════════════════════════════════════════════════════════
+// ADMIN-FACING vendor management (used by /admin/vendors page)
+// ════════════════════════════════════════════════════════════════════════════
+export async function adminListVendors(token: string, status?: string) {
+  const qs = status ? `?status=${status}` : "";
+  return apiFetch(`/api/admin/vendors${qs}`, { headers: authHeaders(token) });
 }
 
-// ── ADMIN-FACING vendor CRUD (super-admin manages vendors) ────
-export async function getVendors(token: string) {
-  return apiFetch("/api/admin/vendors", { headers: authHeaders(token) });
+export async function adminGetVendor(token: string, vendorId: string) {
+  return apiFetch(`/api/admin/vendors/${vendorId}`, { headers: authHeaders(token) });
 }
 
-export async function createVendor(
+export async function adminCreateVendor(
   token: string,
   data: {
     name: string;
@@ -88,6 +98,8 @@ export async function createVendor(
     contact_email?: string;
     contact_phone?: string;
     address?: string;
+    gstin?: string;
+    pan_number?: string;
   },
 ) {
   return apiFetch("/api/admin/vendors", {
@@ -97,27 +109,114 @@ export async function createVendor(
   });
 }
 
-export async function updateVendor(
+export async function adminUpdateVendor(
   token: string,
   vendorId: string,
   data: Record<string, any>,
 ) {
   return apiFetch(`/api/admin/vendors/${vendorId}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: authHeaders(token),
     body: JSON.stringify(data),
   });
 }
 
-export async function assignApplicationToVendor(
+export async function adminDeactivateVendor(token: string, vendorId: string) {
+  return apiFetch(`/api/admin/vendors/${vendorId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+}
+
+export async function adminCreateVendorUser(
   token: string,
-  appId: string,
+  vendorId: string,
+  data: {
+    full_name: string;
+    username: string;
+    password: string;
+    email?: string;
+    role?: "vendor" | "vendor_manager";
+  },
+) {
+  return apiFetch(`/api/admin/vendors/${vendorId}/users`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  });
+}
+
+// ── PARTNERSHIPS (M:N bank<->vendor) ──────────────
+export async function adminListPartnerships(
+  token: string,
+  filters?: { bank_id?: string; vendor_id?: string },
+) {
+  const params = new URLSearchParams();
+  if (filters?.bank_id) params.set("bank_id", filters.bank_id);
+  if (filters?.vendor_id) params.set("vendor_id", filters.vendor_id);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch(`/api/admin/partnerships${qs}`, { headers: authHeaders(token) });
+}
+
+export async function adminCreatePartnership(
+  token: string,
+  data: { bank_id: string; vendor_id: string; commission_pct?: number; notes?: string },
+) {
+  return apiFetch("/api/admin/partnerships", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  });
+}
+
+export async function adminUpdatePartnership(
+  token: string,
+  partnershipId: string,
+  data: { status?: string; commission_pct?: number; notes?: string },
+) {
+  return apiFetch(`/api/admin/partnerships/${partnershipId}`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  });
+}
+
+export async function adminTerminatePartnership(token: string, partnershipId: string) {
+  return apiFetch(`/api/admin/partnerships/${partnershipId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BANK-side vendor actions (bank user views partnered vendors + assigns)
+// ════════════════════════════════════════════════════════════════════════════
+export async function bankListPartneredVendors(token: string) {
+  return apiFetch("/api/bank/vendors", { headers: authHeaders(token) });
+}
+
+export async function bankAssignVendor(
+  token: string,
+  applicationId: string,
   vendorId: string,
   notes?: string,
 ) {
-  return apiFetch(`/api/admin/applications/${appId}/assign-vendor`, {
+  return apiFetch(`/api/bank/applications/${applicationId}/assign-vendor`, {
     method: "POST",
     headers: authHeaders(token),
     body: JSON.stringify({ vendor_id: vendorId, notes }),
+  });
+}
+
+export async function bankWithdrawAssignment(token: string, applicationId: string) {
+  return apiFetch(`/api/bank/applications/${applicationId}/withdraw-assignment`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+}
+
+export async function bankGetAssignmentHistory(token: string, applicationId: string) {
+  return apiFetch(`/api/bank/applications/${applicationId}/assignments`, {
+    headers: authHeaders(token),
   });
 }

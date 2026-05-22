@@ -283,6 +283,42 @@ async def list_recent_errors(
     }
 
 
+# ── POST /api/ops/errors/cleanup ────────────────────────────────────────────
+# Manual trigger for the same DELETE the daily APScheduler job runs at 03:00
+# IST. Useful when the operator wants to clear the table on-demand (e.g. after
+# a noisy incident drowned out signal). Accepts ?days=N override; default is
+# the same LOS_ERROR_RETENTION_DAYS env value as the scheduled job.
+#
+# No auth — matches the rest of /api/ops/* operator endpoints.
+
+@router.post("/api/ops/errors/cleanup")
+async def cleanup_errors(days: int | None = None):
+    """Delete system_errors older than `days` (default = LOS_ERROR_RETENTION_DAYS env, fallback 1).
+
+    Same DELETE the daily 03:00 IST scheduler job runs; this exposes it to
+    operators for emergency / testing use without waiting for the cron tick.
+    """
+    pool = _module_db_pool()
+    if pool is None:
+        return JSONResponse({"error": "db pool not ready"}, status_code=503)
+
+    if days is None:
+        try:
+            days = int(os.getenv("LOS_ERROR_RETENTION_DAYS", "1"))
+        except ValueError:
+            days = 1
+    if days < 1:
+        days = 1
+    cutoff_ts = time.time() - days * 86400.0
+    before = await pool.fetchval("SELECT COUNT(*) FROM system_errors")
+    result = await pool.execute(
+        "DELETE FROM system_errors WHERE ts < $1", cutoff_ts,
+    )
+    deleted = int(result.split()[-1]) if result else 0
+    after = await pool.fetchval("SELECT COUNT(*) FROM system_errors")
+    return {"deleted": deleted, "rows_before": before, "rows_after": after, "retention_days": days}
+
+
 # ── Compatibility shims ─────────────────────────────────────────────────────
 # main.py keeps its db_pool / job_worker_pool as module-level globals rather
 # than on app.state. We try both paths so future refactors are smooth.

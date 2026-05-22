@@ -7,7 +7,7 @@ import asyncio
 import logging
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
@@ -61,8 +61,17 @@ async def agent_startup():
         id="analytics_runner",
         replace_existing=True,
     )
+    # Daily system_errors cleanup — runs at 03:00 IST (low-traffic window).
+    # Retention configurable via LOS_ERROR_RETENTION_DAYS env, default 1 day.
+    # Bounded DELETE so the table never grows unbounded across deployments.
+    _scheduler.add_job(
+        _scheduled_error_cleanup,
+        CronTrigger(hour=3, minute=0, timezone="Asia/Kolkata"),
+        id="error_cleanup",
+        replace_existing=True,
+    )
     _scheduler.start()
-    logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, max_retries={MAX_RETRIES})")
+    logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, error_cleanup daily 03:00 IST, max_retries={MAX_RETRIES})")
 
 
 async def agent_shutdown():
@@ -93,6 +102,35 @@ async def _scheduled_batch_run():
 
 async def _scheduled_analytics():
     await process_analytics_batch()
+
+
+async def _scheduled_error_cleanup():
+    """Daily DELETE on system_errors older than LOS_ERROR_RETENTION_DAYS (default 1).
+
+    The table is purely an audit feed for /ops/errors — Sentry is the long-term
+    archive — so a short retention is fine. Configurable via env so a team
+    that wants 7 days for forensic work can bump it without a code change.
+    Logs the row count so the operator can see the job actually ran.
+    """
+    try:
+        retention_days = int(os.getenv("LOS_ERROR_RETENTION_DAYS", "1"))
+    except ValueError:
+        retention_days = 1
+    if retention_days < 1:
+        retention_days = 1
+    cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=retention_days)).timestamp()
+    try:
+        result = await _state.db_pool.execute(
+            "DELETE FROM system_errors WHERE ts < $1", cutoff_ts,
+        )
+        deleted = int(result.split()[-1]) if result else 0
+        logger.info(
+            "error_cleanup_done",
+            extra={"deleted": deleted, "retention_days": retention_days},
+        )
+    except Exception:
+        logger.exception("error_cleanup failed")
+
 
 # ============================================================================
 # BATCH PROCESSING (sequential, one call at a time)

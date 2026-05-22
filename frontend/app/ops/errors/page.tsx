@@ -47,17 +47,34 @@ const SOURCE_STYLES: Record<ErrorSource, string> = {
   frontend: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
 };
 
-// Seed loader — fetches durable error history from system_errors so the
-// page is never empty after a backend restart. The reducer dedupes on
-// (correlation_id, ts), so any overlap with SSE replay is silently absorbed.
+// Direct REST fetch of durable error history from system_errors. Used
+// both as the initial seed on mount AND as a periodic fallback poll
+// (every 15s) so the page works even if SSE is broken, browser cache is
+// stale, or the seed somehow failed. The reducer dedupes on
+// (correlation_id, ts) so overlap with SSE replay is silently absorbed.
+//
+// Cache-bust query param defeats any HTTP cache between us and backend.
 async function seedErrorsFromDb() {
   try {
-    const { API_URL } = await import("@/lib/api");
-    const res = await fetch(`${API_URL}/api/ops/errors?limit=200`);
-    if (!res.ok) return [];
+    // Use NEXT_PUBLIC_API_URL directly so this doesn't depend on the
+    // @/lib/api dynamic import chain (which dragged in the rest of the
+    // module + can fail silently in production splits).
+    const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8200";
+    const res = await fetch(`${API}/api/ops/errors?limit=200&_t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      console.warn("[/ops/errors] seed fetch returned", res.status);
+      return [];
+    }
     const data = await res.json();
-    return (data.errors ?? []) as any[];
-  } catch {
+    const events = (data.errors ?? []) as any[];
+    if (events.length === 0) {
+      console.info("[/ops/errors] seed returned 0 events from /api/ops/errors");
+    }
+    return events;
+  } catch (e) {
+    console.error("[/ops/errors] seed failed", e);
     return [];
   }
 }
@@ -72,6 +89,36 @@ export default function OpsErrorsPage() {
     initialActivityState,
     { seed: seedErrorsFromDb }  // bucket history into the chart too
   );
+
+  // ── DEFENSIVE FALLBACK ────────────────────────────────────────────────
+  // If SSE never connects or the seed fails for any reason (browser cache,
+  // network blip, prerender hiccup), we still want the page to surface
+  // recent errors. Poll the same REST endpoint every 15s and feed events
+  // through the reducer manually — dedup means this is free overhead when
+  // SSE is healthy.
+  const [fallbackTick, setFallbackTick] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setFallbackTick((n) => n + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  // Direct REST refetch — bypasses RealtimeProvider entirely so it works
+  // even if SSE is closed. Errors land in a separate state slice that we
+  // merge into the SSE-driven `errors` for display.
+  const [fallbackErrors, setFallbackErrors] = React.useState<ErrorEntry[]>([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const events = await seedErrorsFromDb();
+      if (cancelled) return;
+      // Run them through the same reducer to get consistent ErrorEntry shape
+      let st: ErrorsState = initialErrorsState;
+      for (const ev of events) {
+        st = errorsReducer(st, { ...ev, topic: "errors" });
+      }
+      setFallbackErrors(st.recent);
+    })();
+    return () => { cancelled = true; };
+  }, [fallbackTick]);
   const { state: connState } = useRealtimeConnection();
 
   // 1Hz tick so the time filters re-evaluate
@@ -91,15 +138,38 @@ export default function OpsErrorsPage() {
     [tickNow]
   );
 
+  // Merge SSE-driven errors with REST-fallback errors so the page is
+  // populated no matter which path is healthy. Dedup by (correlation_id, ts)
+  // — same key the reducer already uses internally — so overlap from both
+  // sources collapses to a single row.
+  const mergedRecent = React.useMemo<ErrorEntry[]>(() => {
+    if (errors.recent.length === 0 && fallbackErrors.length === 0) return [];
+    if (errors.recent.length === 0) return fallbackErrors;
+    if (fallbackErrors.length === 0) return errors.recent;
+    const seen = new Set<string>();
+    const merged: ErrorEntry[] = [];
+    for (const e of [...errors.recent, ...fallbackErrors]) {
+      const key = e.correlation_id !== "-"
+        ? `${e.correlation_id}|${e.ts}`
+        : `${e.source}|${e.exc_type}|${e.ts}|${e.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(e);
+    }
+    // Newest first
+    merged.sort((a, b) => b.ts - a.ts);
+    return merged.slice(0, 200);
+  }, [errors, fallbackErrors]);
+
   const counts = React.useMemo(() => {
     const buckets = { "5m": 0, "1h": 0, today: 0 };
-    for (const e of errors.recent) {
+    for (const e of mergedRecent) {
       if (e.ts >= cutoffs["5m"]) buckets["5m"] += 1;
       if (e.ts >= cutoffs["1h"]) buckets["1h"] += 1;
       if (e.ts >= cutoffs.today) buckets.today += 1;
     }
     return buckets;
-  }, [errors, cutoffs]);
+  }, [mergedRecent, cutoffs]);
 
   /* Filter + filtered list */
   const [filter, setFilter] = React.useState<Filter>("1h");
@@ -114,34 +184,34 @@ export default function OpsErrorsPage() {
     setFilter(f);
   }, []);
   React.useEffect(() => {
-    if (filterPinned || errors.recent.length === 0) return;
+    if (filterPinned || mergedRecent.length === 0) return;
     // Pick the narrowest window that contains at least one event. Order:
     // 5m → 1h → today → all. This is recomputed live, so as fresh errors
     // arrive the page snaps back to the tightest meaningful window.
-    const has5m = errors.recent.some((e) => e.ts >= cutoffs["5m"]);
+    const has5m = mergedRecent.some((e) => e.ts >= cutoffs["5m"]);
     if (has5m) { if (filter !== "5m") setFilter("5m"); return; }
-    const has1h = errors.recent.some((e) => e.ts >= cutoffs["1h"]);
+    const has1h = mergedRecent.some((e) => e.ts >= cutoffs["1h"]);
     if (has1h) { if (filter !== "1h") setFilter("1h"); return; }
-    const hasToday = errors.recent.some((e) => e.ts >= cutoffs.today);
+    const hasToday = mergedRecent.some((e) => e.ts >= cutoffs.today);
     if (hasToday) { if (filter !== "today") setFilter("today"); return; }
     if (filter !== "all") setFilter("all");
-  }, [filterPinned, errors, cutoffs, filter]);
+  }, [filterPinned, mergedRecent, cutoffs, filter]);
 
   const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>("all");
   const filtered = React.useMemo(() => {
-    let rows = errors.recent;
+    let rows = mergedRecent;
     if (filter !== "all") rows = rows.filter((e) => e.ts >= cutoffs[filter]);
     if (sourceFilter !== "all") rows = rows.filter((e) => e.source === sourceFilter);
     return rows;
-  }, [errors, filter, sourceFilter, cutoffs]);
+  }, [mergedRecent, filter, sourceFilter, cutoffs]);
 
   /* Per-source counts in current time-window (drives source filter pills) */
   const sourceCounts = React.useMemo(() => {
-    const inWindow = filter === "all" ? errors.recent : errors.recent.filter((e) => e.ts >= cutoffs[filter]);
+    const inWindow = filter === "all" ? mergedRecent : mergedRecent.filter((e) => e.ts >= cutoffs[filter]);
     const c: Partial<Record<SourceFilter, number>> = { all: inWindow.length };
     for (const e of inWindow) c[e.source] = (c[e.source] ?? 0) + 1;
     return c;
-  }, [errors, filter, cutoffs]);
+  }, [mergedRecent, filter, cutoffs]);
 
   /* Activity chart — last hour, 1-min buckets */
   const series = React.useMemo(
@@ -159,7 +229,7 @@ export default function OpsErrorsPage() {
     "5m": counts["5m"],
     "1h": counts["1h"],
     today: counts.today,
-    all: errors.recent.length,
+    all: mergedRecent.length,
   };
 
   const columns: ReadonlyArray<DataTableColumn<ErrorEntry>> = [

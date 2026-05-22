@@ -36,6 +36,16 @@ load_dotenv(".env.local")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("loan-enquiry-agent")
 
+# Wire agent → /api/internal/errors webhook. Idempotent; silently no-ops if
+# LOS_BACKEND_URL or LOS_INTERNAL_HMAC_SECRET aren't set in .env.local.
+# Every logger.error()/exception + every uncaught crash will surface in
+# /ops/errors with source=agent.
+try:
+    from los_error_reporter import install as _install_los_reporter
+    _install_los_reporter()
+except Exception as _e:
+    logger.warning(f"LOS error reporter not installed: {_e}")
+
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8002")
 if "localhost" in BACKEND_URL:
     import warnings

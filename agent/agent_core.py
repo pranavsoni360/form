@@ -31,6 +31,15 @@ from prompts_account import build_account_opening_instructions
 
 logger = logging.getLogger("loan-enquiry-agent")
 
+# Wire agent → /api/internal/errors webhook (idempotent — silently no-ops if
+# LOS_BACKEND_URL / LOS_INTERNAL_HMAC_SECRET aren't set in .env.local).
+# Lifts every logger.error / uncaught exception into /ops/errors.
+try:
+    from los_error_reporter import install as _install_los_reporter
+    _install_los_reporter()
+except Exception as _e:
+    logger.warning(f"LOS error reporter not installed: {_e}")
+
 
 # ===================================================================
 # AGENT

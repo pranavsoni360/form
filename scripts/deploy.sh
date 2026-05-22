@@ -388,6 +388,50 @@ systemctl enable los-backend los-frontend
 
 log "Phase 7 complete"
 
+# ── Phase 7b: gpu-error-tailer (livekit/sip/docker → /api/internal/errors) ───
+# Watches docker container logs + docker events on this host and POSTs real
+# errors to the LOS backend's /ops/errors webhook. Required for the /ops/errors
+# dashboard to receive livekit, sip, and docker container events. Skipped
+# automatically on hosts without docker (e.g. dev machines).
+
+log "── Phase 7b: gpu-error-tailer ──"
+
+if have_cmd docker && [[ -f "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" ]]; then
+    # Install the tailer to /usr/local/bin (single canonical path)
+    install -m 755 "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" /usr/local/bin/gpu-error-tailer.sh
+
+    # Env file — populated from the same secret the backend already uses
+    if [[ -n "${LOS_INTERNAL_HMAC_SECRET:-}" ]]; then
+        mkdir -p /etc/los
+        chmod 700 /etc/los
+        cat > /etc/los/gpu-tailer.env <<TAIL_ENV
+LOS_BACKEND_URL=http://127.0.0.1:${BACKEND_PORT}
+LOS_INTERNAL_HMAC_SECRET=${LOS_INTERNAL_HMAC_SECRET}
+TAIL_ENV
+        chmod 600 /etc/los/gpu-tailer.env
+        log "  wrote /etc/los/gpu-tailer.env"
+    else
+        warn "  LOS_INTERNAL_HMAC_SECRET env not set — tailer service will refuse to start"
+        warn "  set it in env or run: echo 'LOS_INTERNAL_HMAC_SECRET=...' > /etc/los/gpu-tailer.env"
+    fi
+
+    # systemd unit — install from repo, enable
+    install -m 644 "${INSTALL_DIR}/scripts/gpu-error-tailer.service" /etc/systemd/system/gpu-error-tailer.service
+    systemctl daemon-reload
+    systemctl enable gpu-error-tailer
+    if systemctl is-active --quiet gpu-error-tailer; then
+        systemctl restart gpu-error-tailer
+        log "  gpu-error-tailer restarted"
+    else
+        systemctl start gpu-error-tailer || warn "  gpu-error-tailer failed to start — check 'journalctl -u gpu-error-tailer'"
+        log "  gpu-error-tailer started"
+    fi
+else
+    log "  skipped (docker not present or script missing)"
+fi
+
+log "Phase 7b complete"
+
 # ── Phase 8: Firewall ────────────────────────────────────────────────────────
 
 log "── Phase 8: Firewall ──"

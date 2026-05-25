@@ -184,6 +184,16 @@ async def stream_events(
                     yield f": heartbeat {int(time.time())}\n\n".encode()
                     last_yield_at = time.monotonic()
                     continue
+                except StopAsyncIteration:
+                    # Upstream generator finished (event_bus closed our sub).
+                    # PEP 479: raising StopAsyncIteration from inside an async
+                    # generator becomes a RuntimeError("async generator raised
+                    # StopAsyncIteration") and trips the FastAPI global handler
+                    # — polluting /ops/errors with phantom errors on every
+                    # planned SSE close (token refresh, page navigate). Treat
+                    # it as a clean end-of-stream instead.
+                    yield b": upstream closed, please reconnect\n\n"
+                    return
 
                 # bank-user row filter: skip events not for this bank.
                 if not is_admin and event.get("bank_id") and event["bank_id"] != bank_id:

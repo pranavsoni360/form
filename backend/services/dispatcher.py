@@ -632,6 +632,11 @@ class Dispatcher:
         result = await self.wait_for_call_completion(str(call_uuid), room_name)
         if result:
             fs = result.get("status", "Unknown")
+            # 'Scheduled' means the agent ran schedule_callback() during this
+            # conversation — treat it as a soft success (trunk released without
+            # cooldown, counted as successful, SSE shows "scheduled" not "failed").
+            if fs == "Scheduled":
+                return True
             return fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested")
         return False
 

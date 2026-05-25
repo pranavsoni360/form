@@ -77,13 +77,17 @@ async def schedule_callback(request: Request):
            WHERE id = $4""",
         dt_ist, reason, now_local, call_uuid,
     )
-    # Also reactivate the parent batch so the dispatcher will pick this row up later
+    # Reactivate the parent batch so the dispatcher will pick this row up when
+    # scheduled_callback_at arrives. Flip 'completed' OR 'paused' → 'running'.
+    # 'paused' can happen if the operator hit emergency-stop during the original
+    # batch — without this fix, the callback silently never fires.
     row = await _state.db_pool.fetchrow("SELECT batch_id FROM agent_calls WHERE id = $1", call_uuid)
     if row and row["batch_id"]:
         await _state.db_pool.execute(
             """UPDATE agent_batches
-               SET status = CASE WHEN status = 'completed' THEN 'running' ELSE status END
-               WHERE batch_id = $1""",
+               SET status = 'running'
+               WHERE batch_id = $1
+                 AND status IN ('completed', 'paused')""",
             row["batch_id"],
         )
 

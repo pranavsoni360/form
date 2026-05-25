@@ -17,6 +17,7 @@ import { DataTable, type DataTableColumn } from "@/components/ops/DataTable";
 import { ActivityChart } from "@/components/ops/ActivityChart";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { API_URL } from "@/lib/api";
 import { useEventStream } from "@/lib/realtime/useEventStream";
 import { useRealtimeConnection } from "@/lib/realtime/RealtimeProvider";
 import {
@@ -54,27 +55,29 @@ const SOURCE_STYLES: Record<ErrorSource, string> = {
 // (correlation_id, ts) so overlap with SSE replay is silently absorbed.
 //
 // Cache-bust query param defeats any HTTP cache between us and backend.
+//
+// We use the shared API_URL from lib/api (which respects the localhost
+// override) rather than reading process.env.NEXT_PUBLIC_API_URL directly —
+// the latter was masking which URL the page was actually hitting whenever
+// a user opened the page from a LAN IP / non-localhost hostname.
 async function seedErrorsFromDb() {
+  const url = `${API_URL}/api/ops/errors?limit=200&_t=${Date.now()}`;
   try {
-    // Use NEXT_PUBLIC_API_URL directly so this doesn't depend on the
-    // @/lib/api dynamic import chain (which dragged in the rest of the
-    // module + can fail silently in production splits).
-    const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8200";
-    const res = await fetch(`${API}/api/ops/errors?limit=200&_t=${Date.now()}`, {
-      cache: "no-store",
-    });
+    const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
-      console.warn("[/ops/errors] seed fetch returned", res.status);
+      console.warn(`[/ops/errors] seed fetch returned HTTP ${res.status} from ${url}`);
       return [];
     }
     const data = await res.json();
     const events = (data.errors ?? []) as any[];
     if (events.length === 0) {
-      console.info("[/ops/errors] seed returned 0 events from /api/ops/errors");
+      console.info(`[/ops/errors] seed returned 0 events from ${url}`);
+    } else {
+      console.info(`[/ops/errors] seed loaded ${events.length} events from ${url}`);
     }
     return events;
   } catch (e) {
-    console.error("[/ops/errors] seed failed", e);
+    console.error(`[/ops/errors] seed failed for ${url}:`, e);
     return [];
   }
 }

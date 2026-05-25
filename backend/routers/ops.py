@@ -210,6 +210,87 @@ async def phone_pools():
     return {"pools": list(by_pool.values())}
 
 
+# ── /api/ops/in-flight-calls ────────────────────────────────────────────────
+# Initial-state seed for /ops/live. The SSE "calls" topic emits state-change
+# events (dispatching / completed / failed), and the topic has no replay
+# buffer — so a user who opens /ops/live while a call is already mid-dispatch
+# would see an empty grid. This endpoint returns every call currently in the
+# 'Calling' status (i.e. picked up by the dispatcher, awaiting wait_for_call_
+# completion), so the page seeds them as cards immediately on mount.
+#
+# Shape mirrors the SSE call_state event so the same reducer can fold both.
+# No auth — matches the rest of /api/ops/* operator endpoints.
+
+@router.get("/api/ops/in-flight-calls")
+async def in_flight_calls():
+    """Seed for /ops/live: active calls + recently-completed ones.
+
+    Two cohorts:
+      1. status='Calling' — currently mid-dispatch. Status="calling" so the
+         page shows a live in-progress card.
+      2. Recently-ended calls (ended within last 5 minutes). Status maps to
+         "completed" or "failed" so the page shows the outcome card briefly
+         (the same 6-second tombstone window the SSE path uses).
+
+    Why include #2: the dispatcher emits its SSE `completed` event the
+    instant the agent flips status away from 'Calling' — which can fire 1-2
+    seconds before the customer's phone audio actually disconnects. If the
+    operator opens /ops/live right after that flip, the SSE event is gone
+    (no replay on the calls topic), so without this seed the page is empty
+    even though "the call just ended".
+    """
+    pool = _module_db_pool()
+    if pool is None:
+        return {"calls": [], "note": "db pool not ready"}
+
+    try:
+        rows = await pool.fetch(
+            """SELECT id, customer_name, phone, language, agent_type,
+                      batch_id, bank_id, status, started_at, ended_at, created_at
+                 FROM agent_calls
+                WHERE status = 'Calling'
+                   OR (ended_at IS NOT NULL AND ended_at > NOW() - INTERVAL '5 minutes')
+                ORDER BY COALESCE(ended_at, started_at, created_at) DESC
+                LIMIT 100"""
+        )
+    except Exception as e:
+        return {"calls": [], "error": f"{type(e).__name__}: {e}"}
+
+    # Map DB status → SSE call_state shape that the live page reducer
+    # understands. Anything that's still 'Calling' is in progress; everything
+    # else is terminal (the table only includes rows whose ended_at landed
+    # inside the 5-min window).
+    SUCCESS_STATUSES = {"Called", "Called - Interested", "Called - Not Interested", "Completed"}
+
+    events: list[dict] = []
+    for r in rows:
+        is_calling = r["status"] == "Calling"
+        if is_calling:
+            sse_status = "calling"
+            anchor_time = r["started_at"] or r["created_at"]
+        elif r["status"] in SUCCESS_STATUSES:
+            sse_status = "completed"
+            anchor_time = r["ended_at"] or r["started_at"] or r["created_at"]
+        else:
+            sse_status = "failed"
+            anchor_time = r["ended_at"] or r["started_at"] or r["created_at"]
+        ts = anchor_time.timestamp() if anchor_time else time.time()
+        events.append({
+            "type": "call_state",
+            "status": sse_status,
+            "call_id": str(r["id"]),
+            "customer_name": r["customer_name"] or "Customer",
+            "phone": r["phone"] or "",
+            "language": r["language"],
+            "agent_type": r["agent_type"],
+            "batch_id": r["batch_id"],
+            "bank_id": str(r["bank_id"]) if r["bank_id"] else None,
+            "outcome_success": (not is_calling) and r["status"] in SUCCESS_STATUSES,
+            "ts": ts,
+        })
+    return {"calls": events}
+
+
 # ── /api/ops/errors ─────────────────────────────────────────────────────────
 # Durable history for /ops/errors. The page mounts → GET this for the recent
 # history → then subscribes to SSE for live additions on top. Reducer dedups

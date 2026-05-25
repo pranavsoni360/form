@@ -43,8 +43,16 @@ async def save_transcript(data: TranscriptPayload):
     call = _row_to_dict(call_row)
     actual_uuid = uuid.UUID(call["id"])
 
-    # Determine status from transcript content
-    if transcript:
+    # Determine final status.
+    # IMPORTANT: if the voice agent already called schedule_callback() during this
+    # conversation (status='Scheduled'), we MUST preserve that — the transcript
+    # webhook fires a few seconds after end_call() and would otherwise overwrite
+    # 'Scheduled' with 'Called - Not Interested', which silently drops the callback.
+    existing_status = call.get("status")
+    if existing_status == "Scheduled":
+        # Callback already registered — keep status so the dispatcher re-dials.
+        status = "Scheduled"
+    elif transcript:
         status = "Called - Interested" if data.customer_interested else "Called - Not Interested"
     else:
         status = "Not Answered"
@@ -88,7 +96,12 @@ async def save_transcript(data: TranscriptPayload):
     }
     existing_collected.update({k: v for k, v in qualification_data.items() if v})
 
-    category = "Uncategorized" if transcript else "Call Not Connected"
+    if existing_status == "Scheduled":
+        category = call.get("category") or "Scheduled Callback"
+    elif transcript:
+        category = "Uncategorized"
+    else:
+        category = "Call Not Connected"
 
     # Build call_analysis JSONB with lead_quality so dashboard stats can find hot/warm leads.
     call_analysis = {

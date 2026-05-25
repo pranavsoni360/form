@@ -7,6 +7,7 @@ import { AppShell } from "@/components/shared/AppShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusPill } from "@/components/shared/StatusPill";
 import { LiveCallCard } from "@/components/ops/LiveCallCard";
+import { API_URL } from "@/lib/api";
 import { useEventStream } from "@/lib/realtime/useEventStream";
 import { useRealtimeConnection } from "@/lib/realtime/RealtimeProvider";
 import {
@@ -15,16 +16,45 @@ import {
   removeCall,
   type CallsState,
 } from "@/lib/realtime/reducers";
+import type { RealtimeEvent } from "@/lib/realtime/RealtimeProvider";
+
+/**
+ * REST seed for the live page. SSE `calls` topic has no history replay
+ * (each event is delta-only), so a user landing on /ops/live mid-call would
+ * see an empty grid even though the dispatcher is actively running calls.
+ * Fetch every row currently in 'Calling' status and feed them through the
+ * same reducer as a `call_state` event — the SSE handler's dedup-by-call_id
+ * means the live `completed`/`failed` events that arrive later cleanly
+ * supersede the seeded `calling` entries.
+ */
+async function seedInFlightCalls(): Promise<RealtimeEvent[]> {
+  try {
+    const res = await fetch(`${API_URL}/api/ops/in-flight-calls?_t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.calls ?? []) as RealtimeEvent[];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * /ops/live — Live Call Monitor.
  *
- * Subscribes to the "calls" SSE topic. Every call_state event folds into
- * a map keyed by call_id. Terminal-state cards linger ~6s so users can
- * see the outcome flash before vanishing.
+ * Initial state seeded via /api/ops/in-flight-calls so cards appear instantly
+ * on navigation even mid-call. SSE `calls` topic delivers state transitions
+ * (dispatching → completed/failed) on top of the seed. Terminal-state cards
+ * linger ~6s so users see the outcome flash before vanishing.
  */
 export default function OpsLivePage() {
-  const calls = useEventStream<CallsState>("calls", callsReducer, initialCallsState);
+  const calls = useEventStream<CallsState>(
+    "calls",
+    callsReducer,
+    initialCallsState,
+    { seed: seedInFlightCalls },
+  );
   const { state: connState } = useRealtimeConnection();
 
   // Terminal-state cleanup: keep completed/failed cards visible for 6s,

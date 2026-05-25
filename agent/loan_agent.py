@@ -59,6 +59,14 @@ GENDER_CONFIG = {
 def now_ist() -> str:
     return datetime.now(IST).strftime("%b %d, %Y %I:%M %p")
 
+
+def _turn_meta() -> dict:
+    """Per-transcript-turn timestamps — see session.py for the rationale.
+    Returns {"ts": <unix epoch float>, "timestamp": "<HH:MM:SS IST>"}."""
+    n = datetime.now(IST)
+    return {"ts": n.timestamp(), "timestamp": n.strftime("%H:%M:%S")}
+
+
 def normalize_mobile(mobile: str) -> str:
     mobile = mobile.strip()
     if mobile.startswith("+91"): return mobile[3:]
@@ -141,14 +149,14 @@ class LoanEnquirySession:
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "user", "text": text.strip(), "timestamp": now_ist()})
+        self.transcript.append({"role": "user", "text": text.strip(), **_turn_meta()})
         logger.info(f"👤 USER: {text}")
 
     def add_agent_message(self, text: str):
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "agent", "text": text.strip(), "timestamp": now_ist()})
+        self.transcript.append({"role": "agent", "text": text.strip(), **_turn_meta()})
         logger.info(f"🤖 AGENT: {text}")
 
     def set_lead_quality(self, interest: bool, reason: str = ""):

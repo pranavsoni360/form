@@ -227,7 +227,9 @@ async def process_batch_run(batch_uuid_str: str = None):
         return
 
     try:
-        # Find the batch to process
+        # Find the batch to process. SELECT * picks up `preferred_phone_id`
+        # (v14 column) automatically — we read it below before constructing
+        # the Dispatcher.
         if batch_uuid_str:
             batch_row = await _state.db_pool.fetchrow(
                 "SELECT * FROM agent_batches WHERE id = $1 AND status = 'running'",
@@ -250,6 +252,17 @@ async def process_batch_run(batch_uuid_str: str = None):
         # ── M4-lite: delegate per-call placement to the concurrent dispatcher ──
         from services.dispatcher import Dispatcher, manager as dispatcher_mgr
 
+        # If the operator picked a specific phone for this batch via the
+        # /ops/batch dropdown, the column was set at upload / trigger time.
+        # Pass it through so every dispatched call uses that one phone.
+        preferred_phone_id = batch.get("preferred_phone_id")
+        if preferred_phone_id:
+            preferred_phone_id = str(preferred_phone_id)
+            logger.info(
+                "Batch %s using operator-selected phone_id=%s",
+                batch_id, preferred_phone_id,
+            )
+
         dispatcher = Dispatcher(
             batch_id_uuid=batch_id,
             call_batch_id=call_batch_id,
@@ -266,6 +279,7 @@ async def process_batch_run(batch_uuid_str: str = None):
             is_emergency_stop_active_fn=is_emergency_stop_active,
             now_ist_fn=now_ist,
             max_retries=MAX_RETRIES,
+            preferred_phone_id=preferred_phone_id,
         )
         dispatcher_mgr.register(batch_id, dispatcher)
         try:
@@ -310,6 +324,15 @@ async def upload_excel(
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
     agent_type: str = Query("loan_enquiry", description="loan_enquiry | account_opening"),
+    phone_number_id: Optional[str] = Query(
+        None,
+        description=(
+            "UUID of a phone_numbers row — when set, every call in this batch "
+            "dials FROM that specific number (e.g. operator picked +17744930587 "
+            "from the /ops/batch dropdown). When unset, dispatcher auto-picks "
+            "least-loaded across the pool."
+        ),
+    ),
     background_tasks: BackgroundTasks = None,
     # no auth — operator access
 ):
@@ -376,12 +399,34 @@ async def upload_excel(
         bank_id_uuid = uuid.UUID(bank_id) if bank_id else None
         uploaded_by_uuid = None
 
-        # Insert into agent_batches with batch_id string for linking to agent_calls
+        # Insert into agent_batches with batch_id string for linking to agent_calls.
+        # `preferred_phone_id` is the operator's /ops/batch dropdown pick (v14 column).
         batch_uuid = uuid.uuid4()
+        preferred_phone_uuid = None
+        if phone_number_id:
+            try:
+                preferred_phone_uuid = uuid.UUID(phone_number_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"phone_number_id is not a valid UUID: {phone_number_id}",
+                )
+            # Verify the row exists + is active — fail fast if operator picked
+            # a stale id (e.g. the row was deleted between page load and submit).
+            exists = await _state.db_pool.fetchval(
+                "SELECT 1 FROM phone_numbers WHERE id = $1 AND status = 'active'",
+                preferred_phone_uuid,
+            )
+            if not exists:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"phone_number_id {phone_number_id} not found or not active",
+                )
+
         await _state.db_pool.execute(
-            """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at, agent_type)
-               VALUES ($1, $2, $3, $4, $5, 0, 0, 'pending', $6, $7, $8)""",
-            batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time, agent_type,
+            """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at, agent_type, preferred_phone_id)
+               VALUES ($1, $2, $3, $4, $5, 0, 0, 'pending', $6, $7, $8, $9)""",
+            batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time, agent_type, preferred_phone_uuid,
         )
 
         count = 0
@@ -468,6 +513,15 @@ async def upload_excel(
 async def trigger_batch(
     background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None,
+    phone_number_id: Optional[str] = Query(
+        None,
+        description=(
+            "UUID of a phone_numbers row — overrides the batch's existing "
+            "preferred_phone_id and forces every call to dial FROM that "
+            "number. Lets the operator pick a different caller ID at start "
+            "time without re-uploading the CSV."
+        ),
+    ),
     # no auth — operator access
 ):
     """Start batch calling. Sets the most recent 'pending' batch to 'running' so the cron picks it up.
@@ -492,6 +546,28 @@ async def trigger_batch(
 
     if not batch_row:
         raise HTTPException(status_code=404, detail="No pending batch found. Upload a CSV first.")
+
+    # If the operator picked a phone via the dropdown, overwrite the batch's
+    # preferred_phone_id before flipping to 'running' — that's what
+    # process_batch_run reads when constructing the Dispatcher.
+    if phone_number_id:
+        try:
+            preferred_phone_uuid = uuid.UUID(phone_number_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="phone_number_id is not a valid UUID")
+        exists = await _state.db_pool.fetchval(
+            "SELECT 1 FROM phone_numbers WHERE id = $1 AND status = 'active'",
+            preferred_phone_uuid,
+        )
+        if not exists:
+            raise HTTPException(
+                status_code=404,
+                detail=f"phone_number_id {phone_number_id} not found or not active",
+            )
+        await _state.db_pool.execute(
+            "UPDATE agent_batches SET preferred_phone_id = $1 WHERE id = $2",
+            preferred_phone_uuid, batch_row["id"],
+        )
 
     # Set batch to "running"
     await _state.db_pool.execute(

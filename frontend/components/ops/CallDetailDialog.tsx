@@ -43,7 +43,12 @@ import { cn } from "@/lib/utils";
 interface TranscriptTurn {
   role: "agent" | "customer" | string;
   text: string;
+  /** Unix epoch seconds (float). Preferred — backend sends this on new calls. */
   ts?: string | number;
+  /** Pre-formatted IST clock string (e.g. "15:32:45"). Sent alongside `ts`
+   *  on new calls; on legacy calls this may be the old human-readable
+   *  "May 22, 2026 03:19 PM" format — `fmtTurnTime` handles both. */
+  timestamp?: string;
 }
 
 interface CallDetail {
@@ -273,8 +278,21 @@ export function CallDetailDialog({
                         : "bg-card text-foreground border border-border"
                     )}
                   >
-                    <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                      {turn.role === "agent" ? "Agent" : "Customer"}
+                    <div className="mb-0.5 flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        {turn.role === "agent" ? "Agent" : "Customer"}
+                      </span>
+                      {(() => {
+                        const stamp = fmtTurnTime(turn.ts, turn.timestamp);
+                        return stamp ? (
+                          <span
+                            className="font-mono text-[10px] tabular-nums text-muted-foreground/70"
+                            title="Time of utterance (IST)"
+                          >
+                            {stamp}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                     <div className="whitespace-pre-wrap leading-relaxed">{turn.text}</div>
                   </div>
@@ -384,6 +402,51 @@ export function maskPhone(p: string): string {
   const digits = p.replace(/\D/g, "");
   if (digits.length < 5) return p;
   return `+91-XXXXX${digits.slice(-2)}`;
+}
+
+/**
+ * Format a per-turn timestamp as `HH:MM:SS` in IST.
+ *
+ * Tolerates three shapes the backend has historically produced:
+ *   1. `ts` as Unix epoch seconds (float)   — current agent output
+ *   2. `timestamp` already `HH:MM:SS`       — current agent output (pass-through)
+ *   3. `timestamp` as a parseable date str  — legacy "May 22, 2026 03:19 PM" rows
+ *
+ * Returns "" when nothing usable is found, so the UI can omit the label.
+ */
+export function fmtTurnTime(
+  ts: string | number | undefined,
+  fallback?: string,
+): string {
+  const fromDate = (d: Date) =>
+    Number.isNaN(d.getTime())
+      ? ""
+      : d.toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+
+  // 1) Unix epoch (preferred on new calls).
+  if (typeof ts === "number" && Number.isFinite(ts)) {
+    // Tolerate both seconds (1.7e9 today) and milliseconds (1.7e12 today).
+    const ms = ts > 1e12 ? ts : ts * 1000;
+    return fromDate(new Date(ms));
+  }
+  // 2) `ts` came as a string — could be ISO or already-formatted HH:MM:SS.
+  if (typeof ts === "string" && ts) {
+    if (/^\d{2}:\d{2}:\d{2}$/.test(ts)) return ts;
+    return fromDate(new Date(ts));
+  }
+  // 3) Fall back to `timestamp` field (legacy or current agent's HH:MM:SS).
+  if (fallback) {
+    if (/^\d{2}:\d{2}:\d{2}$/.test(fallback)) return fallback;
+    const parsed = fromDate(new Date(fallback));
+    return parsed || fallback; // last resort: show the raw string
+  }
+  return "";
 }
 
 export function fmtDuration(sec: number): string {

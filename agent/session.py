@@ -16,6 +16,19 @@ def now_ist() -> str:
     return datetime.now(IST).strftime("%b %d, %Y %I:%M %p")
 
 
+def _turn_meta() -> dict:
+    """Per-transcript-turn timestamps. Two fields, both populated:
+      ts        — Unix epoch float (machine-readable, no TZ ambiguity).
+                  Frontend prefers this, parses cleanly into a Date.
+      timestamp — `hh:mm:ss` IST clock string (24-hour, second precision).
+                  Displayed directly when present, no parsing needed.
+    Replaces the previous minute-level `now_ist()` string which lost the
+    per-turn ordering granularity inside a fast-paced conversation.
+    """
+    n = datetime.now(IST)
+    return {"ts": n.timestamp(), "timestamp": n.strftime("%H:%M:%S")}
+
+
 class CustomerType:
     EXISTING = "existing"
     NEW = "new"
@@ -98,14 +111,14 @@ class LoanEnquirySession:
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "user", "text": text.strip(), "timestamp": now_ist()})
+        self.transcript.append({"role": "user", "text": text.strip(), **_turn_meta()})
         logger.info(f"USER: {text}")
 
     def add_agent_message(self, text: str):
         self.last_speech_time = asyncio.get_event_loop().time()
         if not text or not text.strip():
             return
-        self.transcript.append({"role": "agent", "text": text.strip(), "timestamp": now_ist()})
+        self.transcript.append({"role": "agent", "text": text.strip(), **_turn_meta()})
         logger.info(f"AGENT: {text}")
 
     def set_lead_quality(self, interest: bool, reason: str = ""):

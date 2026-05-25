@@ -71,14 +71,23 @@ MAX_CALLS_PER_RUN = int(os.getenv("DISPATCHER_MAX_CALLS_PER_RUN", "50"))
 # Trunk acquisition helpers
 # ============================================================================
 
-async def _acquire_trunk_from_db(db_pool) -> Optional[dict]:
+async def _acquire_trunk_from_db(
+    db_pool,
+    preferred_phone_id: Optional[str] = None,
+) -> Optional[dict]:
     """Try to claim the least-loaded available trunk from phone_numbers.
 
     Returns a dict with id/trunk_id/cooldown bounds, or None if no row is
     eligible. Uses FOR UPDATE SKIP LOCKED so two parallel callers never race
     on the same row.
 
-    The selection order is:
+    When `preferred_phone_id` is provided (operator picked a specific number
+    via the /ops/batch "From number" dropdown), the query restricts to that
+    one row — still respecting status / cooldown / capacity. If that row is
+    not eligible the function returns None (caller decides whether to fall
+    back to env trunk or fail the call).
+
+    Default selection order (no preference):
       1. status='active'
       2. cooldown_until passed (or NULL)
       3. active_calls < pool.capacity (room to take another call)
@@ -86,18 +95,34 @@ async def _acquire_trunk_from_db(db_pool) -> Optional[dict]:
     """
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            row = await conn.fetchrow(
-                """SELECT pn.id, pn.phone_number, pn.livekit_trunk_id,
-                          pp.cooldown_seconds_min, pp.cooldown_seconds_max
-                     FROM phone_numbers pn
-                     JOIN phone_pools pp ON pp.id = pn.pool_id
-                    WHERE pn.status = 'active'
-                      AND (pn.cooldown_until IS NULL OR pn.cooldown_until <= NOW())
-                      AND pn.active_calls < pp.capacity
-                    ORDER BY pn.active_calls ASC, pn.total_calls ASC, pn.id
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1"""
-            )
+            if preferred_phone_id:
+                # Strict — operator picked this phone, don't fall back to others
+                row = await conn.fetchrow(
+                    """SELECT pn.id, pn.phone_number, pn.livekit_trunk_id,
+                              pp.cooldown_seconds_min, pp.cooldown_seconds_max
+                         FROM phone_numbers pn
+                         JOIN phone_pools pp ON pp.id = pn.pool_id
+                        WHERE pn.id = $1
+                          AND pn.status = 'active'
+                          AND (pn.cooldown_until IS NULL OR pn.cooldown_until <= NOW())
+                          AND pn.active_calls < pp.capacity
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1""",
+                    uuid.UUID(preferred_phone_id),
+                )
+            else:
+                row = await conn.fetchrow(
+                    """SELECT pn.id, pn.phone_number, pn.livekit_trunk_id,
+                              pp.cooldown_seconds_min, pp.cooldown_seconds_max
+                         FROM phone_numbers pn
+                         JOIN phone_pools pp ON pp.id = pn.pool_id
+                        WHERE pn.status = 'active'
+                          AND (pn.cooldown_until IS NULL OR pn.cooldown_until <= NOW())
+                          AND pn.active_calls < pp.capacity
+                        ORDER BY pn.active_calls ASC, pn.total_calls ASC, pn.id
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1"""
+                )
             if row is None:
                 return None
             await conn.execute(
@@ -201,6 +226,7 @@ class Dispatcher:
         now_ist_fn,
         max_retries: int,
         concurrency: int = DEFAULT_CONCURRENCY,
+        preferred_phone_id: Optional[str] = None,
     ) -> None:
         self.batch_id_uuid = batch_id_uuid
         self.call_batch_id = call_batch_id
@@ -217,6 +243,9 @@ class Dispatcher:
         self.is_emergency_stop_active = is_emergency_stop_active_fn
         self.now_ist = now_ist_fn
         self.max_retries = max_retries
+        # When set, every call in this batch dials FROM this specific
+        # phone_numbers row. Set via /ops/batch "From number" dropdown.
+        self.preferred_phone_id = preferred_phone_id
 
         self.semaphore = asyncio.Semaphore(concurrency)
         self._stopped = False
@@ -365,9 +394,15 @@ class Dispatcher:
                 await self._bump("completed")
                 return
 
-            # Acquire a trunk: DB first, env fallback otherwise
-            trunk = await _acquire_trunk_from_db(self.db_pool)
-            if trunk is None:
+            # Acquire a trunk: DB first, env fallback otherwise. If the operator
+            # picked a specific phone for this batch, restrict to that row —
+            # do NOT fall back to env trunk in that case (the operator's pick
+            # is authoritative; falling back would surprise them).
+            trunk = await _acquire_trunk_from_db(
+                self.db_pool,
+                preferred_phone_id=self.preferred_phone_id,
+            )
+            if trunk is None and not self.preferred_phone_id:
                 trunk = _env_fallback_trunk(self.sip_trunk_id_fallback)
             if trunk is None:
                 logger.error(
@@ -555,17 +590,39 @@ class Dispatcher:
                 timeout_s=15,
             )
             sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
+            # Force the From / caller-ID to the operator's selected phone.
+            # Without sip_number, LiveKit falls back to the trunk's `numbers`
+            # field — and if multiple outbound trunks share an account or the
+            # field is misaligned with our phone_numbers table, the From leaks
+            # to whichever number LiveKit picks (commonly the Viva India one
+            # even when the operator picked the Twilio US row in /ops/batch).
+            # Setting sip_number explicitly makes the From bullet-proof.
+            sip_req_kwargs = dict(
+                room_name=room_name,
+                sip_trunk_id=trunk["trunk_id"],
+                sip_call_to=sip_phone,
+                participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
+                participant_name=name,
+                play_ringtone=True,
+            )
+            if trunk.get("phone_number"):
+                sip_req_kwargs["sip_number"] = trunk["phone_number"]
+                logger.info(
+                    "Dispatching call %s | trunk=%s | from=%s | to=%s",
+                    call_uuid, trunk["trunk_id"], trunk["phone_number"], sip_phone,
+                )
+            else:
+                # env-fallback trunk — no per-row From number; LiveKit uses
+                # the trunk's default. Log it so an unexpected fallback is
+                # visible during the dispatcher cutover.
+                logger.info(
+                    "Dispatching call %s | trunk=%s (env fallback, no sip_number) | to=%s",
+                    call_uuid, trunk["trunk_id"], sip_phone,
+                )
             await protect(
                 "livekit_sip",
                 lk.sip.create_sip_participant,
-                api.CreateSIPParticipantRequest(
-                    room_name=room_name,
-                    sip_trunk_id=trunk["trunk_id"],
-                    sip_call_to=sip_phone,
-                    participant_identity=f"customer_{name.replace(' ', '_').replace('/', '_')}",
-                    participant_name=name,
-                    play_ringtone=True,
-                ),
+                api.CreateSIPParticipantRequest(**sip_req_kwargs),
                 timeout_s=30,
             )
         finally:

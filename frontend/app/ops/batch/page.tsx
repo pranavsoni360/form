@@ -105,8 +105,53 @@ export default function OpsBatchPage() {
   const [gender, setGender] = React.useState<"male" | "female">("male");
   const [agentType, setAgentType] = React.useState<"loan_enquiry" | "account_opening">("loan_enquiry");
 
+  // "From number" — empty string = auto-pick from pool, else a phone_numbers UUID
+  const [phoneNumberId, setPhoneNumberId] = React.useState<string>("");
+
   // Selected batch for detail dialog
   const [openBatchId, setOpenBatchId] = React.useState<string | null>(null);
+
+  /* ─── Phone pool (for "From number" dropdown) ─────────────────────────── */
+
+  const pools = useQuery<{
+    pools: Array<{
+      id: string;
+      name: string;
+      numbers: Array<{
+        id: string;
+        phone_number: string | null;
+        active_calls: number;
+        status: string;
+        cooldown_until: string | null;
+      }>;
+    }>;
+  }>({
+    queryKey: ["phone-pools"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/ops/phone-pools`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
+
+  // Flatten every active phone across every pool into a single dropdown list.
+  const phoneOptions = React.useMemo(() => {
+    const out: Array<{ id: string; phone: string; status: string; provider: string }> = [];
+    for (const p of pools.data?.pools ?? []) {
+      for (const n of p.numbers) {
+        if (!n.phone_number || n.status !== "active") continue;
+        out.push({
+          id: n.id,
+          phone: n.phone_number,
+          status: n.status,
+          provider: n.phone_number.startsWith("+1") ? "Twilio US" :
+                    n.phone_number.startsWith("+91") ? "Viva India" : "?",
+        });
+      }
+    }
+    return out.sort((a, b) => a.phone.localeCompare(b.phone));
+  }, [pools.data]);
 
   /* ─── Queries ──────────────────────────────────────────────────────── */
 
@@ -142,8 +187,12 @@ export default function OpsBatchPage() {
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      const qs = `language=${language}&gender=${gender}&agent_type=${agentType}`;
-      const res = await fetch(`${API_URL}/api/agent/upload-excel?${qs}`, {
+      // Build query string. Include phone_number_id ONLY when the operator
+      // explicitly picked a number — otherwise leave it off and let the
+      // dispatcher auto-pick least-loaded.
+      const params = new URLSearchParams({ language, gender, agent_type: agentType });
+      if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
         method: "POST",
         body: fd,
         credentials: "include",
@@ -168,8 +217,13 @@ export default function OpsBatchPage() {
     qc.invalidateQueries({ queryKey: ["uploads"] });
   }, [qc]);
 
+  // "Start batch" — passes the selected phone_number_id as a query param so
+  // mid-flight changes to the dropdown take effect on the next start without
+  // needing a fresh upload.
   const start = useMutation({
-    mutationFn: postJson("/api/agent/batch-call"),
+    mutationFn: postJson("/api/agent/batch-call", () =>
+      phoneNumberId ? { phone_number_id: phoneNumberId } : undefined
+    ),
     onSuccess: (d) => { toast.success(d?.message || "Batch started"); refreshBatchViews(); },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -298,6 +352,35 @@ export default function OpsBatchPage() {
                   { value: "account_opening", label: "Account opening — Union Bank" },
                 ]}
               />
+            </div>
+
+            {/* From-number selector — operator's caller-ID pick. Empty value
+                means "auto pick least-loaded from pool" (the legacy behaviour);
+                a UUID locks every dispatched call to that one row. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Select
+                label="From number (caller ID)"
+                value={phoneNumberId}
+                onChange={setPhoneNumberId}
+                options={[
+                  { value: "", label: pools.isLoading
+                      ? "Loading numbers…"
+                      : phoneOptions.length === 0
+                        ? "(no numbers — auto)"
+                        : "Auto (pool picks least-loaded)" },
+                  ...phoneOptions.map((p) => ({
+                    value: p.id,
+                    label: `${p.phone}  ·  ${p.provider}`,
+                  })),
+                ]}
+              />
+              {phoneNumberId && (
+                <div className="flex items-center text-xs text-muted-foreground">
+                  <span className="rounded-md bg-info/10 px-2 py-1 text-info ring-1 ring-info/20">
+                    All calls in the next batch will dial FROM this number.
+                  </span>
+                </div>
+              )}
             </div>
 
             <Separator />
@@ -676,9 +759,25 @@ function Select<T extends string>({
   );
 }
 
-function postJson(path: string) {
+/**
+ * Build a mutationFn that POSTs (no body) to `path`. Optional `getParams` is
+ * called at submit time so callers can inject the latest UI state (e.g. the
+ * currently-selected phone_number_id) without recreating the mutation when
+ * the dropdown changes.
+ */
+function postJson(
+  path: string,
+  getParams?: () => Record<string, string> | undefined,
+) {
   return async () => {
-    const res = await fetch(`${API_URL}${path}`, {
+    const params = getParams?.();
+    const url = new URL(`${API_URL}${path}`);
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        if (v != null && v !== "") url.searchParams.set(k, v);
+      }
+    }
+    const res = await fetch(url.toString(), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },

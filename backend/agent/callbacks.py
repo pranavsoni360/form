@@ -35,7 +35,8 @@ async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
 async def schedule_callback(request: Request):
     """Triggered by the voice agent when a customer says they are busy and asks
     to be called back at a specific time. Clamps the time into working hours,
-    sets the call's status to 'Scheduled' so the batch dispatcher will re-dial."""
+    sets the call's status to 'Called - Callback Requested' so the batch
+    dispatcher will re-dial when scheduled_callback_at arrives."""
     data = await request.json()
     call_id = data.get("call_id")
     callback_iso = data.get("callback_iso")

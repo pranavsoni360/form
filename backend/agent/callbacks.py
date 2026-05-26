@@ -22,7 +22,8 @@ async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
     Used by the dashboard's 'Upcoming Callbacks' section."""
     rows = await _state.db_pool.fetch(
         """SELECT * FROM agent_calls
-           WHERE status = 'Scheduled' AND scheduled_callback_at IS NOT NULL
+           WHERE status IN ('Scheduled', 'Called - Callback Requested')
+             AND scheduled_callback_at IS NOT NULL
            ORDER BY scheduled_callback_at ASC LIMIT $1""",
         limit,
     )
@@ -69,7 +70,7 @@ async def schedule_callback(request: Request):
 
     await _state.db_pool.execute(
         """UPDATE agent_calls
-           SET status = 'Scheduled',
+           SET status = 'Called - Callback Requested',
                scheduled_callback_at = $1,
                callback_reason = $2,
                error_message = NULL,

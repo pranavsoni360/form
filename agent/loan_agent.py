@@ -18,9 +18,10 @@ import pytz
 from dotenv import load_dotenv
 
 from livekit import agents, rtc
-from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext
+from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext, APIConnectOptions
 from livekit.agents.voice import AgentSession, Agent
-from livekit.plugins import deepgram, silero, sarvam, google
+from livekit.agents.llm import FallbackAdapter
+from livekit.plugins import deepgram, silero, sarvam, google, groq
 from livekit.api import DeleteRoomRequest, LiveKitAPI
 from livekit.protocol.egress import RoomCompositeEgressRequest, EncodedFileOutput
 
@@ -35,6 +36,22 @@ load_dotenv(".env.local")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("loan-enquiry-agent")
+
+# ---------------------------------------------------------------------------
+# Sarvam TTS with extended WebSocket receive timeout (see agent_core.py)
+# ---------------------------------------------------------------------------
+_SARVAM_CONN = APIConnectOptions(timeout=30.0, max_retry=3, retry_interval=2.0)
+
+
+class _SarvamTTS(sarvam.TTS):
+    """Drop-in wrapper that injects a 30-second receive timeout."""
+
+    def stream(self, *, conn_options=None):
+        return super().stream(conn_options=conn_options or _SARVAM_CONN)
+
+    def synthesize(self, text, *, conn_options=None):
+        return super().synthesize(text, conn_options=conn_options or _SARVAM_CONN)
+
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8002")
 if "localhost" in BACKEND_URL:
@@ -670,11 +687,18 @@ async def entrypoint(ctx: JobContext):
                 detect_language=False,
                 interim_results=True,
             ),
-            llm=google.LLM(
-                model="gemini-2.5-flash",
-                temperature=0.4,
+            llm=FallbackAdapter(
+                [
+                    google.LLM(
+                        model="gemini-2.5-flash",
+                        temperature=0.4,
+                    ),
+                    # Groq fallback: handles Gemini "finish_reason: None" blips
+                    groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
+                    groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
+                ]
             ),
-            tts=sarvam.TTS(
+            tts=_SarvamTTS(
                 model="bulbul:v3",
                 target_language_code=session.tts_language_code,
                 speaker=session.tts_speaker,

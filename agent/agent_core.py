@@ -11,7 +11,7 @@ import logging
 import asyncio
 
 from livekit import rtc
-from livekit.agents import JobContext, function_tool, RunContext
+from livekit.agents import JobContext, function_tool, RunContext, APIConnectOptions
 from livekit.agents.voice import AgentSession, Agent
 from livekit.plugins import deepgram, silero, sarvam, google, groq
 from livekit.agents.llm import FallbackAdapter
@@ -30,6 +30,28 @@ from prompts import build_loan_enquiry_instructions
 from prompts_account import build_account_opening_instructions
 
 logger = logging.getLogger("loan-enquiry-agent")
+
+
+# ---------------------------------------------------------------------------
+# Sarvam TTS with extended WebSocket receive timeout
+# ---------------------------------------------------------------------------
+# The default APIConnectOptions.timeout is 10 s.  For mixed Hindi/English
+# greeting text on first connection the Sarvam API occasionally takes >10 s
+# to return the first audio chunk, causing:
+#   "WebSocket receive timeout" → retry → 5-6 s silence at call start
+#   "_SegmentSynchronizerImpl.resume called after close" warning cascade
+# Bumping to 30 s eliminates these without changing any other behaviour.
+_SARVAM_CONN = APIConnectOptions(timeout=30.0, max_retry=3, retry_interval=2.0)
+
+
+class _SarvamTTS(sarvam.TTS):
+    """Drop-in wrapper that injects a 30-second receive timeout."""
+
+    def stream(self, *, conn_options=None):
+        return super().stream(conn_options=conn_options or _SARVAM_CONN)
+
+    def synthesize(self, text, *, conn_options=None):
+        return super().synthesize(text, conn_options=conn_options or _SARVAM_CONN)
 
 # Wire agent → /api/internal/errors webhook (idempotent — silently no-ops if
 # LOS_BACKEND_URL / LOS_INTERNAL_HMAC_SECRET aren't set in .env.local).
@@ -148,7 +170,7 @@ async def entrypoint(ctx: JobContext):
                     groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
                 ]
             ),
-            tts=sarvam.TTS(
+            tts=_SarvamTTS(
                 model="bulbul:v3",
                 target_language_code=session.tts_language_code,
                 speaker=session.tts_speaker,

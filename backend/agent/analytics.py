@@ -31,7 +31,7 @@ def _gemini_call_sync(prompt: str) -> str:
     return response.text
 
 
-async def analyze_transcript_with_llm_async(transcript: list) -> dict:
+async def analyze_transcript_with_llm_async(transcript: list, call_started_at=None) -> dict:
     """Async version of the analyzer. Routes the Gemini call through the
     circuit breaker so sustained Gemini outages stop burning attempts.
 
@@ -39,7 +39,18 @@ async def analyze_transcript_with_llm_async(transcript: list) -> dict:
     The sync version below is kept as a thin shim for any legacy call sites.
     """
     if not GEMINI_API_KEY or not transcript:
-        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No"}
+        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No",
+                "callback_requested": False, "callback_datetime_iso": None}
+
+    call_date_str = "unknown"
+    if call_started_at is not None:
+        try:
+            if isinstance(call_started_at, str):
+                from datetime import datetime
+                call_started_at = datetime.fromisoformat(call_started_at)
+            call_date_str = call_started_at.strftime("%Y-%m-%d")
+        except Exception:
+            pass
 
     conversation_text = "\n".join(
         f"{msg.get('role', 'unknown')}: {msg.get('text', '')}" for msg in transcript
@@ -57,7 +68,12 @@ Also determine follow-up needs and lead quality:
 - "Ineligible" categories -> follow_up_needed: "No", lead_quality: "cold"
 - Other -> follow_up_needed: "No", lead_quality: "cold"
 
-Return JSON ONLY: {{"category": "chosen category", "reminder_date": "YYYY-MM-DD or null", "follow_up_needed": "Yes or No", "how_to_follow_up": "brief instructions", "when_to_follow_up": "timeframe", "lead_quality": "hot/warm/cold", "loan_type": "education/business/personal or null"}}
+Return JSON ONLY:
+{{"category": "chosen category", "reminder_date": "YYYY-MM-DD or null", "follow_up_needed": "Yes or No", "how_to_follow_up": "brief instructions", "when_to_follow_up": "timeframe", "lead_quality": "hot/warm/cold", "loan_type": "education/business/personal or null", "callback_requested": true or false, "callback_datetime_iso": "ISO 8601 IST datetime like 2026-05-26T10:00:00+05:30 or null"}}
+
+Also detect callback intent:
+- callback_requested: true if the customer said they are busy / asked to be called back at a specific time; false otherwise
+- callback_datetime_iso: the IST datetime the customer wants the callback. Extract from what they said, using "{call_date_str}" as today's reference date for relative terms like "tomorrow", "kal", "Monday". Return null if callback_requested is false or no time was mentioned.
 
 Transcript:
 {conversation_text}"""
@@ -77,16 +93,21 @@ Transcript:
         parsed = json.loads(result)
         if "follow_up_needed" not in parsed:
             parsed["follow_up_needed"] = "No"
+        parsed.setdefault("callback_requested", False)
+        parsed.setdefault("callback_datetime_iso", None)
         return parsed
     except CircuitOpenError as e:
         logger.warning("Gemini circuit OPEN — skipping analysis: %s", e)
-        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No"}
+        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No",
+                "callback_requested": False, "callback_datetime_iso": None}
     except (json.JSONDecodeError, ValueError) as e:
         logger.error("Gemini returned unparseable JSON: %s", e)
-        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No"}
+        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No",
+                "callback_requested": False, "callback_datetime_iso": None}
     except Exception as e:
         logger.error("LLM analysis failed: %s", e)
-        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No"}
+        return {"category": "Uncategorized", "reminder_date": None, "follow_up_needed": "No",
+                "callback_requested": False, "callback_datetime_iso": None}
 
 
 def analyze_transcript_with_llm(transcript: list) -> dict:
@@ -157,7 +178,8 @@ async def process_analytics_batch():
             """SELECT id FROM agent_calls
                WHERE COALESCE(category, 'Uncategorized') IN ('Uncategorized', '')
                  AND transcript IS NOT NULL AND transcript != '[]'::jsonb
-                 AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')
+                 AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested',
+                               'Called - Callback Requested')
                  AND NOT EXISTS (
                      -- Avoid re-enqueueing if a pending/running/failed job already exists
                      SELECT 1 FROM call_processing_jobs j

@@ -295,7 +295,9 @@ async def process_batch_run(batch_uuid_str: str = None):
         # Check if batch has any remaining pending calls
         if batch_row:
             remaining = await _state.db_pool.fetchval(
-                "SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1 AND status IN ('Pending', 'Scheduled')",
+                """SELECT COUNT(*) FROM agent_calls
+                   WHERE batch_id = $1
+                     AND status IN ('Pending', 'Scheduled', 'Called - Callback Requested')""",
                 call_batch_id,
             )
             if remaining == 0:
@@ -600,7 +602,7 @@ async def batch_status(
             *bk_params, *extra_params,
         )
 
-    pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled')")
+    pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
     active_count = await _count(" AND status = 'Calling'")
     failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")

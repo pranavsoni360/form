@@ -113,11 +113,11 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        // Sen mounted via next/font in app/layout.tsx (matches VirtualVaani
-        // master frontend). Mono uses Sen too with `tabular-nums` enabled
-        // via the .font-mono utility in globals.css — keeps a unified type.
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-sans)", "ui-monospace", "monospace"],
+        heading: ["var(--font-heading)", "system-ui", "sans-serif"],
+        body: ["var(--font-body)", "system-ui", "sans-serif"],
+        "mono-loan": ["var(--font-mono-loan)", "ui-monospace", "monospace"],
       },
       fontSize: {
         // Slightly tighter line-heights for dashboard density

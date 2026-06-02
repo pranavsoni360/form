@@ -1,5 +1,5 @@
 'use client';
-import { Building2, Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -127,7 +127,6 @@ export default function LoanApplication() {
     } finally { setPanVerifying(false); }
   };
 
-  const [digilockerRequestId, setDigilockerRequestId] = useState('');
   const [digilockerStep, setDigilockerStep] = useState<'idle' | 'linking' | 'waiting' | 'fetching' | 'done'>('idle');
 
   const handleVerifyAadhaar = async () => {
@@ -482,7 +481,8 @@ export default function LoanApplication() {
     }
   };
 
-  // Live validation on blur
+  // Live validation on blur (called from inputs as needed)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const onBlur = (field: string, required?: boolean) => {
     if (required && (!formData[field] || String(formData[field]).trim() === '')) {
       setErrors((p: any) => ({ ...p, [field]: 'This field is required' }));
@@ -568,24 +568,28 @@ export default function LoanApplication() {
   };
 
   if (sessionExpired) return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-xl dark:shadow-gray-900/50 p-8 max-w-md w-full text-center">
-        <div className="mb-4"><AlertTriangle className="w-16 h-16 text-orange-500 mx-auto" /></div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Session Expired</h2>
-        <p className="text-gray-600 mb-6">Your session has expired due to inactivity. Please verify again to continue.</p>
-        <button onClick={() => router.push('/loan-form')} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition">
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#F8F9FC' }}>
+      <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center" style={{ border: '1px solid #E2E8F0', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }}>
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: '#FEF3C7' }}>
+          <AlertTriangle className="w-8 h-8" style={{ color: '#D97706' }} />
+        </div>
+        <h2 className="text-2xl font-bold mb-2" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Session Expired</h2>
+        <p className="mb-6 text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>Your session has expired due to inactivity. Please verify again to continue.</p>
+        <button onClick={() => router.push('/loan-form')}
+          className="w-full py-4 rounded-xl font-semibold text-white transition hover:opacity-90"
+          style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)', fontFamily: 'var(--font-heading)' }}>
           Re-verify with OTP →
         </button>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-4">Your progress has been saved automatically</p>
+        <p className="text-xs mt-4" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Your progress has been saved automatically</p>
       </div>
     </div>
   );
 
   if (loading) return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8F9FC' }}>
       <div className="text-center">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">Loading your application...</p>
+        <div className="animate-spin rounded-full h-14 w-14 border-b-2 mx-auto" style={{ borderColor: '#1A1A2E' }}></div>
+        <p className="mt-4 text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>Loading your application...</p>
       </div>
     </div>
   );
@@ -593,45 +597,42 @@ export default function LoanApplication() {
   const steps = ['KYC & Identity', 'Address', 'Occupation', 'Loan & Financial', 'Documents', 'Review'];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 py-6 px-4 transition-colors">
+    <div className="min-h-screen" style={{ background: '#F0F4FF' }}>
 
       {/* ── Name mismatch popup ── */}
       {nameMatchError && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full p-6 border border-red-200 dark:border-red-800">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" style={{ border: '1px solid #FECACA' }}>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#FEE2E2' }}>
+                <AlertTriangle className="w-5 h-5" style={{ color: '#DC2626' }} />
               </div>
               <div>
-                <h3 className="font-bold text-gray-900 dark:text-white text-lg">Identity Mismatch Detected</h3>
-                <p className="text-sm text-red-600 dark:text-red-400">{nameMatchError.score}% match — minimum required is 85%</p>
+                <h3 className="font-bold text-lg" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Identity Mismatch Detected</h3>
+                <p className="text-sm" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>{nameMatchError.score}% match — minimum required is 85%</p>
               </div>
             </div>
             <div className="space-y-3 mb-5">
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
-                <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Name from voice call</p>
-                <p className="font-semibold text-gray-900 dark:text-white">{nameMatchError.callName}</p>
+              <div className="rounded-xl p-3" style={{ background: '#F8F9FC' }}>
+                <p className="text-xs mb-1" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Name from voice call</p>
+                <p className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>{nameMatchError.callName}</p>
               </div>
-              <div className="bg-red-50 dark:bg-red-900/30 rounded-xl p-3 border border-red-200 dark:border-red-700">
-                <p className="text-xs text-red-500 dark:text-red-400 mb-1">Name from {nameMatchError.source}</p>
-                <p className="font-semibold text-red-700 dark:text-red-300">{nameMatchError.verifiedName}</p>
+              <div className="rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                <p className="text-xs mb-1" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Name from {nameMatchError.source}</p>
+                <p className="font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{nameMatchError.verifiedName}</p>
               </div>
             </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
-              The name on your <strong>{nameMatchError.source}</strong> does not sufficiently match the name recorded during your voice call. Please contact your bank branch to resolve this.
+            <p className="text-sm mb-5" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+              The name on your <strong>{nameMatchError.source}</strong> does not sufficiently match the name recorded during your voice call. Please contact your bank branch.
             </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setNameMatchError(null)}
-                className="flex-1 py-3 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-              >
+              <button onClick={() => setNameMatchError(null)}
+                className="flex-1 py-3 rounded-xl font-medium transition hover:opacity-80"
+                style={{ border: '1px solid #E2E8F0', color: '#475569', fontFamily: 'var(--font-body)' }}>
                 Dismiss
               </button>
-              <button
-                disabled
-                className="flex-1 py-3 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-400 dark:text-red-500 font-medium cursor-not-allowed"
-              >
+              <button disabled className="flex-1 py-3 rounded-xl font-medium cursor-not-allowed"
+                style={{ background: '#FEE2E2', color: '#FCA5A5', fontFamily: 'var(--font-body)' }}>
                 Form Locked
               </button>
             </div>
@@ -639,73 +640,117 @@ export default function LoanApplication() {
         </div>
       )}
 
+      {/* Inactivity warning */}
       {inactivityWarning && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-8 pointer-events-none">
-          <div className="pointer-events-auto bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border border-orange-200 dark:border-orange-800 shadow-2xl rounded-2xl px-8 py-5 max-w-md w-full mx-4 animate-[slideDown_0.3s_ease-out]">
+          <div className="pointer-events-auto bg-white backdrop-blur-md shadow-2xl rounded-2xl px-6 py-4 max-w-md w-full mx-4 animate-[slideDown_0.3s_ease-out]"
+            style={{ border: '1px solid #FDE68A' }}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5 text-orange-500" />
+              <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#FEF3C7' }}>
+                <AlertTriangle className="w-4 h-4" style={{ color: '#D97706' }} />
               </div>
               <div>
-                <p className="text-sm font-semibold text-gray-900">Session Expiring Soon</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Your session will expire in 1 minute due to inactivity. Interact with the form to stay active.</p>
+                <p className="text-sm font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Session Expiring Soon</p>
+                <p className="text-xs mt-0.5" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>Your session will expire in 1 minute. Interact to stay active.</p>
               </div>
             </div>
-            <div className="mt-3 h-1 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-              <div className="h-full bg-orange-400 rounded-full animate-[shrink_60s_linear_forwards]" />
+            <div className="mt-3 h-1 rounded-full overflow-hidden" style={{ background: '#E2E8F0' }}>
+              <div className="h-full rounded-full animate-[shrink_60s_linear_forwards]" style={{ background: '#D97706' }} />
             </div>
           </div>
         </div>
       )}
 
-      <div className="max-w-2xl mx-auto px-3 sm:px-4">
-        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-lg dark:shadow-gray-900/50 p-3 sm:p-5 mb-4 transition-colors">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h1 className="text-base sm:text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2"><Building2 className="w-5 h-5 text-blue-600 flex-shrink-0" />Loan Application</h1>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">
-                {appData?.customer_name} · {appData?.loan_id}
-              </p>
+      <div className="max-w-[680px] mx-auto">
+
+        {/* ── HEADER CARD — sticky ── */}
+        <div className="bg-white sticky top-0 z-20 mb-3 sm:mb-4 sm:mt-4 sm:mx-4 sm:rounded-2xl px-4 sm:px-5 py-3 sm:py-4"
+          style={{ borderBottom: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.07)' }}>
+          {/* Top row: logo + name + autosave */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0"
+                style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)', fontSize: '14px', boxShadow: '0 2px 8px rgba(26,26,46,0.3)' }}>
+                VV
+              </div>
+              <div>
+                <h1 className="font-bold leading-tight" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)', fontSize: '18px' }}>
+                  Loan Application
+                </h1>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span className="text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+                    {appData?.customer_name}
+                  </span>
+                  {appData?.loan_id && (
+                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: '#94A3B8', fontFamily: 'var(--font-mono-loan)', background: '#F8F9FC', border: '1px solid #E2E8F0' }}>
+                      {appData.loan_id}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="text-xs text-right">
-              <div className="flex items-center gap-3">
-              {saving ? <span className="text-blue-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving...</span></span> : lastSaved ? <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /><span className="hidden sm:inline">Saved {lastSaved}</span></span> : null}
+            <div className="flex items-center gap-2.5">
+              {saving ? (
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: '#2563EB', background: '#EFF6FF', fontFamily: 'var(--font-body)' }}>
+                  <Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving</span>
+                </span>
+              ) : lastSaved ? (
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: '#059669', background: '#F0FDF4', fontFamily: 'var(--font-body)' }}>
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: '#059669' }} />
+                  <span className="hidden sm:inline">Saved {lastSaved}</span>
+                </span>
+              ) : null}
               <ThemeToggle />
             </div>
-            </div>
           </div>
+
+          {/* ── STEP PROGRESS BAR (40px circles) ── */}
           <div className="relative">
-            <div className="absolute top-3.5 sm:top-4 left-4 sm:left-6 right-4 sm:right-6 h-0.5 bg-gray-200 dark:bg-gray-700"></div>
-            <div className="absolute top-3.5 sm:top-4 left-4 sm:left-6 h-0.5 bg-green-400 transition-all duration-300" style={{width: `${Math.max(0, (Math.max(highestStep, currentStep) - 1)) / (steps.length - 1) * (100 - 8)}%`}}></div>
-            <div className="relative flex justify-between">
+            {/* Grey track */}
+            <div className="absolute h-0.5 z-0"
+              style={{ background: '#E2E8F0', top: '15px', left: `${100 / steps.length / 2}%`, right: `${100 / steps.length / 2}%` }} />
+            {/* Green progress */}
+            <div className="absolute h-0.5 z-0 transition-all duration-500"
+              style={{
+                background: '#059669',
+                top: '15px',
+                left: `${100 / steps.length / 2}%`,
+                width: `${Math.max(0, (Math.max(highestStep, currentStep) - 1)) / (steps.length - 1) * (100 - 100 / steps.length)}%`,
+              }} />
+            <div className="relative flex">
               {steps.map((s, i) => {
-                const stepNum = i + 1;
-                const isViewing = currentStep === stepNum;
-                const isCompleted = highestStep > stepNum && !isViewing;
-                const isActiveFrontier = highestStep === stepNum && !isViewing;
+                const stepNum  = i + 1;
+                const isActive    = currentStep === stepNum;
+                const isCompleted = highestStep > stepNum;
                 const isReachable = stepNum <= highestStep;
                 return (
-                  <div key={i} className="flex flex-col items-center" style={{width: `${100/steps.length}%`}}>
+                  <div key={i} className="flex flex-col items-center" style={{ width: `${100 / steps.length}%` }}>
                     <div
-                      onClick={() => { if (isReachable) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0,0); } }}
-                      className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-bold z-10 transition-all duration-200 ${
-                        isViewing
-                          ? 'bg-blue-600 text-white cursor-pointer ring-4 ring-blue-200 hover:bg-blue-700 hover:scale-110'
-                          : isActiveFrontier
-                          ? 'bg-white text-blue-600 border-[3px] border-blue-500 cursor-pointer hover:bg-blue-50 hover:scale-110'
-                          : isCompleted
-                          ? 'bg-green-500 text-white cursor-pointer hover:bg-green-600 hover:scale-110'
-                          : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
-                      }`}
-                    >
-                      {isCompleted ? '✓' : stepNum}
+                      onClick={() => { if (isReachable) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0, 0); } }}
+                      className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-bold z-10 transition-all duration-200 select-none"
+                      style={{
+                        background: isActive ? '#1A1A2E' : isCompleted ? '#059669' : '#F1F5F9',
+                        color: isActive || isCompleted ? '#fff' : '#94A3B8',
+                        border: isActive ? '2px solid #1A1A2E' : isCompleted ? '2px solid #059669' : '2px solid #E2E8F0',
+                        cursor: isReachable ? 'pointer' : 'default',
+                        boxShadow: isActive ? '0 0 0 4px rgba(26,26,46,0.1)' : 'none',
+                        fontFamily: 'var(--font-heading)',
+                        fontSize: '13px',
+                      }}>
+                      {isCompleted ? <span style={{ fontSize: '16px' }}>✓</span> : stepNum}
                     </div>
-                    <span className={`text-[9px] sm:text-[11px] mt-1 sm:mt-2 text-center leading-tight ${
-                      isViewing ? 'text-blue-600 font-semibold'
-                        : isActiveFrontier ? 'text-blue-500 font-medium'
-                        : isCompleted ? 'text-green-600 font-medium'
-                        : 'text-gray-400'
-                    }`}>{s}</span>
+                    <span className="text-[10px] mt-2 text-center leading-tight hidden sm:block"
+                      style={{
+                        color: isActive ? '#1A1A2E' : isCompleted ? '#059669' : '#94A3B8',
+                        fontFamily: 'var(--font-body)',
+                        fontWeight: isActive ? 700 : 400,
+                        maxWidth: '60px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                      {s}
+                    </span>
                   </div>
                 );
               })}
@@ -713,23 +758,30 @@ export default function LoanApplication() {
           </div>
         </div>
 
-        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-lg dark:shadow-gray-900/50 p-4 sm:p-6 transition-colors">
+        {/* ── FORM CONTENT ── */}
+        <div className="space-y-3 sm:space-y-4 px-3 sm:px-4 pb-8">
 
           {currentStep === 1 && (
-            <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">KYC & Personal Details</h2>
+            <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
+              <SectionTitle icon="🪪" color="#2563EB" title="KYC & Personal Details" />
               {nameMatchLocked && (
-                <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-xl px-4 py-3">
-                  <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: '#DC2626' }} />
                   <div className="flex-1">
-                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">Form locked — name mismatch</p>
-                    <p className="text-xs text-red-600 dark:text-red-500">Contact your bank branch to resolve the identity mismatch before proceeding.</p>
+                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>Form locked — name mismatch</p>
+                    <p className="text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Contact your bank branch to resolve the identity mismatch before proceeding.</p>
                   </div>
-                  <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs text-red-600 underline whitespace-nowrap">View details</button>
+                  <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs underline whitespace-nowrap" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>View details</button>
                 </div>
               )}
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Identity Verification</p>
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
+                    <span style={{ fontSize: '13px' }}>🔐</span>
+                  </div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Identity Verification</p>
+                </div>
+                <div className="p-5 space-y-4">
                 <F label="PAN Number" required error={errors.pan_number}>
                   <div className="flex gap-2">
                     <div className="flex-1 relative">
@@ -739,9 +791,11 @@ export default function LoanApplication() {
                           : (showPan ? (formData.pan_number || '') : (formData.pan_number ? formData.pan_number.replace(/./g, '\u2022') : ''))
                         }
                         onChange={e => onChange('pan_number', e.target.value.toUpperCase())}
+                        onClick={() => { if (!formData.pan_verified && !showPan) setShowPan(true); }}
                         disabled={formData.pan_verified}
-                        readOnly={!showPan && !!formData.pan_number && !formData.pan_verified}
-                        className={`w-full pr-16 ${formData.pan_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${!showPan && formData.pan_number ? 'tracking-widest' : ''} ${inp(errors.pan_number)}`}
+                        readOnly={false}
+                        className={`w-full pr-16 ${formData.pan_verified ? '' : 'cursor-text'} ${inp(errors.pan_number)}`}
+                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? '#F0FDF4' : undefined, borderColor: formData.pan_verified ? '#059669' : undefined }}
                         placeholder="ABCDE1234F" maxLength={10} />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         {!formData.pan_verified && (
@@ -758,8 +812,15 @@ export default function LoanApplication() {
                         )}
                       </div>
                     </div>
-                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition flex items-center justify-center gap-2 min-w-[110px] ${formData.pan_verified ? 'bg-green-500 text-white cursor-default' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-70`}>
-                      {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? 'Verified' : 'Verify'}
+                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying}
+                      className="px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition flex items-center justify-center gap-1 sm:gap-2 min-w-[76px] sm:min-w-[100px] disabled:opacity-70"
+                      style={{
+                        background: formData.pan_verified ? '#059669' : '#1A1A2E',
+                        color: '#fff',
+                        fontFamily: 'var(--font-heading)',
+                        cursor: formData.pan_verified ? 'default' : 'pointer',
+                      }}>
+                      {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? '✓ Verified' : 'Verify'}
                     </button>
                   </div>
                   {formData.pan_verified && <p className="text-[10px] sm:text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3 flex-shrink-0" /><span>PAN verified{formData.pan_name ? ` — ${formData.pan_name}` : ''}{formData.pan_verification_timestamp ? ` on ${new Date(formData.pan_verification_timestamp).toLocaleString()}` : ''}</span></p>}
@@ -775,17 +836,37 @@ export default function LoanApplication() {
                     </div>
                   ) : (
                     <button type="button" onClick={handleVerifyAadhaar} disabled={aadhaarVerifying}
-                      className="w-full py-3 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 active:scale-[0.98]">
-                      {digilockerStep === 'linking' ? <><Loader2 className="w-4 h-4 animate-spin" /> <span>Opening DigiLocker...</span></> :
-                       digilockerStep === 'fetching' ? <><Loader2 className="w-4 h-4 animate-spin" /> <span>Fetching data...</span></> :
-                       <><ShieldCheck className="w-4 h-4" /> <span>Verify Aadhaar via DigiLocker</span></>}
+                      className="w-full rounded-xl font-semibold transition disabled:opacity-50 flex items-center justify-center gap-3 active:scale-[0.99]"
+                      style={{ background: 'linear-gradient(135deg, #EA580C 0%, #DC2626 100%)', color: '#fff', fontFamily: 'var(--font-heading)', height: '52px', boxShadow: '0 4px 16px rgba(234,88,12,0.3)' }}>
+                      {digilockerStep === 'linking' || digilockerStep === 'fetching' ? (
+                        <><Loader2 className="w-5 h-5 animate-spin" /><span>{digilockerStep === 'linking' ? 'Opening DigiLocker...' : 'Fetching data...'}</span></>
+                      ) : (
+                        <>
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255,255,255,0.2)' }}>
+                            <ShieldCheck className="w-4 h-4" />
+                          </div>
+                          <span>Verify Aadhaar via DigiLocker</span>
+                          <ExternalLink className="w-4 h-4 opacity-60 ml-auto" />
+                        </>
+                      )}
                     </button>
                   )}
                   {digilockerStep === 'waiting' && <p className="text-xs text-orange-600 dark:text-orange-400 mt-1 animate-pulse">Please complete authentication on the DigiLocker window...</p>}
                   {digilockerStep === 'fetching' && <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Fetching your Aadhaar data from DigiLocker...</p>}
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1"><Lock className="w-3 h-3" />Only last 4 digits stored</p>
+                  <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}><Lock className="w-3 h-3" />Only last 4 digits stored</p>
                 </F>
-              </div>
+                </div>{/* end p-5 */}
+              </div>{/* end identity card */}
+
+              {/* Personal Details card */}
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
+                    <span style={{ fontSize: '13px' }}>👤</span>
+                  </div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Personal Details</p>
+                </div>
+                <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <F label="First Name" required error={errors.full_name} fieldName="first_name" fieldSources={formData.field_sources}>
                   <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name)} placeholder="First name" />
@@ -810,17 +891,21 @@ export default function LoanApplication() {
                   </select>
                 </F>
               </div>
+              </div>{/* end p-5 */}
+              </div>{/* end personal card */}
               <Nav onNext={handleNext} />
             </div>
           )}
 
           {currentStep === 2 && (
-            <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Address Details</h2>
-              {/* Current Address — user-entered, or copied from Permanent via the checkbox */}
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Current Address</p>
+            <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
+              <SectionTitle icon="🏠" color="#059669" title="Address Details" />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><span style={{ fontSize: '13px' }}>🏡</span></div>
+                    <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Current Address</p>
+                  </div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={formData.same_as_current || false} onChange={e => onChange('same_as_current', e.target.checked)} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
                     <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Same as permanent</span>
@@ -860,9 +945,12 @@ export default function LoanApplication() {
                 </div>
                 </>)}
               </div>
-              {/* Permanent Address — auto-filled from Aadhaar, always shown */}
-              <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Permanent Address</p>
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><span style={{ fontSize: '13px' }}>📍</span></div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Permanent Address</p>
+                </div>
+                <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="House / Flat No" required error={errors.permanent_house} fieldName="permanent_house" fieldSources={formData.field_sources}>
                     <input type="text" value={formData.permanent_house || ''} onChange={e => onChange('permanent_house', e.target.value)} className={inp(errors.permanent_house)} placeholder="e.g. 456, Block C" />
@@ -896,14 +984,21 @@ export default function LoanApplication() {
                     </select>
                   </F>
                 </div>
-              </div>
+                </div>{/* p-5 */}
+              </div>{/* permanent card */}
               <Nav onPrev={() => setCurrentStep(1)} onNext={handleNext} />
             </div>
           )}
 
           {currentStep === 3 && (
-            <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Occupation Details</h2>
+            <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
+              <SectionTitle icon="💼" color="#D97706" title="Occupation Details" />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#FFFBEB', borderBottom: '1px solid #FDE68A' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#D9770618' }}><span style={{ fontSize: '13px' }}>🏢</span></div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Employment Details</p>
+                </div>
+              <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Qualification" required error={errors.qualification}>
                   <select value={formData.qualification || ''} onChange={e => onChange('qualification', e.target.value)} className={inp(errors.qualification)}>
@@ -957,15 +1052,21 @@ export default function LoanApplication() {
               <F label="Employer Address" required error={errors.employer_address}>
                 <textarea rows={2} value={formData.employer_address || ''} onChange={e => onChange('employer_address', e.target.value)} className={inp(errors.employer_address)} placeholder="Full employer / business address" />
               </F>
+              </div>{/* p-5 */}
+              </div>{/* card */}
               <Nav onPrev={() => setCurrentStep(2)} onNext={handleNext} />
             </div>
           )}
 
           {currentStep === 4 && (
-            <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Loan & Financial Details</h2>
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Loan Details</p>
+            <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
+              <SectionTitle icon="₹" color="#7C3AED" title="Loan & Financial Details" />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><span style={{ fontSize: '13px' }}>💳</span></div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Details</p>
+                </div>
+              <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Loan Amount (₹)" required error={errors.loan_amount_requested} fieldName="loan_amount_requested" fieldSources={formData.field_sources}>
                     <input type="number" value={formData.loan_amount_requested || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
@@ -984,9 +1085,15 @@ export default function LoanApplication() {
                   </select>
                 </F>
                 <F label="Scheme"><input type="text" value={formData.scheme || ''} onChange={e => onChange('scheme', e.target.value)} className={inp('')} placeholder="Optional" /></F>
-              </div>
-              <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
-                <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Financial Details</p>
+              </div>{/* p-5 */}
+              </div>{/* loan card */}
+
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><span style={{ fontSize: '13px' }}>💰</span></div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Financial Details</p>
+                </div>
+              <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income} fieldName="monthly_gross_income" fieldSources={formData.field_sources}>
                     <input type="number" value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
@@ -1003,11 +1110,12 @@ export default function LoanApplication() {
                     <input type="number" value={formData.monthly_net_income || ''} readOnly className={`${inp(errors.monthly_net_income)} bg-gray-100 dark:bg-gray-800 cursor-not-allowed`} placeholder="Auto: Gross − Deductions − EMIs" title="Auto-calculated from Gross − Deductions − Existing EMIs" />
                   </F>
                 </div>
-              </div>
-              <div className="bg-yellow-50 dark:bg-dark-section border border-yellow-200 dark:border-gray-700/50 rounded-xl p-4">
+              </div>{/* p-5 */}
+              </div>{/* financial card */}
+              <div className="rounded-xl p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5 dark:bg-gray-700 dark:border-gray-600" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">I have pending criminal cases or criminal records</span>
+                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5" />
+                  <span className="text-sm" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>I have pending criminal cases or criminal records</span>
                 </label>
               </div>
               <Nav onPrev={() => setCurrentStep(3)} onNext={handleNext} />
@@ -1016,8 +1124,8 @@ export default function LoanApplication() {
 
           {currentStep === 5 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Document Upload</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Max 5MB each. PDF/JPG/PNG accepted.</p>
+              <SectionTitle icon="📎" color="#DC2626" title="Document Upload" />
+              <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · PDF / JPG / PNG accepted</p>
               <div className="space-y-3">
                 {[
                   { key: 'aadhaar_front_url', label: 'Aadhaar Document', required: true },
@@ -1093,7 +1201,7 @@ export default function LoanApplication() {
 
           {currentStep === 6 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Review & Submit</h2>
+              <SectionTitle icon="✅" color="#059669" title="Review & Submit" />
               <RS title="Identity & KYC">
                 <RR label="PAN" value={formData.pan_number ? formData.pan_number.slice(0,2)+'***'+formData.pan_number.slice(-2) : ''} />
                 <RR label="Aadhaar" value={formData.aadhaar_number ? 'XXXX XXXX '+String(formData.aadhaar_number).slice(-4) : formData.aadhaar_last4 ? `XXXX XXXX ${formData.aadhaar_last4}` : ''} />
@@ -1125,20 +1233,26 @@ export default function LoanApplication() {
                 <RR label="Purpose" value={codeLabel(13, formData.purpose_of_loan)} />
                 <RR label="Net Income" value={formData.monthly_net_income ? `₹${parseFloat(formData.monthly_net_income).toLocaleString('en-IN')}` : ''} />
               </RS>
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4">
+              <div className="rounded-2xl p-4" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 text-blue-600 rounded" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
+                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 rounded" />
+                  <span className="text-sm" style={{ color: '#1D4ED8', fontFamily: 'var(--font-body)' }}>I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
                 </label>
               </div>
-              <div className="bg-yellow-50 dark:bg-dark-section border border-yellow-200 dark:border-gray-700/50 rounded-xl p-3">
-                <p className="text-xs text-yellow-800 dark:text-gray-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
+              <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: '#D97706' }} />
+                <p className="text-xs" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
               </div>
               <div className="flex gap-4">
-                <button onClick={() => { autoSave(); setCurrentStep(5); window.scrollTo(0,0); }} className="flex-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-4 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition">← Previous</button>
+                <button onClick={() => { autoSave(); setCurrentStep(5); window.scrollTo(0, 0); }}
+                  className="flex-1 py-4 rounded-xl font-semibold transition hover:opacity-80"
+                  style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)', border: '1px solid #E2E8F0' }}>
+                  ← Previous
+                </button>
                 <button onClick={handleSubmit} disabled={submitting || !agreed}
-                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-4 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
-                  {submitting ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Submitting...</span></> : 'Submit Application'}
+                  className="flex-1 py-4 rounded-xl font-semibold text-white transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', fontFamily: 'var(--font-heading)' }}>
+                  {submitting ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Submitting...</span></> : 'Submit Application →'}
                 </button>
               </div>
             </div>
@@ -1208,7 +1322,7 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
   return (
     <div className="transition-all duration-200">
       <div className="flex items-center flex-wrap gap-1 sm:gap-1.5 mb-1">
-        <label className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">{label} {required && <span className="text-red-500 text-xs">*</span>}</label>
+        <label className="text-sm font-medium" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>{label} {required && <span style={{ color: '#DC2626' }}>*</span>}</label>
         {src && !src.modified && (
           <div className="relative group flex-shrink-0">
             <span className={`px-1.5 sm:px-2 py-0.5 text-[8px] sm:text-[9px] font-medium rounded cursor-help inline-flex items-center gap-0.5 ${
@@ -1241,24 +1355,62 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
         )}
       </div>
       {children}
-      {error && <p className="text-red-500 text-xs mt-1 animate-[fadeIn_0.2s]">{error}</p>}
+      {error && <p className="text-xs mt-1.5 flex items-center gap-1 animate-[fadeIn_0.2s]" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}><AlertTriangle className="w-3 h-3 flex-shrink-0" />{error}</p>}
+    </div>
+  );
+}
+function SectionTitle({ icon, color, title }: { icon: string; color: string; title: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+        style={{ background: color + '18', border: `1px solid ${color}28` }}>
+        {icon}
+      </div>
+      <h2 className="text-lg font-bold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{title}</h2>
     </div>
   );
 }
 function Nav({ onPrev, onNext }: any) {
   return (
-    <div className="flex gap-4 pt-2">
-      {onPrev && <button onClick={onPrev} className="flex-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-4 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition">← Previous</button>}
-      {onNext && <button onClick={onNext} className={`${onPrev ? 'flex-1' : 'w-full'} bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition`}>Continue →</button>}
+    <div className="flex gap-3 pt-2">
+      {onPrev && (
+        <button onClick={onPrev}
+          className="flex-1 rounded-xl font-semibold text-sm transition hover:opacity-80 active:scale-[0.98]"
+          style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)', border: '1.5px solid #E2E8F0', height: '52px' }}>
+          ← Back
+        </button>
+      )}
+      {onNext && (
+        <button onClick={onNext}
+          className={`${onPrev ? 'flex-1' : 'w-full'} rounded-xl font-semibold text-white text-sm transition hover:-translate-y-0.5 hover:shadow-xl active:scale-[0.98]`}
+          style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #0F3460 100%)', fontFamily: 'var(--font-heading)', height: '52px', boxShadow: '0 4px 16px rgba(26,26,46,0.25)' }}>
+          Continue →
+        </button>
+      )}
     </div>
   );
 }
 function RS({ title, children }: any) {
-  return <div className="bg-gray-50 dark:bg-dark-section rounded-xl p-4"><h3 className="font-semibold text-gray-900 dark:text-white mb-3">{title}</h3><div className="space-y-2">{children}</div></div>;
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+      <div className="px-4 sm:px-5 py-3" style={{ background: '#F8F9FC', borderBottom: '1px solid #E2E8F0' }}>
+        <h3 className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{title}</h3>
+      </div>
+      <div className="px-4 sm:px-5 py-4 space-y-3 bg-white">{children}</div>
+    </div>
+  );
 }
 function RR({ label, value }: any) {
-  return <div className="flex justify-between text-sm"><span className="text-gray-500 dark:text-gray-400">{label}:</span><span className="font-medium text-gray-900 dark:text-gray-100 text-right max-w-xs">{value || '—'}</span></div>;
+  return (
+    <div className="flex justify-between items-start gap-4">
+      <span className="text-sm flex-shrink-0" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>{label}</span>
+      <span className="text-sm font-semibold text-right" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>{value || '—'}</span>
+    </div>
+  );
 }
 function inp(error: string) {
-  return `w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all duration-200 ${error ? 'border-red-300 bg-red-50 dark:bg-red-900/10 dark:border-red-700 animate-[shake_0.3s]' : 'border-gray-300 dark:border-gray-600 dark:bg-dark-card/80 dark:text-gray-100 hover:border-blue-300 dark:hover:border-blue-600'}`;
+  const base = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 placeholder:text-[#94A3B8] border';
+  const ok   = 'border-[#E2E8F0] bg-[#FAFAFA] hover:border-[#94A3B8] focus:border-[#1A1A2E] focus:bg-white focus:shadow-[0_0_0_3px_rgba(26,26,46,0.06)]';
+  const err  = 'border-[#DC2626] bg-[#FFF5F5] animate-[shake_0.3s]';
+  return `${base} ${error ? err : ok}`;
 }

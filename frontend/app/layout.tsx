@@ -1,18 +1,35 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { Sen } from "next/font/google";
+import { Sen, Plus_Jakarta_Sans, DM_Sans, JetBrains_Mono } from "next/font/google";
 
 import { Providers } from "./providers";
 
-// Sen — matches the VirtualVaani master frontend + login/dashboard screenshots.
-// Self-hosted via next/font (no runtime Google Fonts call). Used for both UI
-// and tabular numbers (Sen has OpenType `tnum` feature, enabled via the
-// .font-mono utility in globals.css).
 const sen = Sen({
   subsets: ["latin"],
   display: "swap",
   weight: ["400", "500", "700", "800"],
   variable: "--font-sans",
+});
+
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-heading",
+});
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-body",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500", "600"],
+  variable: "--font-mono-loan",
 });
 
 export const metadata: Metadata = {
@@ -36,7 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={sen.variable}
+      className={`${sen.variable} ${plusJakarta.variable} ${dmSans.variable} ${jetbrainsMono.variable}`}
     >
       <head>
         <script

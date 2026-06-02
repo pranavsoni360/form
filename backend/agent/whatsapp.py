@@ -32,9 +32,20 @@ async def send_whatsapp_form(request: Request):
     call_id = data.get("call_id")
 
     # ── 1. Fetch call data ──
+    # Prefer collected_data sent in the payload by the voice agent — it captures
+    # everything the customer just said on the call. The DB-side agent_calls.collected_data
+    # only gets populated by the end-of-call transcript webhook (~8s after this
+    # endpoint fires), so without the inline payload we'd race against a fast
+    # customer who clicks the WhatsApp link before the backfill lands.
     call_row = None
     call_uuid = None
-    collected = {}
+    payload_collected = data.get("collected_data") or {}
+    if isinstance(payload_collected, str):
+        try:
+            payload_collected = json.loads(payload_collected)
+        except Exception:
+            payload_collected = {}
+    db_collected: dict = {}
     if call_id:
         try:
             call_uuid = uuid.UUID(call_id)
@@ -43,9 +54,17 @@ async def send_whatsapp_form(request: Request):
                 cd = call_row["collected_data"]
                 if isinstance(cd, str):
                     cd = json.loads(cd)
-                collected = cd if isinstance(cd, dict) else {}
+                db_collected = cd if isinstance(cd, dict) else {}
         except Exception as e:
             logger.warning(f"Could not fetch call data: {e}")
+    # Merge: DB first (oldest), payload last (freshest) — payload wins where set.
+    collected = {**db_collected, **{k: v for k, v in payload_collected.items() if v not in (None, "")}}
+    if payload_collected:
+        logger.info(
+            f"send-whatsapp-form: payload_collected has "
+            f"{len([v for v in payload_collected.values() if v])} fields; "
+            f"merged with db_collected ({len(db_collected)} fields)"
+        )
 
     # ── 2. Normalize phone ──
     if phone and not phone.startswith("+"):
@@ -113,12 +132,14 @@ async def send_whatsapp_form(request: Request):
                         customer_name, phone, loan_id, current_step, status, last_saved_at, bank_id,
                         agent_call_id, full_name, employer_name, designation, employment_type,
                         monthly_gross_income, monthly_emi_existing, current_address,
-                        purpose_of_loan, loan_amount_requested, customer_type, industry_type
+                        purpose_of_loan, loan_amount_requested, customer_type, industry_type,
+                        qualification, total_work_experience
                     ) VALUES (
                         $1, $2, $3, 1, 'draft', $4, $5,
                         $6, $7, $8, $9, $10,
                         $11, $12, $13,
-                        $14, $15, $16, $17
+                        $14, $15, $16, $17,
+                        $18, $19
                     ) RETURNING id""",
                     customer_name or "Customer",
                     phone_norm,
@@ -137,6 +158,8 @@ async def send_whatsapp_form(request: Request):
                     loan_amount,
                     collected.get("customer_type") or "new",
                     collected.get("business_type") or None,
+                    collected.get("qualification") or None,
+                    collected.get("working_experience") or None,
                 )
                 app_id = row["id"]
                 logger.info(f"Created loan_application {app_id} for {phone_norm} from call {call_id}")
@@ -154,6 +177,8 @@ async def send_whatsapp_form(request: Request):
                     "loan_amount_requested": str(loan_amount) if loan_amount else None,
                     "customer_type": collected.get("customer_type"),
                     "industry_type": collected.get("business_type"),
+                    "qualification": collected.get("qualification"),
+                    "total_work_experience": collected.get("working_experience"),
                     "customer_name": customer_name,
                     "full_name": customer_name,
                 }

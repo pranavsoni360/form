@@ -180,8 +180,10 @@ async def save_transcript(data: TranscriptPayload):
                     purpose_of_loan = COALESCE($7, purpose_of_loan),
                     loan_amount_requested = COALESCE($8, loan_amount_requested),
                     industry_type = COALESCE($9, industry_type),
-                    customer_type = COALESCE($10, customer_type)
-                WHERE id = $11""",
+                    customer_type = COALESCE($10, customer_type),
+                    qualification = COALESCE($11, qualification),
+                    total_work_experience = COALESCE($12, total_work_experience)
+                WHERE id = $13""",
                 existing_collected.get("employer_name") or None,
                 existing_collected.get("designation") or None,
                 existing_collected.get("employment_type") or None,
@@ -192,6 +194,8 @@ async def save_transcript(data: TranscriptPayload):
                 _parse_num(data.loan_amount),
                 existing_collected.get("business_type") or None,
                 existing_collected.get("customer_type") or None,
+                existing_collected.get("qualification") or None,
+                existing_collected.get("working_experience") or None,
                 app_row["id"],
             )
             # Save field_sources for Voice Call badges
@@ -206,6 +210,8 @@ async def save_transcript(data: TranscriptPayload):
                 "purpose_of_loan": existing_collected.get("loan_purpose"),
                 "industry_type": existing_collected.get("business_type"),
                 "customer_type": existing_collected.get("customer_type"),
+                "qualification": existing_collected.get("qualification"),
+                "total_work_experience": existing_collected.get("working_experience"),
             }
             for field, value in field_map.items():
                 if value and str(value).strip():

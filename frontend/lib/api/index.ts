@@ -12,10 +12,21 @@
 
 // ── Core config ──────────────────────────────────────────────
 
-export const API_URL =
-  typeof window !== "undefined" && window.location.hostname === "localhost"
-    ? "http://localhost:8200"
-    : process.env.NEXT_PUBLIC_API_URL || "https://virtualvaani.vgipl.com:8200";
+// Per-host API base so ONE build serves every domain correctly:
+//  • finix.vgipl.com (and any nginx-fronted host) → same-origin; nginx routes /api → backend:8200
+//  • virtualvaani.vgipl.com → direct backend on :8200 (legacy, no nginx front)
+//  • localhost dev → local backend
+// SSR (no window) falls back to NEXT_PUBLIC_API_URL or the finix origin.
+export const API_URL = (() => {
+  if (typeof window === "undefined") {
+    return process.env.NEXT_PUBLIC_API_URL || "https://finix.vgipl.com";
+  }
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") return "http://localhost:8200";
+  if (host === "virtualvaani.vgipl.com") return "https://virtualvaani.vgipl.com:8200";
+  // finix.vgipl.com and any future nginx-fronted domain: same-origin.
+  return `${window.location.protocol}//${window.location.host}`;
+})();
 
 // ── Fetch helpers used by every role module ──────────────────
 

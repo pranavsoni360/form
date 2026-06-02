@@ -1,5 +1,5 @@
 'use client';
-import { Building2, Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, X, ExternalLink } from 'lucide-react';
+import { Building2, Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -7,6 +7,54 @@ import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
 const INACTIVITY_LIMIT = 4 * 60 * 1000; // 4 min warning, 5 min logout
+
+// ── Name similarity helpers ──────────────────────────────────────────────────
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+function tokenSim(t1: string, t2: string): number {
+  if (!t1 || !t2) return 0;
+  const maxLen = Math.max(t1.length, t2.length);
+  return maxLen === 0 ? 1 : (maxLen - levenshtein(t1, t2)) / maxLen;
+}
+
+function calcNameSimilarity(name1: string, name2: string): number {
+  const norm = (s: string) => s.toLowerCase()
+    .replace(/\b(mr|mrs|ms|dr|shri|smt|kumari)\b\.?/g, '')
+    .replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+  const n1 = norm(name1 || '');
+  const n2 = norm(name2 || '');
+  if (!n1 || !n2) return 100; // skip if either is missing
+  if (n1 === n2) return 100;
+  const t1 = n1.split(' ').filter(Boolean);
+  const t2 = n2.split(' ').filter(Boolean);
+
+  // Indian naming convention: middle name = father's name, should be ignored.
+  // Only compare FIRST NAME + SURNAME (last token).
+  // e.g. "Pranav Soni" vs "Pranav Nitin Soni" → first=Pranav, last=Soni → 100%
+  const first1 = t1[0] || '';
+  const last1  = t1.length > 1 ? t1[t1.length - 1] : '';
+  const first2 = t2[0] || '';
+  const last2  = t2.length > 1 ? t2[t2.length - 1] : '';
+
+  const firstScore = tokenSim(first1, first2);
+
+  // If one name has only a single token compare just first names
+  if (!last1 || !last2) return Math.round(firstScore * 100);
+
+  const lastScore = tokenSim(last1, last2);
+  // Both first and last must match — weight them equally
+  return Math.round((firstScore + lastScore) / 2 * 100);
+}
 
 export default function LoanApplication() {
   const router = useRouter();
@@ -17,11 +65,14 @@ export default function LoanApplication() {
   const [currentStep, setCurrentStep] = useState(1);
   const [highestStep, setHighestStep] = useState(1);
   const [panVerifying, setPanVerifying] = useState(false);
-  const [panFocused, setPanFocused] = useState(false);
+  const [showPan, setShowPan] = useState(false);
   const [aadhaarVerifying, setAadhaarVerifying] = useState(false);
   const [codeLists, setCodeLists] = useState<Record<number, {code_mst_id: string, code_desc: string}[]>>({});
   const [cityOptions, setCityOptions] = useState<{code_mst_id: string, code_desc: string}[]>([]);
   const [permCityOptions, setPermCityOptions] = useState<{code_mst_id: string, code_desc: string}[]>([]);
+  const [nameMatchError, setNameMatchError] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
+  const [nameMatchDetail, setNameMatchDetail] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
+  const [nameMatchLocked, setNameMatchLocked] = useState(false);
 
   const handleVerifyPAN = async () => {
     const pan = formData.pan_number || '';
@@ -58,6 +109,17 @@ export default function LoanApplication() {
         if (nameParts.length > 1) panSources.last_name = { source: 'pan', original: nameParts[nameParts.length - 1], modified: false };
         panSources.full_name = { source: 'pan', original: data.name, modified: false };
         setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), ...panSources } }));
+        // Name match check: PAN name vs call-collected name
+        const callName = appData?.customer_name || appData?.full_name || '';
+        if (callName && data.name) {
+          const score = calcNameSimilarity(callName, data.name);
+          if (score < 85) {
+            const err = { source: 'PAN Card', callName, verifiedName: data.name, score };
+            setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+          } else {
+            setNameMatchError(null); setNameMatchDetail(null); setNameMatchLocked(false);
+          }
+        }
       }
       setErrors((p: any) => ({ ...p, pan_number: '' }));
     } catch (err: any) {
@@ -182,7 +244,7 @@ export default function LoanApplication() {
           onChange('aadhaar_verification_timestamp', new Date().toISOString());
           // Only fill name from Aadhaar if PAN hasn't already filled it
           if (d.name && !formData.pan_name) {
-            onChange('full_name', d.name); onChange('customer_name', d.name);
+            onChange('full_name', d.name);
             const np = d.name.trim().split(/\s+/);
             if (np.length >= 3) { onChange('first_name', np[0]); onChange('middle_name', np.slice(1,-1).join(' ')); onChange('last_name', np[np.length-1]); }
             else if (np.length === 2) { onChange('first_name', np[0]); onChange('last_name', np[1]); }
@@ -222,6 +284,18 @@ export default function LoanApplication() {
             aadhaarSources.aadhaar_front_url = { source: 'aadhaar', original: 'digilocker_xml', modified: false };
           }
           setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), ...aadhaarSources } }));
+          // Name match check: Aadhaar name vs call-collected name
+          const callName = appData?.customer_name || appData?.full_name || '';
+          const aadhaarName = d.name || '';
+          if (callName && aadhaarName) {
+            const score = calcNameSimilarity(callName, aadhaarName);
+            if (score < 85) {
+              const err = { source: 'Aadhaar Card', callName, verifiedName: aadhaarName, score };
+              setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+            } else {
+              setNameMatchError(null); setNameMatchDetail(null); setNameMatchLocked(false);
+            }
+          }
         }
         setDigilockerStep('done');
         setErrors((p: any) => ({ ...p, aadhaar_number: '' }));
@@ -274,9 +348,37 @@ export default function LoanApplication() {
       if (res.status === 401) { logout(); return; }
       const data = await res.json();
       if (data.status === 'success') {
-        setAppData(data.data);
-        setFormData(data.data);
-        const savedStep = data.data.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, data.data.highest_step || 1));
+        const d = data.data;
+        // Split full_name → first/last if not already set (pre-filled from voice call)
+        if (d.full_name && !d.first_name) {
+          const parts = d.full_name.trim().split(/\s+/);
+          if (parts.length >= 2) {
+            d.first_name = parts[0];
+            d.last_name = parts.slice(1).join(' ');
+          } else {
+            d.first_name = d.full_name;
+          }
+        }
+        setAppData(d);
+        setFormData(d);
+        const savedStep = d.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, d.highest_step || 1));
+        // On-load name match check for already-verified applications
+        const callName = d.customer_name || '';
+        if (callName) {
+          if (d.pan_verified && d.pan_name) {
+            const score = calcNameSimilarity(callName, d.pan_name);
+            if (score < 85) {
+              const err = { source: 'PAN Card', callName, verifiedName: d.pan_name, score };
+              setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+            }
+          } else if (d.aadhaar_verified && d.full_name && d.full_name !== callName) {
+            const score = calcNameSimilarity(callName, d.full_name);
+            if (score < 85) {
+              const err = { source: 'Aadhaar Card', callName, verifiedName: d.full_name, score };
+              setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+            }
+          }
+        }
         // Pre-load city options if state is already set (resuming saved form)
         if (data.data.current_state_code) fetchCities(data.data.current_state_code, 'current');
         if (data.data.permanent_state_code) fetchCities(data.data.permanent_state_code, 'permanent');
@@ -430,6 +532,10 @@ export default function LoanApplication() {
   const step4Valid = () => validate({ loan_amount_requested: 'Required', purpose_of_loan: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
 
   const handleNext = () => {
+    if (currentStep === 1 && nameMatchLocked) {
+      setNameMatchError(e => e); // re-show popup if dismissed
+      return;
+    }
     let valid = false;
     if (currentStep === 1) valid = step1Valid();
     else if (currentStep === 2) valid = step2Valid();
@@ -488,6 +594,51 @@ export default function LoanApplication() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 py-6 px-4 transition-colors">
+
+      {/* ── Name mismatch popup ── */}
+      {nameMatchError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full p-6 border border-red-200 dark:border-red-800">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 dark:text-white text-lg">Identity Mismatch Detected</h3>
+                <p className="text-sm text-red-600 dark:text-red-400">{nameMatchError.score}% match — minimum required is 85%</p>
+              </div>
+            </div>
+            <div className="space-y-3 mb-5">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Name from voice call</p>
+                <p className="font-semibold text-gray-900 dark:text-white">{nameMatchError.callName}</p>
+              </div>
+              <div className="bg-red-50 dark:bg-red-900/30 rounded-xl p-3 border border-red-200 dark:border-red-700">
+                <p className="text-xs text-red-500 dark:text-red-400 mb-1">Name from {nameMatchError.source}</p>
+                <p className="font-semibold text-red-700 dark:text-red-300">{nameMatchError.verifiedName}</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+              The name on your <strong>{nameMatchError.source}</strong> does not sufficiently match the name recorded during your voice call. Please contact your bank branch to resolve this.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setNameMatchError(null)}
+                className="flex-1 py-3 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+              >
+                Dismiss
+              </button>
+              <button
+                disabled
+                className="flex-1 py-3 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-400 dark:text-red-500 font-medium cursor-not-allowed"
+              >
+                Form Locked
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {inactivityWarning && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-8 pointer-events-none">
           <div className="pointer-events-auto bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border border-orange-200 dark:border-orange-800 shadow-2xl rounded-2xl px-8 py-5 max-w-md w-full mx-4 animate-[slideDown_0.3s_ease-out]">
@@ -567,26 +718,45 @@ export default function LoanApplication() {
           {currentStep === 1 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">KYC & Personal Details</h2>
+              {nameMatchLocked && (
+                <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-xl px-4 py-3">
+                  <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">Form locked — name mismatch</p>
+                    <p className="text-xs text-red-600 dark:text-red-500">Contact your bank branch to resolve the identity mismatch before proceeding.</p>
+                  </div>
+                  <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs text-red-600 underline whitespace-nowrap">View details</button>
+                </div>
+              )}
               <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Identity Verification</p>
                 <F label="PAN Number" required error={errors.pan_number}>
                   <div className="flex gap-2">
                     <div className="flex-1 relative">
                       <input type="text"
-                        value={panFocused ? (formData.pan_number || '') : (formData.pan_number ? formData.pan_number.replace(/./g, '\u2022') : '')}
+                        value={formData.pan_verified
+                          ? (formData.pan_number ? formData.pan_number.replace(/./g, '\u2022') : '')
+                          : (showPan ? (formData.pan_number || '') : (formData.pan_number ? formData.pan_number.replace(/./g, '\u2022') : ''))
+                        }
                         onChange={e => onChange('pan_number', e.target.value.toUpperCase())}
-                        onFocus={() => setPanFocused(true)}
-                        onBlur={() => setPanFocused(false)}
                         disabled={formData.pan_verified}
-                        readOnly={!panFocused && !!formData.pan_number && !formData.pan_verified}
-                        className={`w-full ${formData.pan_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${!panFocused && formData.pan_number ? 'tracking-widest' : ''} ${inp(errors.pan_number)}`}
+                        readOnly={!showPan && !!formData.pan_number && !formData.pan_verified}
+                        className={`w-full pr-16 ${formData.pan_verified ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700' : ''} ${!showPan && formData.pan_number ? 'tracking-widest' : ''} ${inp(errors.pan_number)}`}
                         placeholder="ABCDE1234F" maxLength={10} />
-                      {formData.pan_number && !formData.pan_verified && !panFocused && (
-                        <button type="button" onClick={() => { onChange('pan_number', ''); setPanFocused(true); }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 transition p-1" title="Clear & re-enter">
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        {!formData.pan_verified && (
+                          <button type="button" onClick={() => setShowPan(p => !p)}
+                            className="text-gray-400 hover:text-blue-500 transition p-1" title={showPan ? 'Hide PAN' : 'Show PAN'}>
+                            {showPan ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        )}
+                        {formData.pan_number && !formData.pan_verified && (
+                          <button type="button" onClick={() => { onChange('pan_number', ''); setShowPan(false); }}
+                            className="text-gray-400 hover:text-red-500 transition p-1" title="Clear & re-enter">
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition flex items-center justify-center gap-2 min-w-[110px] ${formData.pan_verified ? 'bg-green-500 text-white cursor-default' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-70`}>
                       {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? 'Verified' : 'Verify'}
@@ -861,7 +1031,8 @@ export default function LoanApplication() {
                   const fs = formData.field_sources?.[doc.key];
                   const isDigilocker = fs?.source === 'aadhaar';
                   return (
-                  <div key={doc.key} className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-dark-section' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section') : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
+                  <div key={doc.key}>
+                  <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-dark-section' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section') : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
                     <div>
                       <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
                       {formData[doc.key] && (
@@ -878,11 +1049,22 @@ export default function LoanApplication() {
                     )}
                     </div>
                     <label className="cursor-pointer">
-                      <input type="file" accept="image/*,application/pdf" className="hidden"
+                      <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
-                          if (file.size > 5 * 1024 * 1024) { alert('File too large. Max 5MB'); return; }
+                          const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+                          if (!allowed.includes(file.type)) {
+                            setErrors((p: any) => ({ ...p, [doc.key]: 'Only JPG, PNG or PDF allowed' }));
+                            e.target.value = '';
+                            return;
+                          }
+                          if (file.size > 5 * 1024 * 1024) {
+                            setErrors((p: any) => ({ ...p, [doc.key]: 'File too large. Max 5MB allowed' }));
+                            e.target.value = '';
+                            return;
+                          }
+                          setErrors((p: any) => ({ ...p, [doc.key]: '' }));
                           const fd = new FormData();
                           fd.append('session_token', getSession() || '');
                           fd.append('document_type', doc.key.replace('_url', ''));
@@ -891,14 +1073,16 @@ export default function LoanApplication() {
                             const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
                             const data = await res.json();
                             if (data.url) onChange(doc.key, data.url);
-                            else alert('Upload failed. Storage may not be configured.');
-                          } catch { alert('Upload failed.'); }
+                            else setErrors((p: any) => ({ ...p, [doc.key]: 'Upload failed. Try again.' }));
+                          } catch { setErrors((p: any) => ({ ...p, [doc.key]: 'Upload failed. Try again.' })); }
                         }}
                       />
                       <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                         {formData[doc.key] ? 'Replace' : 'Upload'}
                       </span>
                     </label>
+                  </div>
+                  {errors[doc.key] && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{errors[doc.key]}</p>}
                   </div>
                   );
                 })}

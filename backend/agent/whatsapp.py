@@ -113,12 +113,14 @@ async def send_whatsapp_form(request: Request):
                         customer_name, phone, loan_id, current_step, status, last_saved_at, bank_id,
                         agent_call_id, full_name, employer_name, designation, employment_type,
                         monthly_gross_income, monthly_emi_existing, current_address,
-                        purpose_of_loan, loan_amount_requested, customer_type, industry_type
+                        purpose_of_loan, loan_amount_requested, customer_type, industry_type,
+                        total_work_experience, qualification
                     ) VALUES (
                         $1, $2, $3, 1, 'draft', $4, $5,
                         $6, $7, $8, $9, $10,
                         $11, $12, $13,
-                        $14, $15, $16, $17
+                        $14, $15, $16, $17,
+                        $18, $19
                     ) RETURNING id""",
                     customer_name or "Customer",
                     phone_norm,
@@ -137,6 +139,8 @@ async def send_whatsapp_form(request: Request):
                     loan_amount,
                     collected.get("customer_type") or "new",
                     collected.get("business_type") or None,
+                    collected.get("working_experience") or None,
+                    collected.get("qualification") or None,
                 )
                 app_id = row["id"]
                 logger.info(f"Created loan_application {app_id} for {phone_norm} from call {call_id}")
@@ -154,6 +158,8 @@ async def send_whatsapp_form(request: Request):
                     "loan_amount_requested": str(loan_amount) if loan_amount else None,
                     "customer_type": collected.get("customer_type"),
                     "industry_type": collected.get("business_type"),
+                    "total_work_experience": collected.get("working_experience"),
+                    "qualification": collected.get("qualification"),
                     "customer_name": customer_name,
                     "full_name": customer_name,
                 }

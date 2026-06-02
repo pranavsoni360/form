@@ -227,6 +227,7 @@ WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
 AISENSY_API_KEY = os.getenv("AISENSY_API_KEY", "")
 AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_CAMPAIGN_NAME", "Call")
 AISENSY_USERNAME = os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA")
+AISENSY_SUBMISSION_CAMPAIGN = os.getenv("AISENSY_SUBMISSION_CAMPAIGN", "")
 
 # UPLOAD_DIR: prefer env, else <repo>/uploads (works on Windows + Linux). Was hardcoded to /root/...
 _DEFAULT_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
@@ -2299,7 +2300,7 @@ async def download_aadhaar(request: Request):
             xml_content = xml_data.get("content", "") if isinstance(xml_data, dict) else ""
             if xml_content:
                 xml_path = loan_dir / "aadhaar_digilocker.xml"
-                async with aiofiles.open(xml_path, 'w') as f:
+                async with aiofiles.open(xml_path, 'w', encoding='utf-8') as f:
                     await f.write(xml_content)
                 print(f"[DigiLocker] Saved Aadhaar XML: /uploads/{loan_id}/aadhaar_digilocker.xml")
 
@@ -3087,9 +3088,34 @@ async def submit_form_session(session_token: str, request: Request):
     await db_pool.execute("UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 WHERE id = $2", now_utc(), app_row["id"])
     # Record transition
     await record_transition(app_row["id"], "draft", "submitted", "customer", app_row["id"], "Form submitted by customer via session")
-    if WHATSAPP_API_TOKEN and WHATSAPP_PHONE_ID:
-        message = f"Dear {app_row['customer_name']},\n\nYour loan application has been submitted!\n\nLoan ID: {app_row['loan_id']}\n\nOur team will review within 24-48 hours.\n\n- Your Bank"
-        await send_whatsapp_message(app_row["phone"], message)
+    # Send confirmation via AiSensy
+    try:
+        customer_name = app_row["customer_name"] or "Customer"
+        first_name = customer_name.strip().split()[0]
+        loan_id = app_row["loan_id"] or ""
+        phone = app_row["phone"] or ""
+        if AISENSY_API_KEY and AISENSY_SUBMISSION_CAMPAIGN and phone:
+            phone_formatted = "".join(filter(str.isdigit, phone))
+            if len(phone_formatted) == 10:
+                phone_formatted = f"91{phone_formatted}"
+            payload = {
+                "apiKey": AISENSY_API_KEY,
+                "campaignName": AISENSY_SUBMISSION_CAMPAIGN,
+                "destination": phone_formatted,
+                "userName": AISENSY_USERNAME,
+                "templateParams": [first_name, loan_id],
+                "source": "loan-form-submission",
+                "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
+                "paramsFallbackValue": {"FirstName": first_name},
+            }
+            async with httpx.AsyncClient(verify=False, timeout=10) as client:
+                resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
+                body = resp.text
+                logger.info(f"[Submission WhatsApp] {phone_formatted} -> {resp.status_code} | {body}")
+        else:
+            logger.info(f"[Submission WhatsApp] Skipped — campaign={AISENSY_SUBMISSION_CAMPAIGN or 'not set'} api_key={'set' if AISENSY_API_KEY else 'missing'}")
+    except Exception as e:
+        logger.warning(f"[Submission WhatsApp] Failed (non-blocking): {e}")
     return {"status": "submitted", "message": "Application submitted successfully", "loan_id": app_row["loan_id"]}
 
 # ============================================

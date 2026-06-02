@@ -16,7 +16,7 @@ set -euo pipefail
 
 SCRIPT_VERSION="2.0.0"
 REPO_URL="https://github.com/pranavsoni360/form.git"
-REPO_BRANCH="${LOS_BRANCH:-main}"
+REPO_BRANCH="${LOS_BRANCH:-master}"
 INSTALL_DIR="/root/vaani_los_form"
 BACKEND_PORT=8200
 FRONTEND_PORT=3001
@@ -150,16 +150,23 @@ do_update() {
         warn "npm not found — skipping frontend rebuild"
     fi
 
-    # 6. Restart services
+    # 6. Restart services (backend, frontend, both modular voice agents)
     log "Restarting services..."
-    systemctl restart los-backend los-frontend
+    systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
 
-    # 7. Health check
-    sleep 3
-    if curl -fsk "https://localhost:${BACKEND_PORT}/" >/dev/null 2>&1; then
-        log "Backend health check passed (port ${BACKEND_PORT})."
+    # 7. Health check — backend readyz + both agents active
+    sleep 5
+    if curl -fsk "https://localhost:${BACKEND_PORT}/readyz" >/dev/null 2>&1; then
+        log "Backend health check passed (/readyz on ${BACKEND_PORT})."
     else
-        warn "Backend health check failed. Check: journalctl -u los-backend -n 50"
+        warn "Backend health check FAILED. Check: journalctl -u los-backend -n 50"
+        exit 1
+    fi
+    if systemctl is-active --quiet los-agent-union && systemctl is-active --quiet los-agent-pusad; then
+        log "Both voice agents active."
+    else
+        warn "An agent is not active. Check: journalctl -u los-agent-union -u los-agent-pusad -n 50"
+        exit 1
     fi
 
     # 8. Summary
@@ -383,8 +390,15 @@ RestartSec=3
 WantedBy=multi-user.target
 SVC
 
+# Voice agents — install the two modular agent units from the repo
+# (los-agent-union :8081, los-agent-pusad :8082). These replace the old
+# single los-agent.service (loan_agent.py).
+install -m 644 "${INSTALL_DIR}/scripts/los-agent-union.service" /etc/systemd/system/los-agent-union.service
+install -m 644 "${INSTALL_DIR}/scripts/los-agent-pusad.service" /etc/systemd/system/los-agent-pusad.service
+
 systemctl daemon-reload
-systemctl enable los-backend los-frontend
+systemctl disable --now los-agent.service 2>/dev/null || true
+systemctl enable los-backend los-frontend los-agent-union los-agent-pusad
 
 log "Phase 7 complete"
 
@@ -448,7 +462,7 @@ fi
 
 log "── Phase 9: Start Services ──"
 
-systemctl restart los-backend los-frontend
+systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
 
 sleep 5
 wait_for_port ${BACKEND_PORT} "Backend" 15

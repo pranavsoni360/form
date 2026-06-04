@@ -1,0 +1,12 @@
+[Unit]
+Description=LOS SIP trunk watchdog (ensure LiveKit trunks exist + sync phone_numbers)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/vaani_los_form/agent
+# Uses the backend venv (has livekit + asyncpg + dotenv).
+ExecStart=/root/vaani_los_form/backend/venv/bin/python /root/vaani_los_form/agent/ensure_trunks.py
+# GPU-only secrets file (NOT committed to git).
+Environment=TRUNKS_CONFIG=/root/vaani_los_form/agent/trunks.config.json

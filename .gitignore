@@ -26,3 +26,6 @@ dummy.xlsx
 dummy_test_*.csv
 dummy_test_*.xlsx
 frontend/tsconfig.tsbuildinfo
+
+# SIP trunk watchdog secrets (provider credentials) — never commit
+agent/trunks.config.json

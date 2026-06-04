@@ -154,6 +154,16 @@ do_update() {
     log "Restarting services..."
     systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
 
+    # 6b. Refresh SIP trunk watchdog units (no-op if unchanged) + ensure enabled.
+    if [ -f "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" ]; then
+        install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.service" /etc/systemd/system/los-trunk-watchdog.service
+        install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" /etc/systemd/system/los-trunk-watchdog.timer
+        systemctl daemon-reload
+        if [ -f "${INSTALL_DIR}/agent/trunks.config.json" ]; then
+            systemctl enable --now los-trunk-watchdog.timer 2>/dev/null || true
+        fi
+    fi
+
     # 7. Health check — backend readyz + both agents active
     sleep 5
     if curl -fsk "https://localhost:${BACKEND_PORT}/readyz" >/dev/null 2>&1; then
@@ -396,9 +406,22 @@ SVC
 install -m 644 "${INSTALL_DIR}/scripts/los-agent-union.service" /etc/systemd/system/los-agent-union.service
 install -m 644 "${INSTALL_DIR}/scripts/los-agent-pusad.service" /etc/systemd/system/los-agent-pusad.service
 
+# SIP trunk watchdog — self-healing timer that recreates any missing LiveKit
+# trunk (additive only) and re-syncs phone_numbers every 5 min. Only enabled
+# when the GPU-only secrets file (agent/trunks.config.json, gitignored) exists;
+# otherwise the units are installed but left inert (e.g. dev hosts).
+install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.service" /etc/systemd/system/los-trunk-watchdog.service
+install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" /etc/systemd/system/los-trunk-watchdog.timer
+
 systemctl daemon-reload
 systemctl disable --now los-agent.service 2>/dev/null || true
 systemctl enable los-backend los-frontend los-agent-union los-agent-pusad
+if [ -f "${INSTALL_DIR}/agent/trunks.config.json" ]; then
+    systemctl enable --now los-trunk-watchdog.timer
+    log "SIP trunk watchdog timer enabled."
+else
+    warn "agent/trunks.config.json not found — trunk watchdog installed but NOT enabled."
+fi
 
 log "Phase 7 complete"
 

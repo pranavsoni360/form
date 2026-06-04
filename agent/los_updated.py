@@ -7,7 +7,7 @@ import time
 
 from dotenv import load_dotenv
 
-load_dotenv(".env.local")  # must run before local module imports that call os.getenv()
+load_dotenv(".env.local", override=True)  # override=True ensures .env.local always wins over system env vars
 
 from livekit.agents import WorkerOptions, cli
 from agent_core import entrypoint

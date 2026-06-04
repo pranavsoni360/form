@@ -137,7 +137,12 @@ tail_docker_events() {
                 --filter 'event=die' \
                 --filter 'event=oom' \
                 --filter 'event=kill' \
-                --filter 'event=restart' 2>&1 | \
+                --filter 'event=restart' \
+                --filter 'container=livekit-server' \
+                --filter 'container=livekit-sip' \
+                --filter 'container=livekit-egress' \
+                --filter 'container=livekit-redis' \
+                --filter 'container=vaani-los-postgres' 2>&1 | \
   while IFS= read -r evt; do
     container=$(echo "$evt" | jq -r '.Actor.Attributes.name // .id')
     ev_type=$(echo "$evt" | jq -r '.status')

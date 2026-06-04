@@ -64,7 +64,8 @@ post_error() {
   local sig
   sig=$(echo -n "$body" | hmac_hex)
 
-  curl -fsS -X POST "$URL" \
+  # -k: backend serves HTTPS with a self-signed cert on the internal port.
+  curl -fsS -k -X POST "$URL" \
        --max-time 5 \
        -H "Content-Type: application/json" \
        -H "X-LOS-Signature: $sig" \
@@ -150,6 +151,37 @@ tail_docker_events() {
   done
 }
 
+# ── 6. voice agents (systemd journald, NOT docker) ──────────────────────
+# los-agent-union (:8081) + los-agent-pusad (:8082) run as systemd services,
+# so their errors live in journald, not docker logs. Tail each, keep only real
+# ERROR/CRITICAL/tracebacks, and skip benign restart/shutdown lines.
+tail_agent() {
+  local unit="$1"
+  journalctl -u "$unit" -f -n 0 -o cat 2>&1 | while IFS= read -r line; do
+    if echo "$line" | grep -qE '"level":\s*"(ERROR|CRITICAL)"|\bERROR\b|\bCRITICAL\b|Traceback|Unhandled exception'; then
+      # Skip benign worker lifecycle noise emitted during deploys/restarts.
+      if echo "$line" | grep -qE 'process exited with non-zero exit code|draining worker|shutting down worker'; then
+        continue
+      fi
+      meta=$(jq -nc --arg u "$unit" --arg raw "$line" '{unit:$u, raw:$raw}')
+      post_error "agent" "AgentError" "[$unit] $(echo "$line" | head -c 380)" "$meta"
+    fi
+  done
+}
+
+# ── 7. postgres SERVER-level errors only ─────────────────────────────────
+# Per-query "ERROR:" lines are already reported by the backend (with context),
+# so here we only forward server-level problems (crashes, disk, OOM, corruption)
+# to avoid duplicates.
+tail_postgres() {
+  docker logs vaani-los-postgres -f --tail 0 2>&1 | while IFS= read -r line; do
+    if echo "$line" | grep -qE 'FATAL|PANIC|out of memory|could not write|no space left|database system is shut down'; then
+      meta=$(jq -nc --arg raw "$line" '{raw:$raw}')
+      post_error "postgres" "PostgresError" "$(echo "$line" | head -c 400)" "$meta"
+    fi
+  done
+}
+
 # ── Run all tailers in parallel ──────────────────────────────────────────
 echo "[gpu-error-tailer] starting. POSTing to $URL"
 tail_livekit_server  &
@@ -157,4 +189,7 @@ tail_livekit_sip     &
 tail_livekit_egress  &
 tail_redis           &
 tail_docker_events   &
+tail_agent los-agent-union  &
+tail_agent los-agent-pusad  &
+tail_postgres        &
 wait

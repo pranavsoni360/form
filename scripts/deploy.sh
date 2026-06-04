@@ -164,6 +164,18 @@ do_update() {
         fi
     fi
 
+    # 6c. Refresh gpu-error-tailer (docker/livekit/sip/agent errors → /ops/errors).
+    # Only restarts if its env file already exists (set up during full setup).
+    if have_cmd docker && [ -f "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" ]; then
+        install -m 755 "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" /usr/local/bin/gpu-error-tailer.sh
+        install -m 644 "${INSTALL_DIR}/scripts/gpu-error-tailer.service" /etc/systemd/system/gpu-error-tailer.service
+        systemctl daemon-reload
+        if [ -f /etc/los/gpu-tailer.env ]; then
+            systemctl enable gpu-error-tailer >/dev/null 2>&1 || true
+            systemctl restart gpu-error-tailer || warn "gpu-error-tailer restart failed"
+        fi
+    fi
+
     # 7. Health check — backend readyz + both agents active
     sleep 5
     if curl -fsk "https://localhost:${BACKEND_PORT}/readyz" >/dev/null 2>&1; then

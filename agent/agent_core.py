@@ -33,6 +33,33 @@ logger = logging.getLogger("loan-enquiry-agent")
 
 
 # ---------------------------------------------------------------------------
+# Sentry / GlitchTip — capture agent exceptions + ERROR logs.
+# No-op unless SENTRY_DSN_AGENT is set (so dev/local runs stay clean). The
+# module-level init runs in every worker/job process LiveKit spawns, so both
+# the main worker and per-call job processes report errors.
+# ---------------------------------------------------------------------------
+_SENTRY_DSN_AGENT = os.getenv("SENTRY_DSN_AGENT", "").strip()
+if _SENTRY_DSN_AGENT:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN_AGENT,
+            environment=os.getenv("LOS_ENV", "production"),
+            traces_sample_rate=0.0,
+            send_default_pii=False,
+        )
+        logger.info(
+            "Sentry initialized for agent (env=%s)",
+            os.getenv("LOS_ENV", "production"),
+        )
+    except ImportError:
+        logger.warning("SENTRY_DSN_AGENT set but sentry-sdk not installed")
+    except Exception as _sentry_exc:  # never let telemetry break the agent
+        logger.error("Agent Sentry init failed: %s", _sentry_exc)
+
+
+# ---------------------------------------------------------------------------
 # Sarvam TTS with extended WebSocket receive timeout
 # ---------------------------------------------------------------------------
 # The default APIConnectOptions.timeout is 10 s.  For mixed Hindi/English

@@ -1,21 +1,20 @@
-// lib/auth/guards.tsx — declarative auth + role guards for portal pages.
-"use client";
+﻿// lib/auth/guards.tsx
+'use client';
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { isLoggedIn, getCurrentUser } from "./index";
-import { LOGIN_PATHS, DASHBOARD_PATHS } from "./roles";
-import type { AuthType } from "./roles";
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { isLoggedIn, getCurrentUser } from './index';
+import { LOGIN_PATHS, DASHBOARD_PATHS } from './roles';
+import type { AuthType } from './roles';
 
 interface GuardProps {
   children: React.ReactNode;
   type: AuthType;
-  // Optional: restrict to a specific role within a portal (e.g. only
-  // 'supervisor' on a supervisor-only page).
+  // Optional: restrict to specific roles within a portal
   requiredRole?: string;
 }
 
-// ── AuthGuard — redirects to login if not authenticated ──
+// ── Auth Guard — redirects to login if not authenticated ──
 
 export function AuthGuard({ children, type, requiredRole }: GuardProps) {
   const router = useRouter();
@@ -30,6 +29,7 @@ export function AuthGuard({ children, type, requiredRole }: GuardProps) {
     if (requiredRole) {
       const user = getCurrentUser(type);
       if (!user || user.role !== requiredRole) {
+        // Logged in but wrong role — send to their dashboard
         router.replace(DASHBOARD_PATHS[type]);
         return;
       }
@@ -38,12 +38,12 @@ export function AuthGuard({ children, type, requiredRole }: GuardProps) {
     setAuthorized(true);
   }, [router, type, requiredRole]);
 
-  if (!authorized) return null;
+  if (!authorized) return <AuthGuardSkeleton />;
   return <>{children}</>;
 }
 
-// ── GuestGuard — redirects to dashboard if already logged in ──
-// Use on login pages so authenticated users don't see the form.
+// ── Guest Guard — redirects to dashboard if already logged in ──
+// Use this on login pages so logged-in users don't see the login form
 
 export function GuestGuard({
   children,
@@ -67,12 +67,12 @@ export function GuestGuard({
   return <>{children}</>;
 }
 
-// ── HOC variants ──
+// ── HOC variants — wrap a page component ──
 
 export function withAuth<P extends object>(
   Component: React.ComponentType<P>,
   type: AuthType,
-  requiredRole?: string,
+  requiredRole?: string
 ) {
   return function ProtectedPage(props: P) {
     return (
@@ -85,7 +85,7 @@ export function withAuth<P extends object>(
 
 export function withGuest<P extends object>(
   Component: React.ComponentType<P>,
-  type: AuthType,
+  type: AuthType
 ) {
   return function GuestPage(props: P) {
     return (
@@ -94,4 +94,10 @@ export function withGuest<P extends object>(
       </GuestGuard>
     );
   };
+}
+
+// ── Loading skeleton shown while guard is checking ──
+
+function AuthGuardSkeleton() {
+  return null;
 }

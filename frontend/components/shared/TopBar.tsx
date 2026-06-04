@@ -15,7 +15,7 @@ import { ConnectionDot } from "./ConnectionDot";
  */
 export function TopBar({ title }: { title?: string }) {
   const pathname = usePathname();
-  const crumbs = derivedCrumbs(pathname || "/ops");
+  const crumbs = derivedCrumbs(pathname || "/admin/dashboard");
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card/80 px-8 backdrop-blur-md">
@@ -77,12 +77,12 @@ export function TopBar({ title }: { title?: string }) {
 
 function derivedCrumbs(pathname: string): { href: string; label: string }[] {
   const parts = pathname.split("/").filter(Boolean);
-  // /ops → ["ops"] → "Admin › Dashboard"
-  // /ops/live → ["ops","live"] → "Admin › Live Calls"
-  if (parts[0] === "ops") {
-    const root = { href: "/ops", label: "Admin" };
-    if (parts.length === 1) return [root, { href: "/ops", label: "Dashboard" }];
+  // /admin/dashboard → ["admin","dashboard"] → "Admin › Dashboard"
+  // /admin/live → ["admin","live"] → "Admin › Live Calls"
+  if (parts[0] === "admin") {
+    const root = { href: "/admin/dashboard", label: "Admin" };
     const last = parts[parts.length - 1];
+    if (parts.length === 1 || last === "admin") return [root, { href: "/admin/dashboard", label: "Dashboard" }];
     return [root, { href: pathname, label: prettify(last) }];
   }
   // Fallback for any other route — Title Case each segment

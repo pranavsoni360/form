@@ -1,119 +1,189 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Banknote, Loader2, Lock, User } from "lucide-react";
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Users, User, Lock, Banknote, FileCheck, TrendingUp } from 'lucide-react';
 
-import { vendorLogin } from "@/lib/api/vendor";
-import { setAccessToken, setCurrentUser } from "@/lib/auth";
+import { vendorLogin } from '@/lib/api/vendor';
+import { setAccessToken, setCurrentUser } from '@/lib/auth';
+import { GuestGuard } from '@/lib/auth/guards';
 
-// useSearchParams forces client-side bail-out — Next.js requires a Suspense
-// boundary so the rest of the route group can still pre-render.
-export default function VendorLoginPage() {
-  return (
-    <React.Suspense fallback={<div className="min-h-screen grid place-items-center text-slate-500">Loading…</div>}>
-      <VendorLoginForm />
-    </React.Suspense>
-  );
-}
+import Input       from '@/components/ui/Input';
+import ThemeToggle from '@/components/shared/ThemeToggle';
 
 function VendorLoginForm() {
   const router = useRouter();
-  const params = useSearchParams();
-  const redirectTo = params.get("redirect") || "/vendor/dashboard";
 
-  const [username, setUsername] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState("");
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
 
-  async function onSubmit(e: React.FormEvent) {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
+    setError('');
     try {
-      const resp = await vendorLogin(username, password);
-      setAccessToken("vendor", resp.token);
-      setCurrentUser("vendor", resp.user);
-      router.replace(redirectTo);
+      const response = await vendorLogin(username, password);
+      setAccessToken('vendor', response.token);
+      setCurrentUser('vendor', response.user);
+      router.replace('/vendor/dashboard');
     } catch (err: any) {
-      setError(err?.message || "Login failed — please check your credentials");
+      setError(err.message || 'Login failed. Please check your credentials.');
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-slate-50 to-teal-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 grid place-items-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-gray-800 dark:bg-gray-900">
-        <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-600 text-white shadow-lg">
-            <Banknote className="h-7 w-7" />
+    <div className="min-h-screen flex auth-bg">
+
+      {/* Left — brand panel */}
+      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 relative overflow-hidden"
+        style={{ background: 'linear-gradient(135deg, #064E3B 0%, #065F46 50%, #047857 100%)' }}>
+
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute -top-32 -right-32 w-96 h-96 rounded-full opacity-10"
+            style={{ background: 'radial-gradient(circle, #34D399, transparent)' }} />
+          <div className="absolute -bottom-32 -left-32 w-80 h-80 rounded-full opacity-10"
+            style={{ background: 'radial-gradient(circle, #059669, transparent)' }} />
+          <svg className="absolute inset-0 w-full h-full opacity-5" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="grid3" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#grid3)" />
+          </svg>
+        </div>
+
+        <div className="relative z-10">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+              style={{ background: 'rgba(255,255,255,0.12)' }}>
+              <span className="text-white font-bold text-sm" style={{ fontFamily: 'Plus Jakarta Sans' }}>VV</span>
+            </div>
+            <span className="text-white font-bold text-lg" style={{ fontFamily: 'Plus Jakarta Sans' }}>VirtualVaani</span>
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-gray-100">
-            Vendor Portal
+          <p className="text-white/50 text-sm">Vendor & NBFC Portal</p>
+        </div>
+
+        <div className="relative z-10">
+          <h1 className="text-4xl font-bold text-white leading-tight mb-4"
+            style={{ fontFamily: 'Plus Jakarta Sans' }}>
+            Disburse loans<br />
+            and grow your<br />
+            <span style={{ color: '#34D399' }}>lending portfolio.</span>
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-gray-400">
-            NBFC partner disbursement workflow
+          <p className="text-white/60 text-base leading-relaxed max-w-sm">
+            Access pre-approved loan applications, manage disbursements,
+            and track settlements — all in one platform.
           </p>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-gray-300">
-              Username
-            </label>
-            <div className="relative">
-              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                required
-                autoFocus
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="vendor username"
-                className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none ring-emerald-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-              />
+        <div className="relative z-10 space-y-3">
+          {[
+            { icon: FileCheck,   text: 'Access pre-approved loan applications' },
+            { icon: Banknote,    text: 'One-click disbursement workflow' },
+            { icon: TrendingUp,  text: 'Track settlements and portfolio performance' },
+          ].map(item => (
+            <div key={item.text} className="flex items-center gap-3">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(255,255,255,0.08)' }}>
+                <item.icon className="w-3.5 h-3.5 text-white/70" />
+              </div>
+              <p className="text-white/60 text-sm">{item.text}</p>
             </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right — login */}
+      <div className="flex-1 flex flex-col items-center justify-center p-8 relative">
+        <div className="absolute top-6 right-6">
+          <ThemeToggle />
+        </div>
+
+        <div className="w-full max-w-sm animate-fade-in">
+
+          <div className="flex items-center gap-2 mb-8 lg:hidden">
+            <div className="w-8 h-8 rounded-lg brand-gradient flex items-center justify-center">
+              <span className="text-white font-bold text-xs">VV</span>
+            </div>
+            <span className="font-bold text-base" style={{ fontFamily: 'Plus Jakarta Sans', color: 'var(--text-primary)' }}>
+              VirtualVaani
+            </span>
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-gray-300">
-              Password
-            </label>
-            <div className="relative">
-              <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none ring-emerald-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-              />
+          <div className="mb-8">
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-5"
+              style={{ background: 'rgba(5,150,105,0.1)', border: '1px solid rgba(5,150,105,0.2)' }}>
+              <Users className="w-6 h-6" style={{ color: '#059669' }} />
             </div>
+            <h2 className="text-2xl font-bold mb-1"
+              style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+              Vendor Portal
+            </h2>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              NBFC & lender access
+            </p>
           </div>
 
-          {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-              {error}
-            </div>
-          )}
+          <form onSubmit={handleLogin} className="space-y-4">
+            <Input
+              label="Username"
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="Enter your username"
+              leftIcon={<User className="w-4 h-4" />}
+              required
+            />
+            <Input
+              label="Password"
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••"
+              leftIcon={<Lock className="w-4 h-4" />}
+              required
+            />
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Sign in
-          </button>
-        </form>
+            {error && (
+              <div className="p-3 rounded-xl text-sm"
+                style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', color: '#DC2626' }}>
+                {error}
+              </div>
+            )}
 
-        <p className="mt-6 text-center text-xs text-slate-500 dark:text-gray-500">
-          Need access? Contact your bank's admin to create your account.
-        </p>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-all duration-200 mt-2 disabled:opacity-50"
+              style={{
+                background: 'linear-gradient(135deg, #064E3B 0%, #059669 100%)',
+                boxShadow: '0 2px 8px rgba(5,150,105,0.3)',
+              }}
+              onMouseEnter={e => !loading && (e.currentTarget.style.transform = 'translateY(-1px)')}
+              onMouseLeave={e => (e.currentTarget.style.transform = 'translateY(0)')}
+            >
+              {loading ? 'Signing in...' : 'Sign in to Vendor Portal'}
+            </button>
+          </form>
+
+          <p className="text-xs text-center mt-8" style={{ color: 'var(--text-muted)' }}>
+            Contact your administrator for access
+          </p>
+        </div>
       </div>
     </div>
+  );
+}
+
+export default function VendorLoginPage() {
+  return (
+    <GuestGuard type="vendor">
+      <VendorLoginForm />
+    </GuestGuard>
   );
 }

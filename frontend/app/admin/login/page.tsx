@@ -39,20 +39,12 @@ function AdminLoginInner() {
 
   /** Allow-list of post-login destinations to defeat open-redirect abuse. */
   const safeRedirect = (raw: string | null): string => {
-    if (!raw) return '/ops';
+    if (!raw) return '/admin/dashboard';
     // Must start with / (relative path), must not be // (protocol-relative),
     // must point to a known section of the app.
-    if (!raw.startsWith('/') || raw.startsWith('//')) return '/ops';
-    if (
-      raw === '/ops' ||
-      raw.startsWith('/ops/') ||
-      raw === '/admin/dashboard' ||
-      raw.startsWith('/admin/banks') ||
-      raw.startsWith('/admin/applications')
-    ) {
-      return raw;
-    }
-    return '/ops';
+    if (!raw.startsWith('/') || raw.startsWith('//')) return '/admin/dashboard';
+    if (raw.startsWith('/admin/')) return raw;
+    return '/admin/dashboard';
   };
 
   const handleLogin = async (e: React.FormEvent) => {

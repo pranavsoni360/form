@@ -2,50 +2,218 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_URL, formatDate, formatDateTime } from '@/lib/api';
-import { getAccessToken, getCurrentUser } from '@/lib/auth';
-import { ArrowLeft, Phone, PhoneOff, Clock, ChevronRight, Search, Filter, Loader2, Building2 } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
+import {
+  Phone, Search, ChevronRight, X,
+  Clock, Mic, Globe, TrendingUp,
+} from 'lucide-react';
+
+import { API_URL } from '@/lib/api/index';
+import { getAccessToken } from '@/lib/auth';
+
+import EmptyState        from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/skeleton';
 
 interface Call {
-  _id: string;
-  customer_name: string;
-  phone: string;
-  status: string;
-  call_duration?: number;
-  language?: string;
-  loan_type?: string;
-  loan_amount?: number;
-  created_at?: string;
-  ended_at?: string;
-  interested?: boolean;
-  form_sent?: boolean;
+  _id:             string;
+  customer_name:   string;
+  phone:           string;
+  status:          string;
+  call_duration?:  number;
+  language?:       string;
+  interested?:     boolean;
+  created_at?:     string;
+  transcript?:     string;
+  summary?:        string;
+  recording_url?:  string;
+  sentiment?:      string;
+  loan_id?:        string;
 }
 
-const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  completed: { label: 'Completed', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
-  in_progress: { label: 'In Progress', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  failed: { label: 'Failed', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-  not_answered: { label: 'Not Answered', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
-  queued: { label: 'Queued', color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
-  Scheduled: { label: '📅 Scheduled', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
+  'Calling':                 { label: 'In Progress',    bg: 'rgba(37,99,235,0.1)',   color: '#2563EB' },
+  'Called':                  { label: 'Called',         bg: 'rgba(5,150,105,0.1)',   color: '#059669' },
+  'Called - Interested':     { label: 'Interested',     bg: 'rgba(5,150,105,0.1)',   color: '#059669' },
+  'Called - Not Interested': { label: 'Not Interested', bg: 'rgba(234,88,12,0.1)',   color: '#EA580C' },
+  'Not Answered':            { label: 'No Answer',      bg: 'rgba(217,119,6,0.1)',   color: '#D97706' },
+  'Call Not Connected':      { label: 'Not Connected',  bg: 'rgba(217,119,6,0.1)',   color: '#D97706' },
+  'Failed':                  { label: 'Failed',         bg: 'rgba(220,38,38,0.1)',   color: '#DC2626' },
+  'Pending':                 { label: 'Pending',        bg: 'rgba(100,116,139,0.1)', color: '#64748B' },
 };
+
+const FILTERS = ['all', 'Called - Interested', 'Called - Not Interested', 'Not Answered', 'Failed', 'Pending'];
+
+function formatCallDate(raw?: string): string {
+  if (!raw) return '—';
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return '—';
+    if (d.getFullYear() < 2020 || d.getFullYear() > 2030) return '—';
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      + ', ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  } catch {
+    return '—';
+  }
+}
+
+function fmtDuration(s?: number): string {
+  if (!s) return '—';
+  const m = Math.floor(s / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return `${m}:${sec}`;
+}
+
+function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void }) {
+  const st = STATUS_CONFIG[call.status] || { label: call.status, bg: 'rgba(100,116,139,0.1)', color: '#64748B' };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }} onClick={onClose} />
+      <div className="relative w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl overflow-hidden animate-scale-in"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-lg)' }}>
+
+        {/* Header */}
+        <div className="flex items-start justify-between px-5 py-4 flex-shrink-0"
+          style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+              style={{ background: 'rgba(37,99,235,0.08)', color: '#2563EB', fontFamily: 'Plus Jakarta Sans' }}>
+              {call.customer_name?.charAt(0)?.toUpperCase() || '?'}
+            </div>
+            <div>
+              <p className="text-sm font-bold"
+                style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                {call.customer_name || 'Unknown'}
+              </p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{call.phone}</p>
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="p-1.5 rounded-xl transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+          {/* Meta grid */}
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { icon: Phone, label: 'Status', value: <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: st.bg, color: st.color }}>{st.label}</span> },
+              { icon: Clock, label: 'Duration', value: fmtDuration(call.call_duration) },
+              { icon: Globe, label: 'Language', value: call.language || '—' },
+              { icon: TrendingUp, label: 'Interest', value: call.interested === true ? '✓ Interested' : call.interested === false ? '✗ Not interested' : '—' },
+            ].map(item => (
+              <div key={item.label} className="rounded-xl p-3"
+                style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <item.icon className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.label}</span>
+                </div>
+                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {item.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Date */}
+          <div className="rounded-xl px-4 py-3 flex items-center justify-between"
+            style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Call date</span>
+            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              {formatCallDate(call.created_at)}
+            </span>
+          </div>
+
+          {/* Summary */}
+          {call.summary && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2"
+                style={{ color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+                AI Summary
+              </p>
+              <div className="rounded-xl p-4"
+                style={{ background: 'rgba(124,58,237,0.04)', border: '1px solid rgba(124,58,237,0.15)' }}>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                  {call.summary}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Transcript */}
+          {call.transcript && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2"
+                style={{ color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+                Transcript
+              </p>
+              <div className="rounded-xl p-4 max-h-48 overflow-y-auto"
+                style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+                <pre className="text-xs leading-relaxed whitespace-pre-wrap"
+                  style={{ color: 'var(--text-secondary)', fontFamily: 'DM Sans' }}>
+                  {call.transcript}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* Recording */}
+          {call.recording_url && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2"
+                style={{ color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+                Recording
+              </p>
+              <div className="rounded-xl p-3"
+                style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+                <audio controls className="w-full" src={`${API_URL}${call.recording_url}`} />
+              </div>
+            </div>
+          )}
+
+          {/* No extra data fallback */}
+          {!call.summary && !call.transcript && !call.recording_url && (
+            <div className="rounded-xl p-4 text-center"
+              style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+              <Mic className="w-6 h-6 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Transcript and recording will be available once the voice agent is active.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function CallsPage() {
   const router = useRouter();
-  const [calls, setCalls] = useState<Call[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+
+  const [calls, setCalls]               = useState<Call[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [token, setToken] = useState('');
+  const [token, setToken]               = useState('');
+  const [selectedCall, setSelectedCall] = useState<Call | null>(null);
 
   useEffect(() => {
     const t = getAccessToken('bank');
-    if (!t) { router.push('/bank/login'); return; }
+    if (!t) { router.replace('/bank/login'); return; }
     setToken(t);
   }, []);
 
-  useEffect(() => { if (token) fetchCalls(); }, [token, statusFilter]);
+  useEffect(() => {
+    if (!token) return;
+    fetchCalls();
+  }, [token, statusFilter]);
 
   const fetchCalls = async () => {
     setLoading(true);
@@ -53,11 +221,16 @@ export default function CallsPage() {
       const params = new URLSearchParams();
       if (statusFilter !== 'all') params.set('status', statusFilter);
       const res = await fetch(`${API_URL}/api/agent/calls?${params}`, {
-        headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       const data = await res.json();
       setCalls(data.calls || []);
-    } catch { } finally { setLoading(false); }
+    } catch {
+      // silently fail
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filtered = calls.filter(c => {
@@ -67,99 +240,171 @@ export default function CallsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
-      <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/bank/dashboard')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-              <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-            </button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Call Logs</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{calls.length} calls total</p>
-            </div>
-          </div>
-          <ThemeToggle />
-        </div>
+    <div className="space-y-6 animate-fade-in">
+
+      {/* Heading */}
+      <div>
+        <h2 className="text-2xl font-bold"
+          style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+          Call Logs
+        </h2>
+        <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+          {calls.length} call{calls.length !== 1 ? 's' : ''} total
+        </p>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
-        {/* Search + Filter */}
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or phone..."
-              className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-          </div>
-          <div className="flex gap-2 overflow-x-auto">
-            {['all', 'completed', 'in_progress', 'failed', 'not_answered'].map(s => (
+      {/* Search + filters */}
+      <div className="rounded-2xl p-4 space-y-3"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
+            style={{ color: 'var(--text-muted)' }} />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name or phone..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
+            style={{
+              background: 'var(--bg-subtle)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-primary)',
+            }}
+            onFocus={e => e.target.style.borderColor = '#1A1A2E'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'}
+          />
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+          {FILTERS.map(s => {
+            const cfg = STATUS_CONFIG[s];
+            return (
               <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                  statusFilter === s ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-dark-section text-gray-700 dark:text-gray-300'
-                }`}>
-                {s === 'all' ? 'All' : STATUS_MAP[s]?.label || s}
+                className="px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all flex-shrink-0"
+                style={statusFilter === s
+                  ? { background: '#1A1A2E', color: '#fff' }
+                  : { background: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>
+                {s === 'all' ? 'All' : cfg?.label || s}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
-
-        {/* Calls Table */}
-        {loading ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl p-12 text-center">
-            <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-3" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">Loading calls...</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl p-12 text-center">
-            <Phone className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">No calls found</p>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700/50">
-              <thead className="bg-gray-50 dark:bg-dark-section">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Customer</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Duration</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Language</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Interest</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {filtered.map(call => {
-                  const st = STATUS_MAP[call.status] || { label: call.status, color: 'bg-gray-100 text-gray-700' };
-                  return (
-                    <tr key={call._id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition"
-                      onClick={() => router.push(`/bank/calls/${call._id}`)}>
-                      <td className="px-4 py-3">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">{call.customer_name || 'Unknown'}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">{call.phone}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${st.color}`}>{st.label}</span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
-                        {call.call_duration ? `${Math.floor(call.call_duration / 60)}:${String(call.call_duration % 60).padStart(2, '0')}` : '--'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{call.language || '--'}</td>
-                      <td className="px-4 py-3">
-                        {call.interested === true ? <span className="text-green-600 text-xs font-medium">Interested</span> :
-                         call.interested === false ? <span className="text-red-600 text-xs font-medium">Not Interested</span> :
-                         <span className="text-gray-400 text-xs">--</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(call.created_at || '')}</td>
-                      <td className="px-4 py-3"><ChevronRight className="w-4 h-4 text-gray-400" /></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
+
+      {/* Table */}
+      {loading ? (
+        <SkeletonTable rows={6} />
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <EmptyState
+            title="No calls found"
+            description="No calls match your search or filter."
+            icon={<Phone className="w-10 h-10" />}
+          />
+        </div>
+      ) : (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+
+          {/* Header */}
+          <div className="grid grid-cols-12 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            style={{
+              background: 'var(--bg-subtle)',
+              borderBottom: '1px solid var(--border)',
+              color: 'var(--text-muted)',
+              letterSpacing: '0.07em',
+            }}>
+            <div className="col-span-4">Customer</div>
+            <div className="col-span-2">Status</div>
+            <div className="col-span-1">Duration</div>
+            <div className="col-span-2">Language</div>
+            <div className="col-span-2">Interest</div>
+            <div className="col-span-1">Date</div>
+          </div>
+
+          {/* Rows */}
+          {filtered.map((call, i) => {
+            const st = STATUS_CONFIG[call.status] || { label: call.status, bg: 'rgba(100,116,139,0.1)', color: '#64748B' };
+            return (
+              <div
+                key={call._id}
+                onClick={() => setSelectedCall(call)}
+                className="grid grid-cols-12 px-5 py-4 cursor-pointer transition-colors items-center"
+                style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none' }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+
+                {/* Customer */}
+                <div className="col-span-4 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                    style={{ background: 'rgba(37,99,235,0.08)', color: '#2563EB' }}>
+                    {call.customer_name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate"
+                      style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                      {call.customer_name || 'Unknown'}
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{call.phone}</p>
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div className="col-span-2">
+                  <span className="text-xs font-semibold px-2 py-1 rounded-full"
+                    style={{ background: st.bg, color: st.color }}>
+                    {st.label}
+                  </span>
+                </div>
+
+                {/* Duration */}
+                <div className="col-span-1">
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)', fontFamily: 'JetBrains Mono' }}>
+                    {fmtDuration(call.call_duration)}
+                  </span>
+                </div>
+
+                {/* Language */}
+                <div className="col-span-2">
+                  <span className="text-sm capitalize" style={{ color: 'var(--text-secondary)' }}>
+                    {call.language || '—'}
+                  </span>
+                </div>
+
+                {/* Interest */}
+                <div className="col-span-2">
+                  {call.interested === true ? (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={{ background: 'rgba(5,150,105,0.1)', color: '#059669' }}>
+                      Interested
+                    </span>
+                  ) : call.interested === false ? (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={{ background: 'rgba(234,88,12,0.1)', color: '#EA580C' }}>
+                      Not interested
+                    </span>
+                  ) : (
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>
+                  )}
+                </div>
+
+                {/* Date + arrow */}
+                <div className="col-span-1 flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {formatCallDate(call.created_at)}
+                  </span>
+                  <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Call detail modal */}
+      {selectedCall && (
+        <CallDetailModal call={selectedCall} onClose={() => setSelectedCall(null)} />
+      )}
     </div>
   );
 }

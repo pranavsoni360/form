@@ -1,230 +1,290 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { getBankApplications, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate } from '@/lib/api';
-import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
-import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
+import {
+  FileText, CheckCircle2, XCircle, Clock,
+  ChevronRight, ClipboardCheck, Filter,
+  RefreshCw,
+} from 'lucide-react';
+
+import { getBankApplications } from '@/lib/api/bank';
+import { getAccessToken, getCurrentUser } from '@/lib/auth';
+import { formatCurrency, formatDate } from '@/lib/utils/formatters';
+import { getStatusLabel } from '@/lib/utils/statusConfig';
+
+import DataCard          from '@/components/ui/DataCard';
+import StatusChip        from '@/components/ui/StatusChip';
+import EmptyState        from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/skeleton';
 
 interface Application {
-  id: string;
-  customer_name: string;
-  phone: string;
-  loan_id: string;
-  loan_amount?: number;
-  loan_type?: string;
-  status: string;
-  submitted_at?: string;
-  created_at?: string;
-  system_suggestion?: string;
+  id:                        string;
+  customer_name:             string;
+  phone:                     string;
+  loan_id:                   string;
+  loan_amount?:              number;
+  loan_type?:                string;
+  status:                    string;
+  submitted_at?:             string;
+  created_at?:               string;
+  system_suggestion?:        string;
   system_suggestion_reason?: string;
-  system_score?: number;
-  pan_verified?: boolean;
-  aadhaar_verified?: boolean;
+  system_score?:             number;
+  pan_verified?:             boolean;
+  aadhaar_verified?:         boolean;
 }
 
-const OFFICER_FILTERS = ['all', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
+const OFFICER_FILTERS    = ['all', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
 const SUPERVISOR_FILTERS = ['all', 'officer_approved', 'documents_submitted', 'approved', 'supervisor_rejected'];
 
 export default function BankDashboardPage() {
   const router = useRouter();
+
   const [applications, setApplications] = useState<Application[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
-  const [user, setUser] = useState<any>(null);
-  const [token, setToken] = useState('');
+  const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
+  const [filter, setFilter]             = useState('all');
+  const [user, setUser]                 = useState<any>(null);
+  const [token, setToken]               = useState('');
+  const [lastUpdated, setLastUpdated]   = useState<Date | null>(null);
+  const intervalRef                     = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const t = getAccessToken('bank');
     const u = getCurrentUser('bank');
-    if (!t || !u) { router.push('/bank/login'); return; }
+    if (!t || !u) { router.replace('/bank/login'); return; }
     setToken(t);
     setUser(u);
   }, []);
 
-  useEffect(() => {
+  const fetchApplications = useCallback(async (silent = false) => {
     if (!token) return;
-    fetchApplications();
-  }, [token, filter]);
-
-  const fetchApplications = async () => {
-    setLoading(true);
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
     try {
       const statusFilter = filter === 'all' ? undefined : filter;
       const data = await getBankApplications(token, statusFilter);
       setApplications(data.applications || []);
-    } catch (error: any) {
-      if (error.message?.includes('401') || error.message?.includes('Invalid')) {
-        router.push('/bank/login');
-      }
-    } finally { setLoading(false); }
-  };
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      if (err.message?.includes('401')) router.replace('/bank/login');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token, filter]);
 
-  const handleLogout = () => {
-    authLogout('bank');
-    router.push('/bank/login');
-  };
+  useEffect(() => {
+    if (token) fetchApplications(false);
+  }, [token, filter]);
 
-  const filters = user?.role === 'bank_supervisor' ? SUPERVISOR_FILTERS : OFFICER_FILTERS;
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!token) return;
+    intervalRef.current = setInterval(() => fetchApplications(true), 30000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [token, fetchApplications]);
+
+  const isSupervisor = user?.role === 'bank_supervisor';
+  const accent       = isSupervisor ? '#7C3AED' : '#2563EB';
+  const filters      = isSupervisor ? SUPERVISOR_FILTERS : OFFICER_FILTERS;
 
   const stats = {
-    total: applications.length,
-    pending: applications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
+    total:    applications.length,
+    pending:  applications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
     approved: applications.filter(a => ['officer_approved', 'approved'].includes(a.status)).length,
     rejected: applications.filter(a => a.status.includes('rejected')).length,
   };
 
+  const lastUpdatedLabel = lastUpdated
+    ? `${lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+    : null;
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
-      {/* Header */}
-      <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50 transition-colors">
-        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-blue-600" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-                  {user?.bank_name || 'Bank'} Portal
-                </h1>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {user?.full_name || user?.name} · {user?.role === 'bank_supervisor' ? 'Supervisor' : 'Officer'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 sm:gap-3">
-              <button onClick={() => router.push('/bank/calls')} className="flex items-center gap-1 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-                <Phone className="w-4 h-4" /> <span className="hidden sm:inline">Calls</span>
-              </button>
-              <button onClick={() => router.push('/bank/batch')} className="flex items-center gap-1 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-                <Upload className="w-4 h-4" /> <span className="hidden sm:inline">Batch</span>
-              </button>
-              <ThemeToggle />
-              <button onClick={handleLogout} className="flex items-center gap-1 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition">
-                <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Logout</span>
-              </button>
-            </div>
+    <div className="space-y-6 animate-fade-in">
+
+      {/* Page heading */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold"
+            style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+            {user?.bank_name || 'Bank'} Dashboard
+          </h2>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {isSupervisor ? 'Supervisor view' : 'Officer view'} · {applications.length} applications
+            </p>
+            {lastUpdatedLabel && (
+              <>
+                <span style={{ color: 'var(--border-strong)' }}>·</span>
+                <span className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                  {refreshing
+                    ? <RefreshCw className="w-3 h-3 animate-spin" />
+                    : <RefreshCw className="w-3 h-3" />}
+                  {refreshing ? 'Refreshing...' : `Updated ${lastUpdatedLabel}`}
+                </span>
+              </>
+            )}
           </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+            style={{ background: `${accent}12`, color: accent, border: `1px solid ${accent}25` }}>
+            {isSupervisor ? 'Supervisor' : 'Officer'}
+          </div>
+          <button
+            onClick={() => fetchApplications(false)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all"
+            style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--border)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-subtle)'}>
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
-        {/* Stats Row */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          {[
-            { label: 'Total', value: stats.total, icon: FileText, color: 'text-blue-500' },
-            { label: 'Pending', value: stats.pending, icon: Clock, color: 'text-yellow-500' },
-            { label: 'Approved', value: stats.approved, icon: CheckCircle2, color: 'text-green-500' },
-            { label: 'Rejected', value: stats.rejected, icon: XCircle, color: 'text-red-500' },
-          ].map(s => (
-            <div key={s.label} className="bg-white dark:bg-dark-card rounded-xl p-4 shadow-sm dark:shadow-gray-900/30">
-              <div className="flex items-center gap-2 mb-1">
-                <s.icon className={`w-4 h-4 ${s.color}`} />
-                <span className="text-xs text-gray-500 dark:text-gray-400">{s.label}</span>
-              </div>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{s.value}</p>
-            </div>
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <DataCard title="Total applications" value={stats.total}
+          icon={<FileText className="w-5 h-5" />} accent="blue" />
+        <DataCard title="Pending review" value={stats.pending}
+          icon={<Clock className="w-5 h-5" />} accent="orange" />
+        <DataCard title="Approved" value={stats.approved}
+          icon={<CheckCircle2 className="w-5 h-5" />} accent="green" />
+        <DataCard title="Rejected" value={stats.rejected}
+          icon={<XCircle className="w-5 h-5" />} accent="red" />
+      </div>
+
+      {/* Table card */}
+      <div className="rounded-2xl overflow-hidden"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+
+        {/* Filters */}
+        <div className="px-5 py-4 flex items-center gap-2 overflow-x-auto"
+          style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
+          <Filter className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+          {filters.map(status => (
+            <button
+              key={status}
+              onClick={() => setFilter(status)}
+              className="px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all flex-shrink-0"
+              style={filter === status
+                ? { background: accent, color: '#fff' }
+                : { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+              {status === 'all' ? 'All' : getStatusLabel(status)}
+            </button>
           ))}
         </div>
 
-        {/* Filters */}
-        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm dark:shadow-gray-900/30 p-3 mb-4">
-          <div className="flex items-center gap-2 overflow-x-auto">
-            <Filter className="w-4 h-4 text-gray-400 flex-shrink-0" />
-            {filters.map((status) => (
-              <button key={status} onClick={() => setFilter(status)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                  filter === status
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 dark:bg-dark-section text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                }`}>
-                {STATUS_LABELS[status] || 'All'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Quick link to the full applications index — added for multi-bank
-            rollout so bank users can paginate / search the whole queue
-            instead of only seeing what fits in this inline table. */}
-        <div className="flex justify-end -mt-2 mb-2">
-          <button
-            onClick={() => router.push('/bank/applications')}
-            className="text-xs font-medium text-blue-600 hover:underline"
-          >
-            View all applications →
-          </button>
-        </div>
-
-        {/* Applications Table */}
+        {/* Table */}
         {loading ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">Loading...</p>
-          </div>
+          <SkeletonTable rows={6} />
         ) : applications.length === 0 ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
-            <FileText className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">No applications found</p>
-          </div>
+          <EmptyState
+            title="No applications found"
+            description="No applications match the selected filter."
+            icon={<FileText className="w-10 h-10" />}
+          />
         ) : (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm dark:shadow-gray-900/30 overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700/50">
-              <thead className="bg-gray-50 dark:bg-dark-section">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Customer</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Loan ID</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Amount</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Suggestion</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">KYC</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
-                  <th className="px-4 py-3"></th>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['Customer', 'Loan ID', 'Amount', 'Status', 'AI', 'KYC', 'Date', ''].map(h => (
+                    <th key={h} className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--text-muted)', letterSpacing: '0.07em', whiteSpace: 'nowrap' }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {applications.map((app) => (
-                  <tr key={app.id} onClick={() => router.push(`/bank/applications/${app.id}`)}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition">
-                    <td className="px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">{app.customer_name}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">{app.phone}</div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{app.loan_id}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{app.loan_type || '—'}</td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
-                      {app.loan_amount ? formatCurrency(app.loan_amount) : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_COLORS[app.status] || ''}`}>
-                        {STATUS_LABELS[app.status] || app.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {app.system_suggestion ? (
-                        <div className="flex items-center gap-1">
-                          <ClipboardCheck className="w-3.5 h-3.5 text-purple-500" />
-                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${SUGGESTION_COLORS[app.system_suggestion] || ''}`}>
-                            {app.system_suggestion.charAt(0).toUpperCase() + app.system_suggestion.slice(1)}
-                          </span>
+              <tbody>
+                {applications.map((row, i) => (
+                  <tr
+                    key={row.id}
+                    onClick={() => router.push(`/bank/applications/${row.id}`)}
+                    className="cursor-pointer transition-colors"
+                    style={{ borderBottom: i < applications.length - 1 ? '1px solid var(--border)' : 'none' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+
+                    {/* Customer */}
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{ background: `${accent}12`, color: accent }}>
+                          {row.customer_name?.charAt(0)?.toUpperCase() || '?'}
                         </div>
-                      ) : <span className="text-xs text-gray-400">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        {app.pan_verified && <span title="PAN Verified"><CheckCircle2 className="w-3.5 h-3.5 text-green-500" /></span>}
-                        {app.aadhaar_verified && <span title="Aadhaar Verified"><CheckCircle2 className="w-3.5 h-3.5 text-green-500" /></span>}
-                        {!app.pan_verified && !app.aadhaar_verified && <span className="text-xs text-gray-400">—</span>}
+                        <div>
+                          <p className="text-sm font-semibold"
+                            style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                            {row.customer_name}
+                          </p>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{row.phone}</p>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
-                      {formatDate(app.submitted_at || app.created_at || '')}
+
+                    {/* Loan ID */}
+                    <td className="px-5 py-4">
+                      <span className="text-xs font-medium px-2 py-1 rounded-lg"
+                        style={{ background: 'var(--bg-subtle)', color: 'var(--text-secondary)', fontFamily: 'JetBrains Mono' }}>
+                        {row.loan_id}
+                      </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <ChevronRight className="w-4 h-4 text-gray-400" />
+
+                    {/* Amount */}
+                    <td className="px-5 py-4">
+                      <span className="text-sm font-semibold"
+                        style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                        {row.loan_amount ? formatCurrency(row.loan_amount) : '—'}
+                      </span>
+                    </td>
+
+                    {/* Status */}
+                    <td className="px-5 py-4">
+                      <StatusChip status={row.status} size="sm" />
+                    </td>
+
+                    {/* AI */}
+                    <td className="px-5 py-4">
+                      {row.system_suggestion ? (
+                        <div className="flex items-center gap-1.5">
+                          <ClipboardCheck className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#7C3AED' }} />
+                          <StatusChip status={row.system_suggestion} type="suggestion" size="sm" />
+                        </div>
+                      ) : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>}
+                    </td>
+
+                    {/* KYC */}
+                    <td className="px-5 py-4">
+                      <div className="flex gap-1 items-center">
+                        {row.pan_verified && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(5,150,105,0.1)', color: '#059669' }}>PAN</span>
+                        )}
+                        {row.aadhaar_verified && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(5,150,105,0.1)', color: '#059669' }}>ADH</span>
+                        )}
+                        {!row.pan_verified && !row.aadhaar_verified && (
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Date */}
+                    <td className="px-5 py-4">
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {formatDate(row.submitted_at || row.created_at || '')}
+                      </span>
+                    </td>
+
+                    {/* Arrow */}
+                    <td className="px-5 py-4">
+                      <ChevronRight className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
                     </td>
                   </tr>
                 ))}

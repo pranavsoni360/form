@@ -1,55 +1,32 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { LayoutDashboard, FileText, Banknote } from 'lucide-react';
+import Sidebar, { type NavItem } from '@/components/shared/Sidebar';
+import TopNav from '@/components/shared/TopNav';
+import { AuthGuard } from '@/components/shared/AuthGuard';
+import { usePathname } from 'next/navigation';
 
-import { getAccessToken } from "@/lib/auth";
+const NAV_ITEMS: NavItem[] = [
+  { label: 'Dashboard',    href: '/vendor/dashboard',    icon: <LayoutDashboard className="w-5 h-5" /> },
+  { label: 'Applications', href: '/vendor/applications', icon: <FileText className="w-5 h-5" /> },
+  { label: 'Settlements',  href: '/vendor/settlements',  icon: <Banknote className="w-5 h-5" /> },
+];
 
-/**
- * /vendor/* route gate.
- *
- * Login page (/vendor/login) is exempt — it sets the token. Every other path
- * requires a valid los_vendor_token; otherwise we bounce to /vendor/login
- * with ?redirect=<original-path> so the user lands where they tried to go.
- */
 export default function VendorLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const pathname = usePathname();
-  const isLogin = pathname === "/vendor/login";
+  const isLogin  = pathname === '/vendor/login';
 
-  // Login route is public — render immediately, no gate. Avoids the SSR
-  // "Verifying…" flash before useEffect runs.
   if (isLogin) return <>{children}</>;
 
-  return <VendorAuthGate router={router} pathname={pathname}>{children}</VendorAuthGate>;
-}
-
-function VendorAuthGate({
-  router, pathname, children,
-}: {
-  router: ReturnType<typeof useRouter>;
-  pathname: string | null;
-  children: React.ReactNode;
-}) {
-  const [ready, setReady] = React.useState(false);
-
-  React.useEffect(() => {
-    const token = getAccessToken("vendor");
-    if (!token) {
-      const dest = pathname || "/vendor/dashboard";
-      router.replace(`/vendor/login?redirect=${encodeURIComponent(dest)}`);
-      return;
-    }
-    setReady(true);
-  }, [router, pathname]);
-
-  if (!ready) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-slate-50 text-slate-500">
-        <div className="text-sm">Verifying vendor session…</div>
+  return (
+    <AuthGuard type="vendor">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex">
+        <Sidebar items={NAV_ITEMS} portalName="Vendor Portal" portalColor="bg-emerald-600" authType="vendor" />
+        <div className="flex-1 ml-60 flex flex-col min-h-screen">
+          <TopNav authType="vendor" />
+          <main className="flex-1 p-6 overflow-auto">{children}</main>
+        </div>
       </div>
-    );
-  }
-
-  return <>{children}</>;
+    </AuthGuard>
+  );
 }

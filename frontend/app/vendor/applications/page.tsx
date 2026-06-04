@@ -1,112 +1,148 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { Filter } from "lucide-react";
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { FileText, ChevronRight, Filter } from 'lucide-react';
 
-import { VendorShell } from "@/components/vendor/VendorShell";
-import { VendorStatusBadge } from "@/components/vendor/StatusBadge";
-import {
-  getVendorApplications,
-  type VendorAssignmentStatus,
-} from "@/lib/api/vendor";
-import { getAccessToken } from "@/lib/auth";
+import { getVendorApplications } from '@/lib/api/vendor';
+import { getAccessToken } from '@/lib/auth';
+import { formatCurrency, formatDate } from '@/lib/utils/formatters';
+import { getStatusLabel } from '@/lib/utils/statusConfig';
 
-const FILTERS: { value: VendorAssignmentStatus | "all"; label: string }[] = [
-  { value: "all",             label: "All" },
-  { value: "pending",         label: "Pending" },
-  { value: "accepted",        label: "Accepted" },
-  { value: "disbursed",       label: "Disbursed" },
-  { value: "vendor_rejected", label: "Rejected" },
-  { value: "withdrawn",       label: "Withdrawn" },
-];
+import StatusChip        from '@/components/ui/StatusChip';
+import EmptyState        from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/skeleton';
 
-function fmtINR(n?: number | null) {
-  if (n == null) return "—";
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-}
+const FILTERS = ['all', 'approved', 'disbursed', 'rejected'];
 
 export default function VendorApplicationsPage() {
-  const token = React.useMemo(() => getAccessToken("vendor") || "", []);
-  const [filter, setFilter] = React.useState<(typeof FILTERS)[number]["value"]>("all");
+  const router = useRouter();
 
-  const q = useQuery({
-    queryKey: ["vendor", "apps", filter],
-    queryFn: () =>
-      getVendorApplications(token, filter === "all" ? undefined : (filter as VendorAssignmentStatus)),
-    refetchInterval: 15_000,
-  });
+  const [applications, setApplications] = useState<any[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [filter, setFilter]             = useState('all');
+  const [token, setToken]               = useState('');
 
-  const apps: any[] = q.data?.applications ?? [];
+  useEffect(() => {
+    const t = getAccessToken('vendor');
+    if (!t) { router.replace('/vendor/login'); return; }
+    setToken(t);
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    setLoading(true);
+    const status = filter === 'all' ? undefined : filter;
+    getVendorApplications(token, status)
+      .then(data => setApplications(data.applications || []))
+      .catch(err => { if (err.message?.includes('401')) router.replace('/vendor/login'); })
+      .finally(() => setLoading(false));
+  }, [token, filter]);
 
   return (
-    <VendorShell title="Applications" subtitle="Loan applications assigned to your vendor account">
-      {/* Filter pills */}
-      <div className="mb-4 flex items-center gap-2 overflow-x-auto">
-        <Filter className="h-4 w-4 shrink-0 text-slate-400" />
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-              filter === f.value
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+    <div className="space-y-6 animate-fade-in">
+
+      {/* Heading */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold"
+            style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+            Applications
+          </h2>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+            {applications.length} application{applications.length !== 1 ? 's' : ''} assigned to you
+          </p>
+        </div>
+        <div className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+          style={{ background: 'rgba(5,150,105,0.08)', color: '#059669', border: '1px solid rgba(5,150,105,0.2)' }}>
+          {applications.length} total
+        </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-        {q.isLoading ? (
-          <div className="py-12 text-center text-sm text-slate-500">Loading…</div>
-        ) : apps.length === 0 ? (
-          <div className="py-16 text-center text-sm text-slate-500">
-            <div className="font-medium">No applications {filter !== "all" ? `with status "${filter}"` : "yet"}.</div>
-            <div className="mt-1 text-xs">When a bank assigns a loan to your vendor, it'll appear here.</div>
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 dark:bg-gray-800/50">
-              <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                <th className="px-5 py-3 font-medium">Applicant</th>
-                <th className="px-5 py-3 font-medium">Bank</th>
-                <th className="px-5 py-3 font-medium">Loan ID</th>
-                <th className="px-5 py-3 font-medium text-right">Requested</th>
-                <th className="px-5 py-3 font-medium text-right">Disbursed</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Assigned</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-gray-800">
-              {apps.map((a) => (
-                <tr key={a.id} className="transition hover:bg-slate-50 dark:hover:bg-gray-800/40">
-                  <td className="px-5 py-3">
-                    <Link
-                      href={`/vendor/applications/${a.application_id}`}
-                      className="font-medium text-slate-900 hover:text-emerald-700 dark:text-gray-100"
-                    >
-                      {a.customer_name || "—"}
-                    </Link>
-                    <div className="text-xs text-slate-500">{a.phone || ""}</div>
-                  </td>
-                  <td className="px-5 py-3 text-slate-700 dark:text-gray-300">{a.bank_name || "—"}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-slate-500">{a.loan_id || "—"}</td>
-                  <td className="px-5 py-3 text-right font-medium">{fmtINR(a.requested_loan_amount)}</td>
-                  <td className="px-5 py-3 text-right text-emerald-700">{fmtINR(a.disbursed_amount)}</td>
-                  <td className="px-5 py-3"><VendorStatusBadge status={a.status} /></td>
-                  <td className="px-5 py-3 text-xs text-slate-500">
-                    {a.assigned_at ? new Date(a.assigned_at).toLocaleString() : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      {/* Filters */}
+      <div className="rounded-2xl p-4"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-2 overflow-x-auto">
+          <Filter className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+          {FILTERS.map(s => (
+            <button key={s} onClick={() => setFilter(s)}
+              className="px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all duration-150 flex-shrink-0"
+              style={filter === s
+                ? { background: '#059669', color: '#fff' }
+                : { background: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>
+              {s === 'all' ? 'All' : getStatusLabel(s)}
+            </button>
+          ))}
+        </div>
       </div>
-    </VendorShell>
+
+      {/* Table */}
+      {loading ? (
+        <SkeletonTable rows={5} />
+      ) : applications.length === 0 ? (
+        <div className="rounded-2xl"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <EmptyState title="No applications found"
+            description="No applications match the selected filter."
+            icon={<FileText className="w-10 h-10" />} />
+        </div>
+      ) : (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+          {/* Header */}
+          <div className="grid grid-cols-12 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', letterSpacing: '0.07em' }}>
+            <div className="col-span-4">Customer</div>
+            <div className="col-span-3">Loan ID</div>
+            <div className="col-span-2">Amount</div>
+            <div className="col-span-2">Status</div>
+            <div className="col-span-1">Date</div>
+          </div>
+          {applications.map((app: any, i) => (
+            <div key={app.id}
+              onClick={() => router.push(`/vendor/applications/${app.id}`)}
+              className="grid grid-cols-12 px-5 py-4 cursor-pointer transition-colors items-center"
+              style={{ borderBottom: i < applications.length - 1 ? '1px solid var(--border)' : 'none' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              <div className="col-span-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                  style={{ background: 'rgba(5,150,105,0.08)', color: '#059669' }}>
+                  {app.customer_name?.charAt(0) || '?'}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold"
+                    style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                    {app.customer_name}
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{app.phone}</p>
+                </div>
+              </div>
+              <div className="col-span-3">
+                <span className="text-xs font-medium px-2 py-1 rounded-lg"
+                  style={{ background: 'var(--bg-subtle)', color: 'var(--text-secondary)', fontFamily: 'JetBrains Mono' }}>
+                  {app.loan_id}
+                </span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-sm font-semibold"
+                  style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                  {app.loan_amount ? formatCurrency(app.loan_amount) : '—'}
+                </span>
+              </div>
+              <div className="col-span-2">
+                <StatusChip status={app.status} size="sm" />
+              </div>
+              <div className="col-span-1 flex items-center justify-between">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {formatDate(app.submitted_at || app.created_at || '')}
+                </span>
+                <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

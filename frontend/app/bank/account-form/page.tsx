@@ -53,7 +53,6 @@ function AccountFormInner() {
         address: data.address || '',
         pan_number: data.pan_number || '',
         aadhar_number: data.aadhar_number || '',
-        // Loan fields (shown only when agent_type !== account_opening)
         loan_type: data.loan_type || '',
         loan_amount: data.loan_amount || '',
         loan_purpose: data.loan_purpose || '',
@@ -107,7 +106,6 @@ function AccountFormInner() {
         address: formData.address,
         pan_number: formData.pan_number,
         aadhar_number: formData.aadhar_number,
-        // Conditional fields
         ...(isAccountOpening
           ? { account_type: formData.account_type, initial_deposit: formData.initial_deposit }
           : { loan_type: formData.loan_type, loan_amount: formData.loan_amount, loan_purpose: formData.loan_purpose }),
@@ -129,7 +127,6 @@ function AccountFormInner() {
     }
   };
 
-  // ─── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
       <div className="text-center">
@@ -139,7 +136,6 @@ function AccountFormInner() {
     </div>
   );
 
-  // ─── Error ─────────────────────────────────────────────────────────────────
   if (error) return (
     <div className="min-h-screen bg-red-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
@@ -150,7 +146,6 @@ function AccountFormInner() {
     </div>
   );
 
-  // ─── Success ───────────────────────────────────────────────────────────────
   if (submitted) return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
@@ -168,7 +163,6 @@ function AccountFormInner() {
     </div>
   );
 
-  // ─── Form ──────────────────────────────────────────────────────────────────
   const title = isAccountOpening ? 'Account Opening Application' : 'Loan Application';
   const bankName = isAccountOpening ? 'Union Bank of India' : 'Pusad Urban Bank';
 
@@ -176,7 +170,6 @@ function AccountFormInner() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-6 px-4">
       <div className="max-w-2xl mx-auto">
 
-        {/* Header */}
         <div className="bg-white rounded-2xl shadow-lg p-5 mb-4">
           <div className="flex items-start gap-3">
             <Building2 className="w-8 h-8 text-blue-600 flex-shrink-0 mt-0.5" />
@@ -195,7 +188,6 @@ function AccountFormInner() {
 
         <div className="bg-white rounded-2xl shadow-lg p-6 space-y-6">
 
-          {/* ── Personal Details ── */}
           <section className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-900 border-b pb-2">Personal Details</h2>
 
@@ -221,7 +213,6 @@ function AccountFormInner() {
             </F>
           </section>
 
-          {/* ── Account / Loan Details (conditional) ── */}
           {isAccountOpening ? (
             <section className="space-y-4">
               <h2 className="text-lg font-semibold text-gray-900 border-b pb-2">Account Details</h2>
@@ -275,7 +266,6 @@ function AccountFormInner() {
             </section>
           )}
 
-          {/* ── Financial & Employment Details ── */}
           <section className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-900 border-b pb-2">Financial & Employment Details</h2>
 
@@ -323,7 +313,6 @@ function AccountFormInner() {
             </div>
           </section>
 
-          {/* ── KYC Details ── */}
           <section className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-900 border-b pb-2">KYC Details</h2>
             <p className="text-xs text-gray-500 flex items-center gap-1">
@@ -342,7 +331,6 @@ function AccountFormInner() {
             </div>
           </section>
 
-          {/* ── Declaration ── */}
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 text-blue-600 rounded" />

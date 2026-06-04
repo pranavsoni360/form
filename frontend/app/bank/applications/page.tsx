@@ -1,237 +1,353 @@
-"use client";
+'use client';
 
-/**
- * /bank/applications — bank's own loan applications list.
- *
- * Multi-bank gap from design-upgrade parity: bank users could open a
- * specific app via /bank/applications/[id] (link from dashboard recent
- * list) but had no searchable, filterable index of their own bank's
- * pipeline. This is that index.
- *
- * Auth: requires bank token (matches /bank/* convention). Calls existing
- * GET /api/bank/applications which scopes to bank_id from the JWT.
- */
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  FileText, ChevronRight, Filter, Search,
+  RefreshCw, CheckCircle2, Download,
+} from 'lucide-react';
 
-import * as React from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { FileText, Filter, Loader2, ArrowLeft, Search } from "lucide-react";
+import { getBankApplications } from '@/lib/api/bank';
+import { getAccessToken, getCurrentUser } from '@/lib/auth';
+import { formatCurrency, formatDate } from '@/lib/utils/formatters';
+import { getStatusLabel } from '@/lib/utils/statusConfig';
 
-import { API_URL } from "@/lib/api";
-import { getAccessToken, getCurrentUser } from "@/lib/auth";
+import StatusChip        from '@/components/ui/StatusChip';
+import EmptyState        from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/skeleton';
 
-interface AppRow {
-  id: string;
-  customer_name?: string;
-  full_name?: string;
-  phone?: string;
-  loan_id?: string;
-  requested_loan_amount?: number | null;
-  loan_amount_requested?: number | null;
-  status: string;
-  created_at?: string;
-  submitted_at?: string;
-  system_score?: number | null;
-  system_suggestion?: string | null;
+interface Application {
+  id:                 string;
+  customer_name:      string;
+  phone:              string;
+  loan_id:            string;
+  loan_amount?:       number;
+  loan_type?:         string;
+  status:             string;
+  submitted_at?:      string;
+  created_at?:        string;
+  system_suggestion?: string;
+  system_score?:      number;
+  pan_verified?:      boolean;
+  aadhaar_verified?:  boolean;
 }
 
-// Filters are scoped to what a bank user typically wants to see. Officers
-// see pre-approval states; supervisors see post-approval too. We show the
-// union — UI doesn't need to fork.
-const STATUS_FILTERS = [
-  "all", "submitted", "system_reviewed",
-  "officer_approved", "officer_rejected", "documents_submitted",
-  "approved", "supervisor_rejected", "disbursed",
-] as const;
+const OFFICER_FILTERS    = ['all', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
+const SUPERVISOR_FILTERS = ['all', 'officer_approved', 'documents_submitted', 'approved', 'supervisor_rejected'];
 
-type Filter = (typeof STATUS_FILTERS)[number];
-
-const STATUS_COLORS: Record<string, string> = {
-  submitted: "bg-blue-100 text-blue-700",
-  system_reviewed: "bg-indigo-100 text-indigo-700",
-  officer_approved: "bg-cyan-100 text-cyan-700",
-  officer_rejected: "bg-rose-100 text-rose-700",
-  documents_submitted: "bg-violet-100 text-violet-700",
-  approved: "bg-emerald-100 text-emerald-700",
-  supervisor_rejected: "bg-red-100 text-red-700",
-  disbursed: "bg-teal-100 text-teal-700",
+const ROLE_ACCENT: Record<string, string> = {
+  bank_supervisor: '#7C3AED',
+  bank_officer:    '#2563EB',
 };
 
-function fmtINR(n?: number | null) {
-  if (n == null) return "—";
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-}
-
-function fmtDate(iso?: string) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
-}
-
-export default function BankApplicationsListPage() {
+export default function BankApplicationsPage() {
   const router = useRouter();
-  const [filter, setFilter] = React.useState<Filter>("all");
-  const [search, setSearch] = React.useState("");
-  const [user, setUser] = React.useState<any>(null);
 
-  React.useEffect(() => {
-    const t = getAccessToken("bank");
-    const u = getCurrentUser("bank");
-    if (!t || !u) { router.replace("/bank/login"); return; }
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
+  const [filter, setFilter]             = useState('all');
+  const [search, setSearch]             = useState('');
+  const [user, setUser]                 = useState<any>(null);
+  const [token, setToken]               = useState('');
+  const [lastUpdated, setLastUpdated]   = useState<Date | null>(null);
+  const intervalRef                     = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const t = getAccessToken('bank');
+    const u = getCurrentUser('bank');
+    if (!t || !u) { router.replace('/bank/login'); return; }
+    setToken(t);
     setUser(u);
-  }, [router]);
+  }, []);
 
-  const q = useQuery({
-    queryKey: ["bank", "applications"],
-    queryFn: async () => {
-      const token = getAccessToken("bank");
-      const r = await fetch(`${API_URL}/api/bank/applications`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
-    refetchInterval: 30_000,
-    enabled: Boolean(user),
+  const fetchApplications = useCallback(async (silent = false) => {
+    if (!token) return;
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const statusFilter = filter === 'all' ? undefined : filter;
+      const data = await getBankApplications(token, statusFilter);
+      setApplications(data.applications || []);
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      if (err.message?.includes('401')) router.replace('/bank/login');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token, filter]);
+
+  // Fetch on filter change
+  useEffect(() => {
+    if (token) fetchApplications(false);
+  }, [token, filter]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!token) return;
+    intervalRef.current = setInterval(() => fetchApplications(true), 30000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [token, fetchApplications]);
+
+  // Export CSV
+  const exportCSV = () => {
+    const rows = filtered.map(a => [
+      a.customer_name, a.phone, a.loan_id,
+      a.loan_amount || '', a.status,
+      a.system_suggestion || '',
+      a.pan_verified ? 'Yes' : 'No',
+      a.aadhaar_verified ? 'Yes' : 'No',
+      a.submitted_at || a.created_at || '',
+    ]);
+    const header = ['Name', 'Phone', 'Loan ID', 'Amount', 'Status', 'AI Suggestion', 'PAN', 'Aadhaar', 'Date'];
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `applications-${filter}-${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  const isSupervisor = user?.role === 'bank_supervisor';
+  const filters      = isSupervisor ? SUPERVISOR_FILTERS : OFFICER_FILTERS;
+  const accent       = ROLE_ACCENT[user?.role] || '#2563EB';
+
+  const filtered = applications.filter(a => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      a.customer_name?.toLowerCase().includes(q) ||
+      a.phone?.includes(q) ||
+      a.loan_id?.toLowerCase().includes(q)
+    );
   });
 
-  const apps: AppRow[] = q.data?.applications ?? [];
-
-  const filtered = React.useMemo(() => {
-    let rows = apps;
-    if (filter !== "all") rows = rows.filter((a) => a.status === filter);
-    if (search.trim()) {
-      const s = search.trim().toLowerCase();
-      rows = rows.filter((a) =>
-        (a.customer_name || a.full_name || "").toLowerCase().includes(s) ||
-        (a.phone || "").includes(s) ||
-        (a.loan_id || "").toLowerCase().includes(s) ||
-        a.id.includes(s),
-      );
-    }
-    return rows;
-  }, [apps, filter, search]);
-
-  const counts = React.useMemo(() => {
-    const c: Record<string, number> = { all: apps.length };
-    for (const a of apps) c[a.status] = (c[a.status] ?? 0) + 1;
-    return c;
-  }, [apps]);
+  const lastUpdatedLabel = lastUpdated
+    ? `Updated ${lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+    : null;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-gray-950">
-      {/* Top bar — minimal, matches /bank/dashboard chrome */}
-      <div className="bg-white dark:bg-gray-900 shadow-sm border-b border-slate-200 dark:border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push("/bank/dashboard")}
-              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-gray-300 dark:hover:bg-gray-800"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <FileText className="h-5 w-5 text-blue-600" />
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 dark:text-white">Applications</h1>
-              <p className="text-xs text-slate-500 dark:text-gray-400">
-                {user?.bank_name ? `${user.bank_name} · ` : ""}{apps.length} total
-              </p>
-            </div>
+    <div className="space-y-6 animate-fade-in">
+
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold"
+            style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+            Applications
+          </h2>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {isSupervisor ? 'Supervisor view' : 'Officer view'} · {filtered.length} applications
+            </p>
+            {lastUpdatedLabel && (
+              <>
+                <span style={{ color: 'var(--border-strong)' }}>·</span>
+                <span className="text-xs flex items-center gap-1"
+                  style={{ color: 'var(--text-muted)' }}>
+                  {refreshing
+                    ? <RefreshCw className="w-3 h-3 animate-spin" />
+                    : <RefreshCw className="w-3 h-3" />}
+                  {lastUpdatedLabel}
+                </span>
+              </>
+            )}
           </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+            style={{
+              background: `${accent}12`,
+              color: accent,
+              border: `1px solid ${accent}25`,
+            }}>
+            {isSupervisor ? 'Supervisor' : 'Officer'}
+          </div>
+          <button
+            onClick={exportCSV}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all"
+            style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--border)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-subtle)'}>
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
+          <button
+            onClick={() => fetchApplications(false)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all"
+            style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--border)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-subtle)'}>
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+          </button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
-        <div className="relative max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      {/* Search + Filters */}
+      <div className="rounded-2xl p-4 space-y-3"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
+            style={{ color: 'var(--text-muted)' }} />
           <input
-            type="search"
+            type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, phone, loan ID…"
-            className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-10 pr-3 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name, phone, or loan ID..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none transition-all"
+            style={{
+              background: 'var(--bg-subtle)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-primary)',
+            }}
+            onFocus={e => e.target.style.borderColor = '#1A1A2E'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'}
           />
         </div>
-
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <Filter className="h-4 w-4 shrink-0 text-slate-400" />
-          {STATUS_FILTERS.map((f) => (
+        {/* Filter pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+          <Filter className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+          {filters.map(s => (
             <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                filter === f
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700"
-              }`}
-            >
-              {f.replace(/_/g, " ")}{counts[f] != null ? ` · ${counts[f]}` : ""}
+              key={s}
+              onClick={() => setFilter(s)}
+              className="px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all flex-shrink-0"
+              style={filter === s
+                ? { background: accent, color: '#fff' }
+                : { background: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>
+              {s === 'all' ? 'All' : getStatusLabel(s)}
             </button>
           ))}
         </div>
-
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-          {q.isLoading ? (
-            <div className="grid place-items-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
-          ) : filtered.length === 0 ? (
-            <div className="py-16 text-center text-sm text-slate-500">
-              {apps.length === 0 ? "No applications assigned to your bank yet." : `No applications match "${search || filter}".`}
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-gray-800/50">
-                <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-5 py-3 font-medium">Applicant</th>
-                  <th className="px-5 py-3 font-medium">Loan ID</th>
-                  <th className="px-5 py-3 font-medium text-right">Amount</th>
-                  <th className="px-5 py-3 font-medium text-right">AI Score</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Submitted</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-gray-800">
-                {filtered.map((a) => (
-                  <tr
-                    key={a.id}
-                    onClick={() => router.push(`/bank/applications/${a.id}`)}
-                    className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-gray-800/40"
-                  >
-                    <td className="px-5 py-3">
-                      <Link
-                        href={`/bank/applications/${a.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="font-medium text-slate-900 hover:text-blue-700 dark:text-gray-100"
-                      >
-                        {a.customer_name || a.full_name || "—"}
-                      </Link>
-                      <div className="text-xs text-slate-500">{a.phone || ""}</div>
-                    </td>
-                    <td className="px-5 py-3 font-mono text-xs text-slate-500">{a.loan_id || "—"}</td>
-                    <td className="px-5 py-3 text-right font-medium">
-                      {fmtINR(a.requested_loan_amount ?? a.loan_amount_requested)}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      {a.system_score != null ? (
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          a.system_score >= 70 ? "bg-emerald-100 text-emerald-700"
-                            : a.system_score >= 50 ? "bg-amber-100 text-amber-700"
-                            : "bg-rose-100 text-rose-700"
-                        }`}>{a.system_score}</span>
-                      ) : <span className="text-slate-400">—</span>}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${STATUS_COLORS[a.status] || "bg-slate-100 text-slate-700"}`}>
-                        {a.status.replace(/_/g, " ")}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-xs text-slate-500">{fmtDate(a.submitted_at || a.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
       </div>
+
+      {/* Table */}
+      {loading ? (
+        <SkeletonTable rows={8} />
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <EmptyState
+            title={search ? 'No results found' : 'No applications found'}
+            description={search
+              ? `No applications match "${search}". Try a different search.`
+              : 'No applications match the selected filter.'}
+            icon={<FileText className="w-10 h-10" />}
+          />
+        </div>
+      ) : (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+
+          {/* Table header */}
+          <div className="grid grid-cols-12 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            style={{
+              background: 'var(--bg-subtle)',
+              borderBottom: '1px solid var(--border)',
+              color: 'var(--text-muted)',
+              letterSpacing: '0.07em',
+            }}>
+            <div className="col-span-4">Customer</div>
+            <div className="col-span-2">Loan ID</div>
+            <div className="col-span-2">Amount</div>
+            <div className="col-span-1">Status</div>
+            <div className="col-span-1">AI</div>
+            <div className="col-span-1">KYC</div>
+            <div className="col-span-1">Date</div>
+          </div>
+
+          {/* Rows */}
+          {filtered.map((row, i) => (
+            <div
+              key={row.id}
+              onClick={() => router.push(`/bank/applications/${row.id}`)}
+              className="grid grid-cols-12 px-5 py-4 cursor-pointer transition-colors items-center"
+              style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-subtle)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+
+              {/* Customer */}
+              <div className="col-span-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                  style={{ background: `${accent}12`, color: accent, fontFamily: 'Plus Jakarta Sans' }}>
+                  {row.customer_name?.charAt(0)?.toUpperCase() || '?'}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate"
+                    style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                    {row.customer_name}
+                  </p>
+                  <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                    {row.phone}
+                  </p>
+                </div>
+              </div>
+
+              {/* Loan ID */}
+              <div className="col-span-2">
+                <span className="text-xs font-medium px-2 py-1 rounded-lg"
+                  style={{
+                    background: 'var(--bg-subtle)',
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'JetBrains Mono',
+                  }}>
+                  {row.loan_id}
+                </span>
+              </div>
+
+              {/* Amount */}
+              <div className="col-span-2">
+                <span className="text-sm font-semibold"
+                  style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                  {row.loan_amount ? formatCurrency(row.loan_amount) : '—'}
+                </span>
+              </div>
+
+              {/* Status */}
+              <div className="col-span-1">
+                <StatusChip status={row.status} size="sm" />
+              </div>
+
+              {/* AI suggestion */}
+              <div className="col-span-1">
+                {row.system_suggestion
+                  ? <StatusChip status={row.system_suggestion} type="suggestion" size="sm" />
+                  : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>}
+              </div>
+
+              {/* KYC */}
+              <div className="col-span-1">
+                <div className="flex gap-1 flex-wrap">
+                  {row.pan_verified && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                      style={{ background: 'rgba(5,150,105,0.1)', color: '#059669' }}>
+                      PAN
+                    </span>
+                  )}
+                  {row.aadhaar_verified && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                      style={{ background: 'rgba(5,150,105,0.1)', color: '#059669' }}>
+                      ADH
+                    </span>
+                  )}
+                  {!row.pan_verified && !row.aadhaar_verified && (
+                    <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+                  )}
+                </div>
+              </div>
+
+              {/* Date + arrow */}
+              <div className="col-span-1 flex items-center justify-between gap-1">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {formatDate(row.submitted_at || row.created_at || '')}
+                </span>
+                <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,12 +1,15 @@
-'use client';
+﻿'use client';
 import { Building2, Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, X, ExternalLink } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
+import ThemeToggle from '@/components/shared/ThemeToggle';
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { API_URL, getCodeList } from '@/lib/api';
-const INACTIVITY_LIMIT = 4 * 60 * 1000; // 4 min warning, 5 min logout
+import { API_URL } from '@/lib/api/index';
+import { getCodeList } from '@/lib/api/apply';
+import { SESSION_KEYS } from '@/lib/utils/constants';
+
+const INACTIVITY_LIMIT = 4 * 60 * 1000;
 
 export default function LoanApplication() {
   const router = useRouter();
@@ -22,6 +25,7 @@ export default function LoanApplication() {
   const [codeLists, setCodeLists] = useState<Record<number, {code_mst_id: string, code_desc: string}[]>>({});
   const [cityOptions, setCityOptions] = useState<{code_mst_id: string, code_desc: string}[]>([]);
   const [permCityOptions, setPermCityOptions] = useState<{code_mst_id: string, code_desc: string}[]>([]);
+  const [digilockerStep, setDigilockerStep] = useState<'idle' | 'linking' | 'fetching' | 'done'>('idle');
 
   const handleVerifyPAN = async () => {
     const pan = formData.pan_number || '';
@@ -31,7 +35,7 @@ export default function LoanApplication() {
     }
     setPanVerifying(true);
     try {
-      const session = sessionStorage.getItem('loan_session');
+      const session = sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
       const res = await fetch(`${API_URL}/api/verify-pan-session?session_token=${session}&pan_number=${pan}`, { method: 'POST' });
       if (!res.ok) throw new Error('Verification failed');
       const data = await res.json();
@@ -51,7 +55,6 @@ export default function LoanApplication() {
         } else {
           onChange('first_name', data.name);
         }
-        // Set field_sources in React state so badges show immediately
         const panSources: Record<string, any> = {};
         if (nameParts[0]) panSources.first_name = { source: 'pan', original: nameParts[0], modified: false };
         if (nameParts.length > 2) panSources.middle_name = { source: 'pan', original: nameParts.slice(1, -1).join(' '), modified: false };
@@ -65,18 +68,14 @@ export default function LoanApplication() {
     } finally { setPanVerifying(false); }
   };
 
-  const [digilockerRequestId, setDigilockerRequestId] = useState('');
-  const [digilockerStep, setDigilockerStep] = useState<'idle' | 'linking' | 'waiting' | 'fetching' | 'done'>('idle');
-
   const handleVerifyAadhaar = async () => {
     setAadhaarVerifying(true);
     setDigilockerStep('linking');
     setErrors((p: any) => ({ ...p, aadhaar_number: '' }));
     try {
-      const session = sessionStorage.getItem('loan_session');
-      // Step 1: Get DigiLocker OAuth link — VG server contacts DigiLocker (can be slow)
+      const session = sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 65000); // 65s client-side timeout
+      const timeout = setTimeout(() => controller.abort(), 65000);
       const linkRes = await fetch(`${API_URL}/api/aadhaar-link`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -86,11 +85,7 @@ export default function LoanApplication() {
       clearTimeout(timeout);
       const linkData = await linkRes.json();
       if (!linkRes.ok) throw new Error(linkData.detail || 'Failed to generate DigiLocker link');
-
-      // Save state before redirecting to DigiLocker
       sessionStorage.setItem('digilocker_request_id', linkData.request_id);
-
-      // Redirect user to DigiLocker (not popup — popups get blocked)
       window.location.href = linkData.link;
     } catch (err: any) {
       const msg = err.name === 'AbortError'
@@ -101,6 +96,7 @@ export default function LoanApplication() {
       setAadhaarVerifying(false);
     }
   };
+
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState('');
   const [previewDoc, setPreviewDoc] = useState<{ url: string; label: string } | null>(null);
@@ -112,11 +108,11 @@ export default function LoanApplication() {
   let inactivityTimer: any = null;
   let warningTimer: any = null;
 
-  const getSession = () => sessionStorage.getItem('loan_session');
+  const getSession = () => sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
 
   const logout = useCallback(() => {
-    sessionStorage.removeItem('loan_session');
-    sessionStorage.removeItem('session_expiry');
+    sessionStorage.removeItem(SESSION_KEYS.LOAN_SESSION);
+    sessionStorage.removeItem(SESSION_KEYS.SESSION_EXPIRY);
     setSessionExpired(true);
   }, []);
 
@@ -130,7 +126,7 @@ export default function LoanApplication() {
 
   useEffect(() => {
     const session = getSession();
-    if (!session) { router.push('/loan-form'); return; }
+    if (!session) { router.push('/'); return; }
     loadApplication();
     const events = ['mousedown', 'keypress', 'scroll', 'touchstart'];
     events.forEach(e => window.addEventListener(e, resetInactivityTimer));
@@ -142,105 +138,94 @@ export default function LoanApplication() {
     };
   }, []);
 
-  // Detect return from DigiLocker redirect
-  useEffect(() => {
-    const requestId = sessionStorage.getItem('digilocker_request_id');
-    if (!requestId || !appData) return;
-    const session = getSession();
-    if (!session) return;
-
-    // Clear the flag immediately to prevent re-running
-    sessionStorage.removeItem('digilocker_request_id');
-    sessionStorage.removeItem('digilocker_aadhaar');
-
-    setDigilockerStep('fetching');
-    setAadhaarVerifying(true);
-
-    (async () => {
-      try {
-        // Step 2: Fetch available documents
-        const docsRes = await fetch(`${API_URL}/api/aadhaar-documents`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_token: session, request_id: requestId }),
-        });
-        const docsData = await docsRes.json();
-        if (!docsRes.ok) throw new Error(docsData.detail || 'Failed to fetch documents');
-
-        // Step 3: Download and parse Aadhaar
-        const dlRes = await fetch(`${API_URL}/api/aadhaar-download`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_token: session, request_id: requestId, uri: docsData.uri }),
-        });
-        const dlData = await dlRes.json();
-        if (!dlRes.ok) throw new Error(dlData.detail || 'Failed to download Aadhaar');
-
-        // Auto-fill form with DigiLocker verified data
-        if (dlData.data) {
-          const d = dlData.data;
-          onChange('aadhaar_verified', true);
-          onChange('aadhaar_last4', d.last4);
-          onChange('aadhaar_verification_timestamp', new Date().toISOString());
-          // Only fill name from Aadhaar if PAN hasn't already filled it
-          if (d.name && !formData.pan_name) {
-            onChange('full_name', d.name); onChange('customer_name', d.name);
-            const np = d.name.trim().split(/\s+/);
-            if (np.length >= 3) { onChange('first_name', np[0]); onChange('middle_name', np.slice(1,-1).join(' ')); onChange('last_name', np[np.length-1]); }
-            else if (np.length === 2) { onChange('first_name', np[0]); onChange('last_name', np[1]); }
-            else { onChange('first_name', d.name); }
-          }
-          if (d.dob) onChange('date_of_birth', d.dob);
-          if (d.gender) onChange('gender', d.gender);
-          // Aadhaar address == permanent address, so fill the permanent_* fields.
-          if (d.address) onChange('permanent_address', d.address);
-          if (d.house) onChange('permanent_house', d.house);
-          if (d.street) onChange('permanent_street', d.street);
-          if (d.landmark) onChange('permanent_landmark', d.landmark);
-          if (d.locality) onChange('permanent_locality', d.locality);
-          if (d.pin) onChange('permanent_pincode', d.pin);
-          if (d.state_code) { onChange('permanent_state_code', d.state_code); fetchCities(d.state_code, 'permanent'); }
-          if (d.city_code) onChange('permanent_city_code', d.city_code);
-          if (d.marital_status) onChange('marital_status', d.marital_status);
-          // Set field_sources for Aadhaar badges
-          const aadhaarSources: Record<string, any> = {};
-          if (d.dob) aadhaarSources.date_of_birth = { source: 'aadhaar', original: d.dob, modified: false };
-          if (d.gender) aadhaarSources.gender = { source: 'aadhaar', original: d.gender, modified: false };
-          if (d.house) aadhaarSources.permanent_house = { source: 'aadhaar', original: d.house, modified: false };
-          if (d.street) aadhaarSources.permanent_street = { source: 'aadhaar', original: d.street, modified: false };
-          if (d.landmark) aadhaarSources.permanent_landmark = { source: 'aadhaar', original: d.landmark, modified: false };
-          if (d.locality) aadhaarSources.permanent_locality = { source: 'aadhaar', original: d.locality, modified: false };
-          if (d.pin) aadhaarSources.permanent_pincode = { source: 'aadhaar', original: d.pin, modified: false };
-          if (d.state_code || d.state) aadhaarSources.permanent_state_code = { source: 'aadhaar', original: d.state || d.state_code, modified: false };
-          if (d.city_code || d.district) aadhaarSources.permanent_city_code = { source: 'aadhaar', original: d.district || d.city_code, modified: false };
-          if (d.marital_status) aadhaarSources.marital_status = { source: 'aadhaar', original: d.marital_status, modified: false };
-          // Auto-insert passport photo and Aadhaar document from DigiLocker
-          if (d.photo_url) {
-            onChange('photo_url', d.photo_url);
-            aadhaarSources.photo_url = { source: 'aadhaar', original: 'digilocker_photo', modified: false };
-          }
-          if (d.aadhaar_front_url) {
-            onChange('aadhaar_front_url', d.aadhaar_front_url);
-            aadhaarSources.aadhaar_front_url = { source: 'aadhaar', original: 'digilocker_xml', modified: false };
-          }
-          setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), ...aadhaarSources } }));
-        }
-        setDigilockerStep('done');
-        setErrors((p: any) => ({ ...p, aadhaar_number: '' }));
-      } catch (err: any) {
-        setErrors((p: any) => ({ ...p, aadhaar_number: err.message || 'DigiLocker verification failed' }));
-        setDigilockerStep('idle');
-      } finally {
-        setAadhaarVerifying(false);
-      }
-    })();
-  }, [appData]);
-
   useEffect(() => {
     if (!appData) return;
     const timer = setTimeout(() => autoSave(), 2000);
     return () => clearTimeout(timer);
   }, [formData]);
 
-  // Fetch dropdown code lists on mount (state, qualification, occupation, etc.)
+  useEffect(() => {
+    if (!appData) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('digilocker') !== 'success') return;
+    const storedRequestId = sessionStorage.getItem('digilocker_request_id');
+    if (!storedRequestId) return;
+
+    const fetchDigilockerData = async () => {
+      setDigilockerStep('fetching');
+      setAadhaarVerifying(true);
+      setErrors((p: any) => ({ ...p, aadhaar_number: '' }));
+      const session = sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
+      try {
+        const docsRes = await fetch(`${API_URL}/api/aadhaar-documents`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_token: session, request_id: storedRequestId }),
+        });
+        const docsData = await docsRes.json();
+        if (!docsRes.ok) throw new Error(docsData.detail || 'Failed to fetch DigiLocker documents');
+
+        const dlRes = await fetch(`${API_URL}/api/aadhaar-download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_token: session, request_id: docsData.request_id, uri: docsData.uri }),
+        });
+        const dlData = await dlRes.json();
+        if (!dlRes.ok) throw new Error(dlData.detail || 'Failed to download Aadhaar data');
+
+        const { name, dob, gender, address, house, street, landmark, locality, pincode, last4, photo_url } = dlData.data || {};
+
+        onChange('aadhaar_verified', true);
+        onChange('aadhaar_last4', last4);
+        onChange('aadhaar_verification_timestamp', new Date().toISOString());
+
+        if (name) {
+          const parts = name.trim().split(/\s+/);
+          onChange('full_name', name);
+          if (parts.length >= 3) {
+            onChange('first_name', parts[0]);
+            onChange('middle_name', parts.slice(1, -1).join(' '));
+            onChange('last_name', parts[parts.length - 1]);
+          } else if (parts.length === 2) {
+            onChange('first_name', parts[0]);
+            onChange('last_name', parts[1]);
+          } else {
+            onChange('first_name', name);
+          }
+          const src: Record<string, any> = {};
+          src.full_name = { source: 'aadhaar', original: name, modified: false };
+          if (parts[0]) src.first_name = { source: 'aadhaar', original: parts[0], modified: false };
+          if (parts.length > 2) src.middle_name = { source: 'aadhaar', original: parts.slice(1, -1).join(' '), modified: false };
+          if (parts.length > 1) src.last_name = { source: 'aadhaar', original: parts[parts.length - 1], modified: false };
+          setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), ...src } }));
+        }
+        if (dob) onChange('date_of_birth', dob);
+        if (gender) onChange('gender', gender);
+        if (house) onChange('permanent_house', house);
+        if (street) onChange('permanent_street', street);
+        if (landmark) onChange('permanent_landmark', landmark);
+        if (locality) onChange('permanent_locality', locality);
+        if (pincode) onChange('permanent_pincode', pincode);
+        if (address) onChange('permanent_address', address);
+        if (photo_url) {
+          onChange('aadhaar_front_url', photo_url);
+          setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), aadhaar_front_url: { source: 'aadhaar', original: photo_url, modified: false } } }));
+        }
+
+        setDigilockerStep('done');
+        sessionStorage.removeItem('digilocker_request_id');
+        window.history.replaceState({}, '', '/loan-form/application');
+      } catch (err: any) {
+        setErrors((p: any) => ({ ...p, aadhaar_number: err.message || 'DigiLocker verification failed. Please try again.' }));
+        setDigilockerStep('idle');
+      } finally {
+        setAadhaarVerifying(false);
+      }
+    };
+
+    fetchDigilockerData();
+  }, [appData]);
+
   useEffect(() => {
     [5, 7, 8, 9, 10, 11, 12, 13].forEach(id => {
       getCodeList(id).then(res => {
@@ -259,7 +244,6 @@ export default function LoanApplication() {
     } catch {}
   };
 
-  // Helper: resolve code_desc from code_mst_id for review display
   const codeLabel = (sqlMstId: number, code: string) => {
     if (!code) return '—';
     const list = codeLists[sqlMstId] || [];
@@ -268,7 +252,7 @@ export default function LoanApplication() {
 
   const loadApplication = async () => {
     const session = getSession();
-    if (!session) { router.push('/loan-form'); return; }
+    if (!session) { router.push('/'); return; }
     try {
       const res = await fetch(`${API_URL}/api/get-application?session_token=${session}`);
       if (res.status === 401) { logout(); return; }
@@ -276,8 +260,9 @@ export default function LoanApplication() {
       if (data.status === 'success') {
         setAppData(data.data);
         setFormData(data.data);
-        const savedStep = data.data.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, data.data.highest_step || 1));
-        // Pre-load city options if state is already set (resuming saved form)
+        const savedStep = data.data.current_step || 1;
+        setCurrentStep(savedStep);
+        setHighestStep(Math.max(savedStep, data.data.highest_step || 1));
         if (data.data.current_state_code) fetchCities(data.data.current_state_code, 'current');
         if (data.data.permanent_state_code) fetchCities(data.data.permanent_state_code, 'permanent');
       }
@@ -290,9 +275,6 @@ export default function LoanApplication() {
     if (!session || !appData) return;
     setSaving(true);
     try {
-      // `same_as_current` column name is historical; it now means
-      // "current address is the same as permanent" (permanent is always the
-      // source-of-truth, auto-filled from Aadhaar).
       const isSame = formData.same_as_current;
       const cleanData = {
         customer_name: formData.customer_name,
@@ -303,13 +285,11 @@ export default function LoanApplication() {
         date_of_birth: formData.date_of_birth,
         gender: formData.gender,
         marital_status: formData.marital_status,
-        // Build concatenated address for backward compat
         permanent_address: [formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', '),
         current_address: isSame
           ? [formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ')
           : [formData.current_house, formData.current_street, formData.current_landmark, formData.current_locality].filter(Boolean).join(', '),
         same_as_current: formData.same_as_current,
-        // Permanent address — always the Aadhaar-sourced address
         permanent_house: formData.permanent_house,
         permanent_street: formData.permanent_street,
         permanent_landmark: formData.permanent_landmark,
@@ -317,7 +297,6 @@ export default function LoanApplication() {
         permanent_pincode: formData.permanent_pincode,
         permanent_state_code: formData.permanent_state_code,
         permanent_city_code: formData.permanent_city_code,
-        // Current address — copied from permanent when `isSame`, else user-entered
         current_house: isSame ? formData.permanent_house : formData.current_house,
         current_street: isSame ? formData.permanent_street : formData.current_street,
         current_landmark: isSame ? formData.permanent_landmark : formData.current_landmark,
@@ -364,7 +343,6 @@ export default function LoanApplication() {
   const onChange = (field: string, value: any) => {
     setFormData((p: any) => {
       const updated = { ...p, [field]: value };
-      // Track modifications to auto-filled fields
       const sources = updated.field_sources || {};
       if (sources[field] && !sources[field].modified) {
         if (String(value).trim() !== String(sources[field].original).trim()) {
@@ -374,26 +352,21 @@ export default function LoanApplication() {
       }
       return updated;
     });
-    // Live validation: clear error when user types valid data
     if (errors[field]) {
       setErrors((p: any) => ({ ...p, [field]: '' }));
     }
   };
 
-  // Live validation on blur
   const onBlur = (field: string, required?: boolean) => {
     if (required && (!formData[field] || String(formData[field]).trim() === '')) {
       setErrors((p: any) => ({ ...p, [field]: 'This field is required' }));
     }
-    // Email validation
     if (field === 'email' && formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       setErrors((p: any) => ({ ...p, email: 'Enter a valid email address' }));
     }
-    // PAN validation
     if (field === 'pan_number' && formData.pan_number && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(formData.pan_number)) {
       setErrors((p: any) => ({ ...p, pan_number: 'Invalid PAN format (e.g. ABCDE1234F)' }));
     }
-    // Aadhaar validation
     if (field === 'aadhaar_number' && formData.aadhaar_number && !/^\d{12}$/.test(formData.aadhaar_number)) {
       setErrors((p: any) => ({ ...p, aadhaar_number: 'Enter 12-digit Aadhaar number' }));
     }
@@ -410,8 +383,6 @@ export default function LoanApplication() {
 
   const step1Valid = () => validate({ pan_number: 'Required', full_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
   const step2Valid = () => {
-    // Permanent address is always required (Aadhaar-sourced). Current address
-    // is required only when the user doesn't check "Same as permanent".
     const base: any = { permanent_house: 'Required', permanent_street: 'Required', permanent_pincode: 'Required', permanent_state_code: 'Required', permanent_city_code: 'Required' };
     if (!formData.same_as_current) {
       base.current_house = 'Required'; base.current_street = 'Required';
@@ -454,7 +425,7 @@ export default function LoanApplication() {
       const res = await fetch(`${API_URL}/api/submit-form-session?session_token=${session}`, { method: 'POST' });
       const data = await res.json();
       if (data.status === 'submitted') {
-        sessionStorage.removeItem('loan_session');
+        sessionStorage.removeItem(SESSION_KEYS.LOAN_SESSION);
         router.push(`/success?loan_id=${appData.loan_id}`);
       } else { alert(data.detail || 'Submission failed'); }
     } catch { alert('Submission failed. Try again.'); }
@@ -463,11 +434,11 @@ export default function LoanApplication() {
 
   if (sessionExpired) return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-xl dark:shadow-gray-900/50 p-8 max-w-md w-full text-center">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-800 p-8 max-w-md w-full text-center">
         <div className="mb-4"><AlertTriangle className="w-16 h-16 text-orange-500 mx-auto" /></div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Session Expired</h2>
-        <p className="text-gray-600 mb-6">Your session has expired due to inactivity. Please verify again to continue.</p>
-        <button onClick={() => router.push('/loan-form')} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Session Expired</h2>
+        <p className="text-gray-600 dark:text-gray-400 mb-6">Your session has expired due to inactivity. Please verify again to continue.</p>
+        <button onClick={() => router.push('/')} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition">
           Re-verify with OTP →
         </button>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-4">Your progress has been saved automatically</p>
@@ -479,7 +450,7 @@ export default function LoanApplication() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 flex items-center justify-center">
       <div className="text-center">
         <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">Loading your application...</p>
+        <p className="mt-4 text-gray-600 dark:text-gray-400">Loading your application...</p>
       </div>
     </div>
   );
@@ -490,13 +461,13 @@ export default function LoanApplication() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 py-6 px-4 transition-colors">
       {inactivityWarning && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-8 pointer-events-none">
-          <div className="pointer-events-auto bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border border-orange-200 dark:border-orange-800 shadow-2xl rounded-2xl px-8 py-5 max-w-md w-full mx-4 animate-[slideDown_0.3s_ease-out]">
+          <div className="pointer-events-auto bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border border-orange-200 dark:border-orange-800 shadow-2xl rounded-2xl px-8 py-5 max-w-md w-full mx-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0">
                 <AlertTriangle className="w-5 h-5 text-orange-500" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-gray-900">Session Expiring Soon</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">Session Expiring Soon</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Your session will expire in 1 minute due to inactivity. Interact with the form to stay active.</p>
               </div>
             </div>
@@ -508,19 +479,25 @@ export default function LoanApplication() {
       )}
 
       <div className="max-w-2xl mx-auto px-3 sm:px-4">
-        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-lg dark:shadow-gray-900/50 p-3 sm:p-5 mb-4 transition-colors">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-800 p-3 sm:p-5 mb-4 transition-colors">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <h1 className="text-base sm:text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2"><Building2 className="w-5 h-5 text-blue-600 flex-shrink-0" />Loan Application</h1>
+              <h1 className="text-base sm:text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-600 flex-shrink-0" />Loan Application
+              </h1>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">
                 {appData?.customer_name} · {appData?.loan_id}
               </p>
             </div>
             <div className="text-xs text-right">
               <div className="flex items-center gap-3">
-              {saving ? <span className="text-blue-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving...</span></span> : lastSaved ? <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /><span className="hidden sm:inline">Saved {lastSaved}</span></span> : null}
-              <ThemeToggle />
-            </div>
+                {saving
+                  ? <span className="text-blue-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving...</span></span>
+                  : lastSaved
+                  ? <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /><span className="hidden sm:inline">Saved {lastSaved}</span></span>
+                  : null}
+                <ThemeToggle />
+              </div>
             </div>
           </div>
           <div className="relative">
@@ -562,12 +539,12 @@ export default function LoanApplication() {
           </div>
         </div>
 
-        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-lg dark:shadow-gray-900/50 p-4 sm:p-6 transition-colors">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-800 p-4 sm:p-6 transition-colors">
 
           {currentStep === 1 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">KYC & Personal Details</h2>
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+              <div className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Identity Verification</p>
                 <F label="PAN Number" required error={errors.pan_number}>
                   <div className="flex gap-2">
@@ -583,7 +560,7 @@ export default function LoanApplication() {
                         placeholder="ABCDE1234F" maxLength={10} />
                       {formData.pan_number && !formData.pan_verified && !panFocused && (
                         <button type="button" onClick={() => { onChange('pan_number', ''); setPanFocused(true); }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 transition p-1" title="Clear & re-enter">
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 transition p-1">
                           <X className="w-4 h-4" />
                         </button>
                       )}
@@ -596,24 +573,29 @@ export default function LoanApplication() {
                 </F>
                 <F label="Aadhaar Verification" required error={errors.aadhaar_number}>
                   {formData.aadhaar_verified ? (
-                    <div className={`p-2.5 sm:p-3 rounded-lg border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20`}>
+                    <div className="p-2.5 sm:p-3 rounded-lg border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20">
                       <p className="text-xs sm:text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
                         <ShieldCheck className="w-4 h-4 flex-shrink-0" />
-                        <span>Verified via DigiLocker (XXXX XXXX {formData.aadhaar_last4})</span>
+                        <span>Aadhaar verified via DigiLocker (XXXX XXXX {formData.aadhaar_last4})</span>
                       </p>
                       {formData.aadhaar_verification_timestamp && <p className="text-[10px] sm:text-xs text-green-600 dark:text-green-400 mt-1 ml-6">Verified on {new Date(formData.aadhaar_verification_timestamp).toLocaleString()}</p>}
                     </div>
+                  ) : digilockerStep === 'fetching' ? (
+                    <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin flex-shrink-0" />
+                      <p className="text-sm text-blue-700 dark:text-blue-300">Fetching your Aadhaar details from DigiLocker...</p>
+                    </div>
                   ) : (
-                    <button type="button" onClick={handleVerifyAadhaar} disabled={aadhaarVerifying}
-                      className="w-full py-3 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center justify-center gap-2 bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 active:scale-[0.98]">
-                      {digilockerStep === 'linking' ? <><Loader2 className="w-4 h-4 animate-spin" /> <span>Opening DigiLocker...</span></> :
-                       digilockerStep === 'fetching' ? <><Loader2 className="w-4 h-4 animate-spin" /> <span>Fetching data...</span></> :
-                       <><ShieldCheck className="w-4 h-4" /> <span>Verify Aadhaar via DigiLocker</span></>}
-                    </button>
+                    <div className="space-y-2">
+                      <button type="button" onClick={handleVerifyAadhaar} disabled={aadhaarVerifying}
+                        className="w-full px-4 py-3 rounded-lg text-sm font-semibold transition bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-70 flex items-center justify-center gap-2">
+                        {aadhaarVerifying && digilockerStep === 'linking'
+                          ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Generating DigiLocker link...</span></>
+                          : <><ExternalLink className="w-4 h-4" /><span>Verify via DigiLocker</span></>}
+                      </button>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1"><Lock className="w-3 h-3" />You will be redirected to DigiLocker to verify your Aadhaar</p>
+                    </div>
                   )}
-                  {digilockerStep === 'waiting' && <p className="text-xs text-orange-600 dark:text-orange-400 mt-1 animate-pulse">Please complete authentication on the DigiLocker window...</p>}
-                  {digilockerStep === 'fetching' && <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Fetching your Aadhaar data from DigiLocker...</p>}
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1"><Lock className="w-3 h-3" />Only last 4 digits stored</p>
                 </F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -647,8 +629,7 @@ export default function LoanApplication() {
           {currentStep === 2 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Address Details</h2>
-              {/* Current Address — user-entered, or copied from Permanent via the checkbox */}
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+              <div className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Current Address</p>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -690,8 +671,7 @@ export default function LoanApplication() {
                 </div>
                 </>)}
               </div>
-              {/* Permanent Address — auto-filled from Aadhaar, always shown */}
-              <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+              <div className="bg-green-50 dark:bg-gray-800 border border-green-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Permanent Address</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="House / Flat No" required error={errors.permanent_house} fieldName="permanent_house" fieldSources={formData.field_sources}>
@@ -749,13 +729,13 @@ export default function LoanApplication() {
                 </F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Industry Type" required error={errors.industry_type} fieldName="industry_type" fieldSources={formData.field_sources}>
+                <F label="Industry Type" required error={errors.industry_type}>
                   <select value={formData.industry_type || ''} onChange={e => onChange('industry_type', e.target.value)} className={inp(errors.industry_type)}>
                     <option value="">Select</option>
                     {(codeLists[10] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
-                <F label="Employment Type" required error={errors.employment_type} fieldName="employment_type" fieldSources={formData.field_sources}>
+                <F label="Employment Type" required error={errors.employment_type}>
                   <select value={formData.employment_type || ''} onChange={e => onChange('employment_type', e.target.value)} className={inp(errors.employment_type)}>
                     <option value="">Select</option>
                     {(codeLists[9] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
@@ -763,8 +743,8 @@ export default function LoanApplication() {
                 </F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Employer Name" fieldName="employer_name" fieldSources={formData.field_sources}><input type="text" value={formData.employer_name || ''} onChange={e => onChange('employer_name', e.target.value)} className={inp('')} placeholder="Company / Business name" /></F>
-                <F label="Designation" required error={errors.designation} fieldName="designation" fieldSources={formData.field_sources}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
+                <F label="Employer Name"><input type="text" value={formData.employer_name || ''} onChange={e => onChange('employer_name', e.target.value)} className={inp('')} placeholder="Company / Business name" /></F>
+                <F label="Designation" required error={errors.designation}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
@@ -794,10 +774,10 @@ export default function LoanApplication() {
           {currentStep === 4 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Loan & Financial Details</h2>
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+              <div className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-blue-800 dark:text-gray-300">Loan Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Loan Amount (₹)" required error={errors.loan_amount_requested} fieldName="loan_amount_requested" fieldSources={formData.field_sources}>
+                  <F label="Loan Amount (₹)" required error={errors.loan_amount_requested}>
                     <input type="number" value={formData.loan_amount_requested || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
                   </F>
                   <F label="Repayment Period (Years)">
@@ -807,7 +787,7 @@ export default function LoanApplication() {
                     </select>
                   </F>
                 </div>
-                <F label="Purpose of Loan" required error={errors.purpose_of_loan} fieldName="purpose_of_loan" fieldSources={formData.field_sources}>
+                <F label="Purpose of Loan" required error={errors.purpose_of_loan}>
                   <select value={formData.purpose_of_loan || ''} onChange={e => onChange('purpose_of_loan', e.target.value)} className={inp(errors.purpose_of_loan)}>
                     <option value="">Select</option>
                     {(codeLists[13] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
@@ -815,10 +795,10 @@ export default function LoanApplication() {
                 </F>
                 <F label="Scheme"><input type="text" value={formData.scheme || ''} onChange={e => onChange('scheme', e.target.value)} className={inp('')} placeholder="Optional" /></F>
               </div>
-              <div className="bg-green-50 dark:bg-dark-section border border-green-200 dark:border-gray-700/50 rounded-xl p-4 space-y-4">
+              <div className="bg-green-50 dark:bg-gray-800 border border-green-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-green-800 dark:text-gray-300">Financial Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income} fieldName="monthly_gross_income" fieldSources={formData.field_sources}>
+                  <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income}>
                     <input type="number" value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
                   </F>
                   <F label="Monthly Deductions (₹)">
@@ -826,15 +806,15 @@ export default function LoanApplication() {
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Existing Monthly EMIs (₹)" fieldName="monthly_emi_existing" fieldSources={formData.field_sources}>
+                  <F label="Existing Monthly EMIs (₹)">
                     <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_emi_existing: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(v) || 0))) })); }} className={inp('')} placeholder="0 if none" />
                   </F>
                   <F label="Monthly Net Income (₹)" required error={errors.monthly_net_income}>
-                    <input type="number" value={formData.monthly_net_income || ''} readOnly className={`${inp(errors.monthly_net_income)} bg-gray-100 dark:bg-gray-800 cursor-not-allowed`} placeholder="Auto: Gross − Deductions − EMIs" title="Auto-calculated from Gross − Deductions − Existing EMIs" />
+                    <input type="number" value={formData.monthly_net_income || ''} readOnly className={`${inp(errors.monthly_net_income)} bg-gray-100 dark:bg-gray-800 cursor-not-allowed`} placeholder="Auto: Gross − Deductions − EMIs" />
                   </F>
                 </div>
               </div>
-              <div className="bg-yellow-50 dark:bg-dark-section border border-yellow-200 dark:border-gray-700/50 rounded-xl p-4">
+              <div className="bg-yellow-50 dark:bg-gray-800 border border-yellow-200 dark:border-gray-700 rounded-xl p-4">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5 dark:bg-gray-700 dark:border-gray-600" />
                   <span className="text-sm text-gray-700 dark:text-gray-300">I have pending criminal cases or criminal records</span>
@@ -847,7 +827,12 @@ export default function LoanApplication() {
           {currentStep === 5 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Document Upload</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Max 5MB each. PDF/JPG/PNG accepted.</p>
+              <div className="flex items-start gap-2 bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-lg px-3 py-2">
+                <span className="text-blue-600 mt-0.5 flex-shrink-0 text-sm">ℹ</span>
+                <p className="text-xs text-blue-800 dark:text-gray-300">
+                  Accepted formats: <strong>PDF, JPG, PNG</strong> only. Maximum file size: <strong>10 MB</strong> per document.
+                </p>
+              </div>
               <div className="space-y-3">
                 {[
                   { key: 'aadhaar_front_url', label: 'Aadhaar Document', required: true },
@@ -861,45 +846,47 @@ export default function LoanApplication() {
                   const fs = formData.field_sources?.[doc.key];
                   const isDigilocker = fs?.source === 'aadhaar';
                   return (
-                  <div key={doc.key} className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-dark-section' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section') : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
-                    <div>
-                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
-                      {formData[doc.key] && (
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        {isDigilocker ? (
-                          <span className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3" />DigiLocker Verified
-                          </span>
-                        ) : (
-                          <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Uploaded</p>
+                    <div key={doc.key} className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-gray-800' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-gray-800') : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800'}`}>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
+                        {formData[doc.key] && (
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {isDigilocker ? (
+                              <span className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                <ShieldCheck className="w-3 h-3" />DigiLocker Verified
+                              </span>
+                            ) : (
+                              <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Uploaded</p>
+                            )}
+                            <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>
+                          </div>
                         )}
-                        <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>
                       </div>
-                    )}
+                      <label className="cursor-pointer">
+                        <input type="file" accept=".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf" className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
+                            if (!allowed.includes(file.type)) { alert('Invalid file type. Only PDF, JPG, and PNG files are accepted.'); e.target.value = ''; return; }
+                            if (file.size > 10 * 1024 * 1024) { alert('File too large. Maximum size is 10 MB.'); e.target.value = ''; return; }
+                            const fd = new FormData();
+                            fd.append('session_token', getSession() || '');
+                            fd.append('document_type', doc.key.replace('_url', ''));
+                            fd.append('file', file);
+                            try {
+                              const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
+                              const data = await res.json();
+                              if (data.url) onChange(doc.key, data.url);
+                              else alert('Upload failed. Storage may not be configured.');
+                            } catch { alert('Upload failed.'); }
+                          }}
+                        />
+                        <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                          {formData[doc.key] ? 'Replace' : 'Upload'}
+                        </span>
+                      </label>
                     </div>
-                    <label className="cursor-pointer">
-                      <input type="file" accept="image/*,application/pdf" className="hidden"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          if (file.size > 5 * 1024 * 1024) { alert('File too large. Max 5MB'); return; }
-                          const fd = new FormData();
-                          fd.append('session_token', getSession() || '');
-                          fd.append('document_type', doc.key.replace('_url', ''));
-                          fd.append('file', file);
-                          try {
-                            const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
-                            const data = await res.json();
-                            if (data.url) onChange(doc.key, data.url);
-                            else alert('Upload failed. Storage may not be configured.');
-                          } catch { alert('Upload failed.'); }
-                        }}
-                      />
-                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                        {formData[doc.key] ? 'Replace' : 'Upload'}
-                      </span>
-                    </label>
-                  </div>
                   );
                 })}
               </div>
@@ -941,13 +928,13 @@ export default function LoanApplication() {
                 <RR label="Purpose" value={codeLabel(13, formData.purpose_of_loan)} />
                 <RR label="Net Income" value={formData.monthly_net_income ? `₹${parseFloat(formData.monthly_net_income).toLocaleString('en-IN')}` : ''} />
               </RS>
-              <div className="bg-blue-50 dark:bg-dark-section border border-blue-200 dark:border-gray-700/50 rounded-xl p-4">
+              <div className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-xl p-4">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 text-blue-600 rounded" />
                   <span className="text-sm text-gray-700 dark:text-gray-300">I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
                 </label>
               </div>
-              <div className="bg-yellow-50 dark:bg-dark-section border border-yellow-200 dark:border-gray-700/50 rounded-xl p-3">
+              <div className="bg-yellow-50 dark:bg-gray-800 border border-yellow-200 dark:border-gray-700 rounded-xl p-3">
                 <p className="text-xs text-yellow-800 dark:text-gray-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
               </div>
               <div className="flex gap-4">
@@ -962,19 +949,17 @@ export default function LoanApplication() {
         </div>
       </div>
 
-      {/* Document Preview Modal */}
       {previewDoc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
           onClick={(e) => { if (e.target === e.currentTarget) setPreviewDoc(null); }}
           onKeyDown={(e) => { if (e.key === 'Escape') setPreviewDoc(null); }}
         >
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden animate-[fadeIn_0.15s_ease-out]">
-            {/* Header */}
+          <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
               <h3 className="font-semibold text-gray-900 dark:text-white text-sm sm:text-base truncate pr-4">{previewDoc.label}</h3>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <a href={previewDoc.url} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition" title="Open in new tab">
+                <a href={previewDoc.url} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition">
                   <ExternalLink className="w-4 h-4" />
                 </a>
                 <button onClick={() => setPreviewDoc(null)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition">
@@ -982,7 +967,6 @@ export default function LoanApplication() {
                 </button>
               </div>
             </div>
-            {/* Disclaimer banner for DigiLocker documents */}
             {previewDisclaimer && /digilocker/i.test(previewDoc.url) && (
               <div className="flex items-start gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800/50 flex-shrink-0">
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
@@ -994,7 +978,6 @@ export default function LoanApplication() {
                 </button>
               </div>
             )}
-            {/* Content — disable right-click, drag, and PDF toolbar */}
             <div className="flex-1 overflow-auto flex items-center justify-center bg-gray-100 dark:bg-gray-950 min-h-[300px]"
               onContextMenu={e => e.preventDefault()}
               onDragStart={e => e.preventDefault()}
@@ -1021,6 +1004,7 @@ export default function LoanApplication() {
 
 function F({ label, required, error, children, fieldName, fieldSources }: any) {
   const src = fieldSources && fieldName ? fieldSources[fieldName] : null;
+  const isLocked = src && !src.modified && (src.source === 'pan' || src.source === 'aadhaar');
   return (
     <div className="transition-all duration-200">
       <div className="flex items-center flex-wrap gap-1 sm:gap-1.5 mb-1">
@@ -1056,11 +1040,24 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
           </div>
         )}
       </div>
-      {children}
-      {error && <p className="text-red-500 text-xs mt-1 animate-[fadeIn_0.2s]">{error}</p>}
+      <div className={isLocked ? 'relative' : ''}>
+        {isLocked && (
+          <div className="absolute inset-0 z-10 rounded-lg cursor-not-allowed" />
+        )}
+        <div className={isLocked ? 'pointer-events-none opacity-80' : ''}>
+          {children}
+        </div>
+        {isLocked && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 z-20">
+            <Lock className="w-3.5 h-3.5 text-gray-400" />
+          </div>
+        )}
+      </div>
+      {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
     </div>
   );
 }
+
 function Nav({ onPrev, onNext }: any) {
   return (
     <div className="flex gap-4 pt-2">
@@ -1069,12 +1066,25 @@ function Nav({ onPrev, onNext }: any) {
     </div>
   );
 }
+
 function RS({ title, children }: any) {
-  return <div className="bg-gray-50 dark:bg-dark-section rounded-xl p-4"><h3 className="font-semibold text-gray-900 dark:text-white mb-3">{title}</h3><div className="space-y-2">{children}</div></div>;
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+      <h3 className="font-semibold text-gray-900 dark:text-white mb-3">{title}</h3>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
 }
+
 function RR({ label, value }: any) {
-  return <div className="flex justify-between text-sm"><span className="text-gray-500 dark:text-gray-400">{label}:</span><span className="font-medium text-gray-900 dark:text-gray-100 text-right max-w-xs">{value || '—'}</span></div>;
+  return (
+    <div className="flex justify-between text-sm">
+      <span className="text-gray-500 dark:text-gray-400">{label}:</span>
+      <span className="font-medium text-gray-900 dark:text-gray-100 text-right max-w-xs">{value || '—'}</span>
+    </div>
+  );
 }
+
 function inp(error: string) {
-  return `w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all duration-200 ${error ? 'border-red-300 bg-red-50 dark:bg-red-900/10 dark:border-red-700 animate-[shake_0.3s]' : 'border-gray-300 dark:border-gray-600 dark:bg-dark-card/80 dark:text-gray-100 hover:border-blue-300 dark:hover:border-blue-600'}`;
+  return `w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all duration-200 dark:text-gray-100 ${error ? 'border-red-300 bg-red-50 dark:bg-red-900/10 dark:border-red-700' : 'border-gray-300 dark:border-gray-600 dark:bg-gray-900 hover:border-blue-300 dark:hover:border-blue-600'}`;
 }

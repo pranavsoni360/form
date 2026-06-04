@@ -1,12 +1,11 @@
-// lib/hooks/useAutoSave.ts — debounced auto-save for the customer apply form.
-// Calls /api/autosave-session every 2s of formData inactivity.
-"use client";
+﻿// lib/hooks/useAutoSave.ts
+'use client';
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { autoSaveSession } from "@/lib/api/apply";
-import { AUTOSAVE_DEBOUNCE_MS } from "@/lib/utils/constants";
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { autoSaveSession } from '@/lib/api/apply';
+import { AUTOSAVE_DEBOUNCE_MS } from '@/lib/utils/constants';
 
-export type AutoSaveStatus = "idle" | "saving" | "saved" | "error";
+export type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 interface UseAutoSaveOptions {
   sessionToken: string | null;
@@ -23,37 +22,42 @@ export function useAutoSave({
   debounceMs = AUTOSAVE_DEBOUNCE_MS,
   onError,
 }: UseAutoSaveOptions) {
-  const [status, setStatus] = useState<AutoSaveStatus>("idle");
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [status, setStatus] = useState<AutoSaveStatus>('idle');
+  const timerRef   = useRef<NodeJS.Timeout | null>(null);
   const latestData = useRef(formData);
 
+  // Keep ref in sync so the debounced fn always saves latest data
   useEffect(() => {
     latestData.current = formData;
   }, [formData]);
 
   const save = useCallback(async () => {
     if (!sessionToken || !enabled) return;
-    setStatus("saving");
+    setStatus('saving');
     try {
       await autoSaveSession(sessionToken, latestData.current);
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 2000);
+      setStatus('saved');
+      // Reset to idle after 2s so the indicator fades
+      setTimeout(() => setStatus('idle'), 2000);
     } catch (err) {
-      setStatus("error");
+      setStatus('error');
       onError?.(err as Error);
     }
   }, [sessionToken, enabled, onError]);
 
+  // Debounce: reset timer on every formData change
   useEffect(() => {
     if (!enabled || !sessionToken) return;
+
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(save, debounceMs);
+
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [formData, enabled, sessionToken, debounceMs, save]);
 
-  // Force-save immediately — use on step change or beforeunload.
+  // Force save immediately — use on step change or beforeunload
   const flush = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     return save();

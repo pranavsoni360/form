@@ -1,27 +1,21 @@
-// lib/auth/index.ts — token + user storage + authenticated fetch with silent
-// refresh. AuthType now includes 'vendor' (was 'admin' | 'bank' only).
-//
-// Existing imports `import { getAccessToken } from '@/lib/auth'` continue to
-// work — the file moved into a folder + index.ts barrel.
+﻿// lib/auth/index.ts
+import { API_URL } from '@/lib/api/index';
+import type { AuthType } from './roles';
+import { TOKEN_KEYS, USER_KEYS, LOGIN_PATHS } from './roles';
 
-import { API_URL } from "@/lib/api";
-import type { AuthType } from "./roles";
-import { TOKEN_KEYS, USER_KEYS, LOGIN_PATHS } from "./roles";
-
-// ── Token + user storage ─────────────────────────────────────
+// ── Token Management ──────────────────────────────────────
 
 export function getAccessToken(type: AuthType): string | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   return localStorage.getItem(TOKEN_KEYS[type]);
 }
 
 export function setAccessToken(type: AuthType, token: string): void {
   localStorage.setItem(TOKEN_KEYS[type], token);
-  notifyAuthChange(type, "login");
 }
 
 export function getCurrentUser(type: AuthType): any | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   const raw = localStorage.getItem(USER_KEYS[type]);
   if (!raw) return null;
   try {
@@ -38,45 +32,21 @@ export function setCurrentUser(type: AuthType, user: any): void {
 export function clearAuth(type: AuthType): void {
   localStorage.removeItem(TOKEN_KEYS[type]);
   localStorage.removeItem(USER_KEYS[type]);
-  notifyAuthChange(type, "logout");
-}
-
-// ── Auth-change broadcast (for RealtimeProvider, etc.) ──────
-// The RealtimeProvider mounts before the user has logged in, so it sees no
-// token in localStorage and stays in "closed" state. Without a signal it
-// never re-attempts — the user has to hard-refresh after login to get SSE.
-//
-// We fire a custom DOM event here on every login/logout. Listeners in the
-// same tab pick it up via window.addEventListener("los-auth-changed", ...).
-// (The native `storage` event only fires in OTHER tabs, not the writer, so
-// it's not enough on its own.)
-export const AUTH_CHANGED_EVENT = "los-auth-changed";
-
-function notifyAuthChange(type: AuthType, action: "login" | "logout"): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.dispatchEvent(
-      new CustomEvent(AUTH_CHANGED_EVENT, { detail: { type, action } }),
-    );
-  } catch {
-    // Old browsers without CustomEvent constructor — fall back to a plain Event.
-    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
-  }
 }
 
 export function isLoggedIn(type: AuthType): boolean {
   return !!getAccessToken(type);
 }
 
-// ── Silent refresh (single-flight) ───────────────────────────
+// ── Silent Refresh ────────────────────────────────────────
 
 let refreshing: Promise<string | null> | null = null;
 
 async function silentRefresh(): Promise<string | null> {
   try {
     const res = await fetch(`${API_URL}/api/auth/refresh`, {
-      method: "POST",
-      credentials: "include", // sends httpOnly refresh cookie
+      method: 'POST',
+      credentials: 'include',
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -86,28 +56,31 @@ async function silentRefresh(): Promise<string | null> {
   }
 }
 
-// ── Auth fetch wrapper ───────────────────────────────────────
+// ── Auth Fetch Wrapper ────────────────────────────────────
 
 export async function authFetch(
   path: string,
   options: RequestInit = {},
-  type: AuthType,
+  type: AuthType
 ): Promise<any> {
   const token = getAccessToken(type);
+
   const headers: Record<string, string> = {
-    ...((options.headers as Record<string, string>) || {}),
+    ...(options.headers as Record<string, string> || {}),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (!headers["Content-Type"] && !(options.body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
+
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (!headers['Content-Type'] && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
   }
 
   let res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
-    credentials: "include",
+    credentials: 'include',
   });
 
+  // 401 → try silent refresh once
   if (res.status === 401) {
     if (!refreshing) refreshing = silentRefresh();
     const newToken = await refreshing;
@@ -115,33 +88,40 @@ export async function authFetch(
 
     if (newToken) {
       setAccessToken(type, newToken);
-      headers["Authorization"] = `Bearer ${newToken}`;
+      headers['Authorization'] = `Bearer ${newToken}`;
       res = await fetch(`${API_URL}${path}`, {
         ...options,
         headers,
-        credentials: "include",
+        credentials: 'include',
       });
     } else {
-      clearAuth(type);
-      if (typeof window !== "undefined") {
-        window.location.href = LOGIN_PATHS[type];
+      // ── DEV: if token still exists in localStorage, don't wipe it ──
+      // Silent refresh fails in dev because there's no httpOnly cookie.
+      // Only clear and redirect if there was no token to begin with.
+      const currentToken = getAccessToken(type);
+      if (!currentToken) {
+        if (typeof window !== 'undefined') {
+          window.location.href = LOGIN_PATHS[type];
+        }
+        throw new Error('Session expired. Please log in again.');
       }
-      throw new Error("Session expired. Please log in again.");
+      // Token exists but refresh failed — throw so the caller can handle it
+      throw new Error('401');
     }
   }
 
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Request failed");
+  if (!res.ok) throw new Error(data.detail || 'Request failed');
   return data;
 }
 
-// ── Logout ───────────────────────────────────────────────────
+// ── Logout ────────────────────────────────────────────────
 
 export async function logout(type: AuthType): Promise<void> {
   try {
     await fetch(`${API_URL}/api/auth/logout`, {
-      method: "POST",
-      credentials: "include",
+      method: 'POST',
+      credentials: 'include',
     });
   } catch {
     // best effort — clear local state regardless
@@ -149,16 +129,7 @@ export async function logout(type: AuthType): Promise<void> {
   clearAuth(type);
 }
 
-// ── Re-exports for ergonomics ────────────────────────────────
-
+// Re-export types and constants for convenience
 export type { AuthType };
-export {
-  TOKEN_KEYS,
-  USER_KEYS,
-  LOGIN_PATHS,
-  DASHBOARD_PATHS,
-  ROLES,
-  ROLE_PERMISSIONS,
-  hasPermission,
-} from "./roles";
-export type { Role } from "./roles";
+export { TOKEN_KEYS, USER_KEYS, LOGIN_PATHS, DASHBOARD_PATHS } from './roles';
+export { hasPermission, ROLE_PERMISSIONS } from './roles';

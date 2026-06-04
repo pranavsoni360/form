@@ -1,144 +1,130 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Filter } from "lucide-react";
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Banknote } from 'lucide-react';
 
-import { VendorShell } from "@/components/vendor/VendorShell";
-import {
-  getVendorSettlements,
-  type SettlementStatus,
-} from "@/lib/api/vendor";
-import { getAccessToken } from "@/lib/auth";
+import { getVendorSettlements } from '@/lib/api/vendor';
+import { getAccessToken } from '@/lib/auth';
+import { formatCurrency, formatDate } from '@/lib/utils/formatters';
 
-const FILTERS: { value: SettlementStatus | "all"; label: string }[] = [
-  { value: "all",      label: "All" },
-  { value: "pending",  label: "Pending" },
-  { value: "paid",     label: "Paid" },
-  { value: "failed",   label: "Failed" },
-  { value: "disputed", label: "Disputed" },
-];
-
-function fmtINR(n?: number | null) {
-  if (n == null) return "—";
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-}
-
-function SettlementBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    pending: "bg-amber-100 text-amber-700",
-    paid: "bg-emerald-100 text-emerald-700",
-    failed: "bg-rose-100 text-rose-700",
-    disputed: "bg-violet-100 text-violet-700",
-  };
-  return (
-    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${map[status] || "bg-slate-100 text-slate-700"}`}>
-      {status}
-    </span>
-  );
-}
+import EmptyState        from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/skeleton';
 
 export default function VendorSettlementsPage() {
-  const token = React.useMemo(() => getAccessToken("vendor") || "", []);
-  const [filter, setFilter] = React.useState<(typeof FILTERS)[number]["value"]>("all");
+  const router = useRouter();
 
-  const q = useQuery({
-    queryKey: ["vendor", "settlements", filter],
-    queryFn: () =>
-      getVendorSettlements(token, filter === "all" ? undefined : (filter as SettlementStatus)),
-    refetchInterval: 30_000,
-  });
+  const [settlements, setSettlements] = useState<any[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [token, setToken]             = useState('');
 
-  const rows: any[] = q.data?.settlements ?? [];
-  const sum = q.data?.summary ?? { n: 0, total_amount: 0, total_commission: 0 };
-  const netPayout = Math.max(0, (sum.total_amount ?? 0) - (sum.total_commission ?? 0));
+  useEffect(() => {
+    const t = getAccessToken('vendor');
+    if (!t) { router.replace('/vendor/login'); return; }
+    setToken(t);
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    getVendorSettlements(token)
+      .then(data => setSettlements(data.settlements || []))
+      .catch(err => { if (err.message?.includes('401')) router.replace('/vendor/login'); })
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const statusBadge = (status: string) => {
+    const isComplete = status === 'completed';
+    return (
+      <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
+        style={{
+          background: isComplete ? 'rgba(5,150,105,0.1)' : 'rgba(217,119,6,0.1)',
+          color:      isComplete ? '#059669'              : '#D97706',
+        }}>
+        {status}
+      </span>
+    );
+  };
 
   return (
-    <VendorShell title="Settlements" subtitle="Disbursement settlement records and commission split">
-      {/* Summary tiles */}
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <SumTile label="Count" value={sum.n} accent="violet" />
-        <SumTile label="Total disbursed" value={fmtINR(sum.total_amount)} accent="emerald" />
-        <SumTile label="Total commission" value={fmtINR(sum.total_commission)} accent="blue" />
-        <SumTile label="Net bank payout" value={fmtINR(netPayout)} accent="slate" />
+    <div className="space-y-6 animate-fade-in">
+
+      {/* Heading */}
+      <div>
+        <h2 className="text-2xl font-bold"
+          style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+          Settlements
+        </h2>
+        <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+          {settlements.length} settlement{settlements.length !== 1 ? 's' : ''}
+        </p>
       </div>
 
-      {/* Filter pills */}
-      <div className="mb-4 flex items-center gap-2 overflow-x-auto">
-        <Filter className="h-4 w-4 shrink-0 text-slate-400" />
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-              filter === f.value
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      {loading ? (
+        <SkeletonTable rows={5} />
+      ) : settlements.length === 0 ? (
+        <div className="rounded-2xl"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <EmptyState
+            title="No settlements yet"
+            description="Completed disbursements will appear here."
+            icon={<Banknote className="w-10 h-10" />}
+          />
+        </div>
+      ) : (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-        {q.isLoading ? (
-          <div className="py-12 text-center text-sm text-slate-500">Loading…</div>
-        ) : rows.length === 0 ? (
-          <div className="py-16 text-center text-sm text-slate-500">
-            <div className="font-medium">No settlements {filter !== "all" ? `with status "${filter}"` : "yet"}.</div>
-            <div className="mt-1 text-xs">Settlements appear here automatically when you disburse an assigned loan.</div>
+          {/* Header */}
+          <div className="grid grid-cols-12 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', letterSpacing: '0.07em' }}>
+            <div className="col-span-3">Loan ID</div>
+            <div className="col-span-4">Customer</div>
+            <div className="col-span-2">Amount</div>
+            <div className="col-span-2">Date</div>
+            <div className="col-span-1">Status</div>
           </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 dark:bg-gray-800/50">
-              <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                <th className="px-5 py-3 font-medium">Applicant</th>
-                <th className="px-5 py-3 font-medium">Bank</th>
-                <th className="px-5 py-3 font-medium text-right">Amount</th>
-                <th className="px-5 py-3 font-medium text-right">Commission %</th>
-                <th className="px-5 py-3 font-medium text-right">Commission ₹</th>
-                <th className="px-5 py-3 font-medium text-right">Bank payout</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-gray-800">
-              {rows.map((s) => (
-                <tr key={s.id} className="transition hover:bg-slate-50 dark:hover:bg-gray-800/40">
-                  <td className="px-5 py-3 font-medium text-slate-900 dark:text-gray-100">
-                    {s.customer_name || "—"}
-                  </td>
-                  <td className="px-5 py-3 text-slate-700 dark:text-gray-300">{s.bank_name || "—"}</td>
-                  <td className="px-5 py-3 text-right font-medium">{fmtINR(s.amount)}</td>
-                  <td className="px-5 py-3 text-right text-slate-600">{s.commission_pct != null ? `${s.commission_pct}%` : "—"}</td>
-                  <td className="px-5 py-3 text-right text-blue-700">{fmtINR(s.commission_amount)}</td>
-                  <td className="px-5 py-3 text-right text-emerald-700">{fmtINR(s.bank_payout)}</td>
-                  <td className="px-5 py-3"><SettlementBadge status={s.status} /></td>
-                  <td className="px-5 py-3 text-xs text-slate-500">
-                    {s.created_at ? new Date(s.created_at).toLocaleString() : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </VendorShell>
-  );
-}
 
-function SumTile({ label, value, accent }: { label: string; value: number | string; accent: "violet" | "emerald" | "blue" | "slate" }) {
-  const tones = {
-    violet:  "bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300",
-    emerald: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
-    blue:    "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300",
-    slate:   "bg-slate-100 text-slate-700 dark:bg-gray-800 dark:text-gray-200",
-  } as const;
-  return (
-    <div className={`rounded-xl px-4 py-3 ${tones[accent]}`}>
-      <div className="text-xs font-medium uppercase tracking-wider opacity-70">{label}</div>
-      <div className="mt-1 text-xl font-semibold tracking-tight">{value}</div>
+          {settlements.map((s: any, i) => (
+            <div key={s.id || i}
+              className="grid grid-cols-12 px-5 py-4 transition-colors items-center"
+              style={{ borderBottom: i < settlements.length - 1 ? '1px solid var(--border)' : 'none' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-subtle)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+
+              <div className="col-span-3">
+                <span className="text-xs font-medium px-2 py-1 rounded-lg"
+                  style={{ background: 'var(--bg-subtle)', color: 'var(--text-secondary)', fontFamily: 'JetBrains Mono' }}>
+                  {s.loan_id}
+                </span>
+              </div>
+
+              <div className="col-span-4">
+                <p className="text-sm font-semibold"
+                  style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                  {s.customer_name}
+                </p>
+              </div>
+
+              <div className="col-span-2">
+                <span className="text-sm font-semibold"
+                  style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+                  {s.amount ? formatCurrency(s.amount) : '—'}
+                </span>
+              </div>
+
+              <div className="col-span-2">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {formatDate(s.settlement_date || s.created_at)}
+                </span>
+              </div>
+
+              <div className="col-span-1">
+                {statusBadge(s.status || 'pending')}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

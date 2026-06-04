@@ -1,21 +1,20 @@
-// lib/hooks/useApplicationStatus.ts — polled application-status hook for
-// bank / vendor dashboards. Re-fetches every pollIntervalMs without showing
-// the loading spinner on background refreshes.
-"use client";
+﻿// lib/hooks/useApplicationStatus.ts
+'use client';
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from 'react';
+import type { AuthType } from '@/lib/auth/roles';
 
 interface UseApplicationStatusOptions {
-  appId: string | null;
-  fetchFn: (appId: string) => Promise<any>;
-  pollIntervalMs?: number; // default 30s — set to 0 to disable polling
-  enabled?: boolean;
+  appId:         string | null;
+  fetchFn:       (appId: string) => Promise<any>;
+  pollIntervalMs?: number;     // default 30s — set to 0 to disable polling
+  enabled?:        boolean;
 }
 
 interface ApplicationStatusState {
-  data: any | null;
-  loading: boolean;
-  error: string | null;
+  data:       any | null;
+  loading:    boolean;
+  error:      string | null;
   lastFetched: Date | null;
 }
 
@@ -23,50 +22,56 @@ export function useApplicationStatus({
   appId,
   fetchFn,
   pollIntervalMs = 30_000,
-  enabled = true,
+  enabled        = true,
 }: UseApplicationStatusOptions) {
   const [state, setState] = useState<ApplicationStatusState>({
-    data: null,
-    loading: true,
-    error: null,
+    data:        null,
+    loading:     true,
+    error:       null,
     lastFetched: null,
   });
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isMounted = useRef(true);
+  const intervalRef  = useRef<NodeJS.Timeout | null>(null);
+  const isMounted    = useRef(true);
 
-  const doFetch = useCallback(async () => {
+  const fetch = useCallback(async () => {
     if (!appId || !enabled) return;
-    setState((prev) => ({ ...prev, error: null }));
+
+    // Don't show loading spinner on background polls
+    setState(prev => ({ ...prev, error: null }));
+
     try {
       const data = await fetchFn(appId);
       if (!isMounted.current) return;
       setState({ data, loading: false, error: null, lastFetched: new Date() });
     } catch (err) {
       if (!isMounted.current) return;
-      setState((prev) => ({
+      setState(prev => ({
         ...prev,
         loading: false,
-        error: (err as Error).message || "Failed to load application",
+        error: (err as Error).message || 'Failed to load application',
       }));
     }
   }, [appId, fetchFn, enabled]);
 
   // Initial fetch
   useEffect(() => {
-    setState((prev) => ({ ...prev, loading: true }));
-    doFetch();
-  }, [doFetch]);
+    setState(prev => ({ ...prev, loading: true }));
+    fetch();
+  }, [fetch]);
 
   // Polling
   useEffect(() => {
     if (!pollIntervalMs || !enabled) return;
-    intervalRef.current = setInterval(doFetch, pollIntervalMs);
+
+    intervalRef.current = setInterval(fetch, pollIntervalMs);
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [doFetch, pollIntervalMs, enabled]);
+  }, [fetch, pollIntervalMs, enabled]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMounted.current = false;
@@ -74,7 +79,10 @@ export function useApplicationStatus({
     };
   }, []);
 
-  const refetch = useCallback(() => doFetch(), [doFetch]);
+  const refetch = useCallback(() => fetch(), [fetch]);
 
-  return { ...state, refetch };
+  return {
+    ...state,
+    refetch,
+  };
 }

@@ -1,190 +1,100 @@
-"use client";
+﻿'use client';
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import {
-  Activity,
-  AlertOctagon,
-  BarChart3,
-  Briefcase,
-  Building2,
-  CalendarClock,
-  Download,
-  FileText,
-  ListChecks,
-  LogOut,
-  Mic,
-  PhoneCall,
-  Radio,
-  TrendingUp,
-  Upload,
-  Users,
-} from "lucide-react";
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { cn } from '@/lib/utils/cn';
 
-import { cn } from "@/lib/utils";
-import { clearAuth } from "@/lib/auth";
+export interface NavItem {
+  label:    string;
+  href:     string;
+  icon:     React.ReactNode;
+  badge?:   string;
+}
 
-/**
- * VirtualVaani-style sidebar.
- *
- * Top: "vv" logo mark + VIRTUALVAANI / Admin Portal label
- * Body: NAVIGATION section header + nav items (icon + label + active pill)
- * Bottom: user pill + LOS version stamp
- *
- * Active state matches the screenshot exactly: dark-navy filled pill,
- * white text, slightly inset radius.
- */
+interface SidebarProps {
+  items:       NavItem[];
+  portalName:  string;
+  portalColor: string;
+  authType:    'bank' | 'vendor' | 'admin';
+}
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
+const PORTAL_CONFIG = {
+  bank:   { accent: '#2563EB', label: 'Bank Portal',   abbr: 'B' },
+  vendor: { accent: '#059669', label: 'Vendor Portal', abbr: 'V' },
+  admin:  { accent: '#7C3AED', label: 'Admin Portal',  abbr: 'A' },
 };
 
-// Sidebar groups — matches the way an operator thinks about the system:
-// "Show me state" (Dashboard / Live) → "Show me data" (Calls / Recordings /
-// Callbacks / Analytics) → "Take action" (Batch / Exports) → "Show me the
-// system" (Phones / Workers / Errors / Funnel).
-type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
-
-const NAV_GROUPS: ReadonlyArray<NavGroup> = [
-  {
-    label: "Overview",
-    items: [
-      { href: "/ops", label: "Dashboard", icon: BarChart3 },
-      { href: "/ops/live", label: "Live Calls", icon: Radio },
-    ],
-  },
-  {
-    label: "Calls",
-    items: [
-      { href: "/ops/calls", label: "All Calls", icon: ListChecks },
-      { href: "/ops/recordings", label: "Recordings", icon: Mic },
-      { href: "/ops/callbacks", label: "Callbacks", icon: CalendarClock },
-      { href: "/ops/analytics", label: "Analytics", icon: TrendingUp },
-    ],
-  },
-  {
-    label: "Operate",
-    items: [
-      { href: "/ops/batch", label: "Batch", icon: Upload },
-      { href: "/ops/exports", label: "Exports", icon: Download },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { href: "/ops/phones", label: "Phone Pool", icon: PhoneCall },
-      { href: "/ops/workers", label: "Workers", icon: Users },
-      { href: "/ops/errors", label: "Errors", icon: AlertOctagon },
-      { href: "/ops/funnel", label: "Funnel", icon: Activity },
-    ],
-  },
-  {
-    label: "Administration",
-    items: [
-      { href: "/admin/banks", label: "Banks", icon: Building2 },
-      { href: "/admin/vendors", label: "Vendors", icon: Briefcase },
-      { href: "/admin/dashboard", label: "Applications", icon: FileText },
-    ],
-  },
-];
-
-export function Sidebar({ className }: { className?: string }) {
+export default function Sidebar({ items, portalName, authType }: SidebarProps) {
   const pathname = usePathname();
-  const handleLogout = () => {
-    clearAuth("admin");
-    window.location.href = "/admin/login";
-  };
-  return (
-    <aside
-      className={cn(
-        "flex w-64 shrink-0 flex-col border-r border-border bg-card",
-        className
-      )}
-    >
-      {/* Brand */}
-      <Link
-        href="/ops"
-        className="flex items-center gap-3 px-5 py-5"
-        aria-label="VirtualVaani Ops"
-      >
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--solid))] text-white shadow-sm">
-          <span className="font-mono text-sm font-bold tracking-tighter">vv</span>
-        </span>
-        <div className="leading-tight">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-foreground">
-            VirtualVaani
-          </div>
-          <div className="text-sm font-semibold tracking-tight text-foreground">
-            Admin Portal
-          </div>
-        </div>
-      </Link>
+  const config   = PORTAL_CONFIG[authType];
 
-      {/* Navigation */}
-      <div className="flex-1 px-3">
-        <div className="mb-2 mt-2 px-3 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Navigation
+  return (
+    <aside className="fixed left-0 top-0 h-screen w-60 flex flex-col z-30"
+      style={{ background: 'var(--bg-card)', borderRight: '1px solid var(--border)' }}>
+
+      {/* Logo / Brand */}
+      <div className="px-5 py-5" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-3">
+          {/* Logo mark */}
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 brand-gradient">
+            <span className="text-white font-bold text-sm" style={{ fontFamily: 'Plus Jakarta Sans' }}>
+              VV
+            </span>
+          </div>
+          <div>
+            <p className="text-xs font-medium" style={{ color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+              VIRTUALVAANI
+            </p>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)', fontFamily: 'Plus Jakarta Sans' }}>
+              {portalName}
+            </p>
+          </div>
         </div>
-        <nav className="flex flex-col gap-3">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.label} className="space-y-0.5">
-              <div className="mb-1 px-3 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
-                {group.label}
-              </div>
-              {group.items.map((item) => {
-                const isActive =
-                  item.href === "/ops"
-                    ? pathname === "/ops"
-                    : pathname?.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all",
-                      isActive
-                        ? "bg-[hsl(var(--solid))] text-[hsl(var(--solid-foreground))] shadow-sm"
-                        : "text-foreground/70 hover:bg-muted hover:text-foreground"
-                    )}
-                  >
-                    <Icon
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        isActive ? "text-white" : "text-muted-foreground group-hover:text-foreground"
-                      )}
-                    />
-                    <span className="font-medium">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
       </div>
 
-      {/* Footer: user pill */}
-      <div className="mx-3 mb-4 mt-2 rounded-xl border border-border bg-muted/40 p-3">
-        <div className="flex items-center gap-3">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/15 text-xs font-bold text-primary ring-1 ring-primary/30">
-            A
-          </span>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-xs font-semibold">Admin Portal</div>
-            <div className="text-[10px] text-muted-foreground">
-              VirtualVaani LOS v1.0
-            </div>
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+        <p className="section-label mb-2">Navigation</p>
+        {items.map(item => {
+          const active = pathname === item.href ||
+            (item.href !== '/' && pathname.startsWith(item.href));
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn('nav-item', active && 'active')}
+            >
+              <span className="w-5 h-5 flex-shrink-0 flex items-center justify-center">
+                {item.icon}
+              </span>
+              <span className="flex-1">{item.label}</span>
+              {item.badge && (
+                <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-full"
+                  style={{ background: config.accent + '20', color: config.accent }}>
+                  {item.badge}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Bottom — portal tag */}
+      <div className="px-4 py-4" style={{ borderTop: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-2 px-2 py-2 rounded-xl"
+          style={{ background: 'var(--bg-subtle)' }}>
+          <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ background: config.accent }}>
+            <span className="text-white text-[10px] font-bold">{config.abbr}</span>
           </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            aria-label="Sign out"
-            className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-card hover:text-destructive"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
+          <div className="min-w-0">
+            <p className="text-xs font-medium truncate" style={{ color: 'var(--text-secondary)' }}>
+              {config.label}
+            </p>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              VirtualVaani LOS v1.0
+            </p>
+          </div>
         </div>
       </div>
     </aside>

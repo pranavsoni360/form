@@ -1,204 +1,242 @@
+﻿/* ── Fonts ─────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Design tokens — VirtualVaani aesthetic.
+/* ── Design Tokens ──────────────────────────────────────── */
+:root {
+  --brand-navy:      #1A1A2E;
+  --brand-red:       #E63946;
+  --brand-red-dark:  #C1121F;
 
-   Light-mode default (matches the admin/bank login + Banks management
-   screenshots): warm cream background with a subtle dot grid, white card
-   surfaces, dark navy text, purple accent for admin chrome + blue gradient
-   for primary CTAs. Dark mode is opt-in via the existing `los-theme`
-   toggle so the chrome stays usable at night.
+  --bg:              #F8F9FC;
+  --bg-card:         #FFFFFF;
+  --bg-subtle:       #F1F5F9;
+  --border:          #E2E8F0;
+  --border-strong:   #CBD5E1;
 
-   The shadcn semantic token names are kept so every shadcn primitive +
-   Tremor chart inherits the palette without per-component edits.
-   ────────────────────────────────────────────────────────────────────────── */
+  --text-primary:    #0F172A;
+  --text-secondary:  #475569;
+  --text-muted:      #94A3B8;
 
-@layer base {
-  :root {
-    /* Surfaces */
-    --background:        40 30% 97%;            /* #FAF8F4  warm cream */
-    --foreground:        222 47% 11%;           /* #0F172A  near-black navy */
-    --surface:           0 0% 100%;             /* #FFFFFF  cards */
-    --elevated:          40 30% 99%;            /* hover */
+  --success:         #059669;
+  --warning:         #D97706;
+  --danger:          #DC2626;
+  --info:            #2563EB;
 
-    --card:              0 0% 100%;
-    --card-foreground:   222 47% 11%;
-    --popover:           0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-
-    /* Brand — admin purple. Used on icon badges + accent fills. */
-    --primary:           263 70% 55%;           /* #7C3AED */
-    --primary-foreground: 0 0% 100%;
-
-    /* "Solid" CTA — dark navy. Used on primary buttons in the admin chrome.
-       Bank-portal CTAs override this via Tailwind utility classes (blue
-       gradient) at the call site. */
-    --solid:             222 47% 11%;           /* #0F172A */
-    --solid-foreground:  0 0% 100%;
-
-    /* Accent — bright blue, used for headline highlight words ("efficiently") */
-    --accent:            217 91% 60%;           /* #3B82F6 */
-    --accent-foreground: 0 0% 100%;
-
-    /* Muted surfaces (input bg, soft fills) */
-    --muted:             40 18% 94%;            /* #F0EDE6 */
-    --muted-foreground:  217 19% 35%;           /* #475569 */
-    --secondary:         40 18% 94%;
-    --secondary-foreground: 222 47% 11%;
-
-    --destructive:       0 84% 60%;             /* #EF4444  also = "with confidence" red */
-    --destructive-foreground: 0 0% 100%;
-
-    --border:            40 12% 89%;            /* #EAE7E0  soft warm border */
-    --input:             40 12% 89%;
-    --ring:              263 70% 55%;
-
-    --success:           142 71% 38%;           /* #16A34A */
-    --success-foreground: 0 0% 100%;
-    --warning:           38 92% 50%;            /* #F59E0B */
-    --warning-foreground: 222 47% 11%;
-    --info:              217 91% 60%;
-    --info-foreground:   0 0% 100%;
-
-    --radius:            0.625rem;              /* 10px — matches buttons + cards */
-  }
-
-  .dark {
-    /* Dark mode keeps the dotted-cream vibe replaced by a deep navy canvas */
-    --background:        222 47% 6%;            /* #0A0F1C */
-    --foreground:        40 30% 96%;
-    --surface:           222 47% 9%;            /* #131A2A */
-    --elevated:          222 40% 13%;
-
-    --card:              222 47% 9%;
-    --card-foreground:   40 30% 96%;
-    --popover:           222 47% 9%;
-    --popover-foreground: 40 30% 96%;
-
-    --primary:           263 75% 65%;           /* lifted violet for dark bg */
-    --primary-foreground: 0 0% 100%;
-
-    --solid:             0 0% 100%;             /* invert: white on dark */
-    --solid-foreground:  222 47% 11%;
-
-    --accent:            217 91% 65%;
-    --accent-foreground: 222 47% 11%;
-
-    --muted:             222 30% 16%;
-    --muted-foreground:  217 14% 65%;
-    --secondary:         222 30% 16%;
-    --secondary-foreground: 40 30% 96%;
-
-    --destructive:       0 84% 65%;
-    --destructive-foreground: 0 0% 100%;
-
-    --border:            222 25% 20%;
-    --input:             222 25% 20%;
-    --ring:              263 75% 65%;
-
-    --success:           142 71% 50%;
-    --warning:           38 92% 60%;
-    --info:              217 91% 65%;
-  }
-
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
-  }
-  .font-mono {
-    font-variant-numeric: tabular-nums;
-  }
+  --shadow-sm:       0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --shadow-md:       0 4px 16px 0 rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg:       0 10px 32px 0 rgb(0 0 0 / 0.10), 0 4px 12px -4px rgb(0 0 0 / 0.08);
+  --shadow-card:     0 0 0 1px var(--border), 0 2px 8px 0 rgb(0 0 0 / 0.06);
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   VirtualVaani specifics — patterns + helpers.
-   ────────────────────────────────────────────────────────────────────────── */
+.dark {
+  --bg:              #0F172A;
+  --bg-card:         #1E293B;
+  --bg-subtle:       #162032;
+  --border:          #334155;
+  --border-strong:   #475569;
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+  --text-primary:    #F1F5F9;
+  --text-secondary:  #94A3B8;
+  --text-muted:      #64748B;
 
-  /* Subtle dot grid background — used on the page canvas + login hero panels.
-     Two layered radial gradients ~16px apart give the texture seen in the
-     VirtualVaani screenshots. */
-  .bg-dotgrid {
-    background-image: radial-gradient(
-      hsl(var(--foreground) / 0.045) 1px,
-      transparent 1px
-    );
-    background-size: 16px 16px;
-  }
-  .dark .bg-dotgrid {
-    background-image: radial-gradient(
-      hsl(var(--foreground) / 0.06) 1px,
-      transparent 1px
-    );
-  }
-
-  /* Hero panel for login pages — deep navy gradient + white dot grid. */
-  .bg-hero-navy {
-    background:
-      radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px) 0 0 / 18px 18px,
-      linear-gradient(135deg, #0F172A 0%, #1E293B 60%, #1E2D4A 100%);
-  }
-
-  /* Soft icon badge — rounded-square (~36px) with tinted fill + brand-color icon */
-  .badge-icon {
-    @apply grid h-9 w-9 place-items-center rounded-xl ring-1;
-  }
-
-  /* Primary CTA — dark navy with subtle hover lift, used on Admin Portal */
-  .btn-solid {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-[hsl(var(--solid))] px-5 py-2.5 text-sm font-medium text-[hsl(var(--solid-foreground))] shadow-sm transition-all hover:translate-y-[-1px] hover:shadow-md active:translate-y-0;
-  }
-
-  /* Blue gradient CTA — used on Bank Portal sign-in + Add bank */
-  .btn-gradient {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:shadow-md active:translate-y-[1px];
-    background-image: linear-gradient(135deg, #2563EB 0%, #3B82F6 100%);
-  }
-  .btn-gradient:hover {
-    background-image: linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%);
-  }
+  --shadow-sm:       0 1px 3px 0 rgb(0 0 0 / 0.3);
+  --shadow-md:       0 4px 16px 0 rgb(0 0 0 / 0.3);
+  --shadow-lg:       0 10px 32px 0 rgb(0 0 0 / 0.4);
+  --shadow-card:     0 0 0 1px var(--border), 0 2px 8px 0 rgb(0 0 0 / 0.2);
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Legacy compatibility — preserved verbatim so the existing customer-facing
-   form pages (admin, OTP, application form) keep their original look.
-   ────────────────────────────────────────────────────────────────────────── */
+/* ── Base ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
 
+html {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+code, kbd, pre, .mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+::selection {
+  background: #E63946;
+  color: #fff;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 100px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Auth background — dot grid ─────────────────────────── */
+.auth-bg {
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--border-strong) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ── Brand gradients ────────────────────────────────────── */
+.brand-gradient {
+  background: linear-gradient(135deg, #1A1A2E 0%, #16213E 50%, #0F3460 100%);
+}
+
+.brand-gradient-red {
+  background: linear-gradient(135deg, #E63946 0%, #C1121F 100%);
+}
+
+/* ── Platform card ──────────────────────────────────────── */
+.platform-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+/* ── Nav item ───────────────────────────────────────────── */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+  width: 100%;
+  text-decoration: none;
+}
+
+.nav-item:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: linear-gradient(135deg, rgb(26 26 46 / 0.08) 0%, rgb(15 52 96 / 0.06) 100%);
+  color: #1A1A2E;
+  font-weight: 600;
+}
+
+.dark .nav-item.active {
+  background: rgb(96 165 250 / 0.1);
+  color: #93C5FD;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  padding: 0 12px;
+  margin-bottom: 4px;
+}
+
+/* ── Dark mode form elements ────────────────────────────── */
+.dark select {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.dark select option {
+  background: var(--bg-subtle);
+}
+
+/* ── Animations ─────────────────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-4px); }
-  40% { transform: translateX(4px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(3px); }
-}
-@keyframes shrink {
-  from { width: 100%; }
-  to { width: 0%; }
-}
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-20px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.dark { color-scheme: dark; }
-.dark select {
-  background-color: #1e2433;
-  color: rgb(243 244 246);
-  border-color: rgb(75 85 99);
+@keyframes fadeInLeft {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
-.dark input::placeholder,
-.dark textarea::placeholder { color: rgb(156 163 175); }
-.dark select option { background-color: #161b27; }
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20%     { transform: translateX(-4px); }
+  40%     { transform: translateX(4px); }
+  60%     { transform: translateX(-3px); }
+  80%     { transform: translateX(3px); }
+}
+
+@keyframes shrink {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ── Animation utilities ────────────────────────────────── */
+.animate-fade-in      { animation: fadeIn 0.3s ease-out both; }
+.animate-fade-in-left { animation: fadeInLeft 0.35s ease-out both; }
+.animate-scale-in     { animation: scaleIn 0.2s ease-out both; }
+.animate-pulse-soft   { animation: pulse-soft 2s ease-in-out infinite; }
+
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 60ms; }
+.stagger > *:nth-child(3) { animation-delay: 120ms; }
+.stagger > *:nth-child(4) { animation-delay: 180ms; }
+.stagger > *:nth-child(5) { animation-delay: 240ms; }
+
+/* ── Focus visible ──────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid #E63946;
+  outline-offset: 2px;
+}
+
+/* ── Color scheme ───────────────────────────────────────── */
+.dark { color-scheme: dark; }
+
+/* ── Text balance ───────────────────────────────────────── */
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+}

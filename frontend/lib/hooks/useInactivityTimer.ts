@@ -1,44 +1,42 @@
-// lib/hooks/useInactivityTimer.ts — fire onWarning after `warningMs` idle, then
-// onLogout after `logoutMs` total idle. Listens for mouse / key / scroll /
-// touch activity to reset the timers.
-"use client";
+﻿// lib/hooks/useInactivityTimer.ts
+'use client';
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from 'react';
 import {
   INACTIVITY_WARNING_MS,
   INACTIVITY_LOGOUT_MS,
-} from "@/lib/utils/constants";
+} from '@/lib/utils/constants';
 
 const ACTIVITY_EVENTS = [
-  "mousedown",
-  "keypress",
-  "scroll",
-  "touchstart",
-  "mousemove",
+  'mousedown',
+  'keypress',
+  'scroll',
+  'touchstart',
+  'mousemove',
 ] as const;
 
 interface UseInactivityTimerOptions {
   enabled?: boolean;
-  warningMs?: number;
-  logoutMs?: number;
-  onWarning: () => void;
-  onLogout: () => void;
+  warningMs?:  number;
+  logoutMs?:   number;
+  onWarning:   () => void;   // show warning modal / toast
+  onLogout:    () => void;   // execute logout + redirect
 }
 
 export function useInactivityTimer({
-  enabled = true,
-  warningMs = INACTIVITY_WARNING_MS,
-  logoutMs = INACTIVITY_LOGOUT_MS,
+  enabled     = true,
+  warningMs   = INACTIVITY_WARNING_MS,
+  logoutMs    = INACTIVITY_LOGOUT_MS,
   onWarning,
   onLogout,
 }: UseInactivityTimerOptions) {
   const warningTimer = useRef<NodeJS.Timeout | null>(null);
-  const logoutTimer = useRef<NodeJS.Timeout | null>(null);
-  const warned = useRef(false);
+  const logoutTimer  = useRef<NodeJS.Timeout | null>(null);
+  const warned       = useRef(false);
 
   const clearTimers = useCallback(() => {
     if (warningTimer.current) clearTimeout(warningTimer.current);
-    if (logoutTimer.current) clearTimeout(logoutTimer.current);
+    if (logoutTimer.current)  clearTimeout(logoutTimer.current);
   }, []);
 
   const resetTimers = useCallback(() => {
@@ -49,6 +47,8 @@ export function useInactivityTimer({
     warningTimer.current = setTimeout(() => {
       warned.current = true;
       onWarning();
+
+      // After warning fires, start the final logout countdown
       logoutTimer.current = setTimeout(() => {
         onLogout();
       }, logoutMs - warningMs);
@@ -57,19 +57,22 @@ export function useInactivityTimer({
 
   useEffect(() => {
     if (!enabled) return;
+
     resetTimers();
-    ACTIVITY_EVENTS.forEach((event) =>
-      window.addEventListener(event, resetTimers, { passive: true }),
+
+    ACTIVITY_EVENTS.forEach(event =>
+      window.addEventListener(event, resetTimers, { passive: true })
     );
+
     return () => {
       clearTimers();
-      ACTIVITY_EVENTS.forEach((event) =>
-        window.removeEventListener(event, resetTimers),
+      ACTIVITY_EVENTS.forEach(event =>
+        window.removeEventListener(event, resetTimers)
       );
     };
   }, [enabled, resetTimers, clearTimers]);
 
-  // Call when user dismisses the warning ("Stay logged in" button).
+  // Call this when user confirms they want to stay logged in
   const extendSession = useCallback(() => {
     resetTimers();
   }, [resetTimers]);

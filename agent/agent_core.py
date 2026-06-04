@@ -201,6 +201,11 @@ async def entrypoint(ctx: JobContext):
                     google.LLM(
                         model="gemini-2.5-flash",
                         temperature=0.4,
+                        # Disable Gemini 2.5 "thinking": it spends seconds on
+                        # internal reasoning tokens BEFORE the first response
+                        # token, which is fatal for a real-time voice agent
+                        # (turns the ~1s TTFT into 3-6s). thinking_budget=0 = off.
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
                         http_options=genai_types.HttpOptions(timeout=30000),
                     ),
                     groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
@@ -228,6 +233,18 @@ async def entrypoint(ctx: JobContext):
             discard_audio_if_uninterruptible=True,
             userdata={"session": session},
         )
+
+        # ── Latency instrumentation — logs per-turn EOU delay, LLM TTFT, and
+        # TTS TTFB so we can see exactly which stage costs what. Logging only,
+        # zero behavioral impact. View: journalctl -u los-agent-* | grep METRIC
+        from livekit.agents import metrics as _lk_metrics
+
+        @agent_session.on("metrics_collected")
+        def _on_metrics_collected(ev):
+            try:
+                _lk_metrics.log_metrics(ev.metrics)
+            except Exception:
+                pass
 
         @agent_session.on("user_input_transcribed")
         def on_user_transcript(event):

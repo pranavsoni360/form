@@ -312,10 +312,6 @@ export default function ApplicationDetailPage() {
 
                 {canSupervisorAct && (
                   <>
-                    <button onClick={() => handleAction(() => supervisorApprove(token, appId, notes))} disabled={actionLoading}
-                      className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1">
-                      <CheckCircle2 className="w-4 h-4" /> Final Approve
-                    </button>
                     <button onClick={() => { if (showReject && rejectionReason) handleAction(() => supervisorReject(token, appId, notes, rejectionReason)); else setShowReject(true); }} disabled={actionLoading}
                       className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center gap-1">
                       <XCircle className="w-4 h-4" /> {showReject ? 'Confirm Reject' : 'Reject'}

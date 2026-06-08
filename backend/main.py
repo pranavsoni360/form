@@ -1809,8 +1809,8 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found or not in your bank")
     current_status = app_row["status"]
-    if current_status not in ("approved", "documents_submitted"):
-        raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'approved' or 'documents_submitted'.")
+    if current_status not in ("officer_approved", "approved", "documents_submitted"):
+        raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'officer_approved', 'approved' or 'documents_submitted'.")
     await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'approved', approved_at = $1, supervisor_id = $2, supervisor_notes = $3

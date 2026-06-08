@@ -199,14 +199,25 @@ async def entrypoint(ctx: JobContext):
             llm=FallbackAdapter(
                 [
                     google.LLM(
-                        model="gemini-2.5-flash",
+                        # flash-lite = Google's low-latency variant. Measured on
+                        # this key: ~0.8s TTFT and 8/8 clean responses, vs full
+                        # 2.5-flash at ~1.4s with intermittent 503 "overloaded"
+                        # + streaming "finish_reason: None" empties — those empties
+                        # stalled turns (agent went silent) and forced a mid-call
+                        # Groq fallback, which is the lag/"agent kuch bola nahi"
+                        # users saw. Lighter model = higher free-tier throughput
+                        # + fewer throttles. Groq stays as the instant fallback.
+                        model="gemini-2.5-flash-lite",
                         temperature=0.4,
                         # Disable Gemini 2.5 "thinking": it spends seconds on
                         # internal reasoning tokens BEFORE the first response
                         # token, which is fatal for a real-time voice agent
                         # (turns the ~1s TTFT into 3-6s). thinking_budget=0 = off.
                         thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
-                        http_options=genai_types.HttpOptions(timeout=30000),
+                        # 10s per-request ceiling (was 30s): if Gemini ever hangs
+                        # producing no tokens, abort fast and fall to Groq instead
+                        # of leaving the customer in 30s of dead air.
+                        http_options=genai_types.HttpOptions(timeout=10000),
                     ),
                     groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
                     groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),

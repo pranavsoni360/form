@@ -1,5 +1,5 @@
 # agent/los_updated.py
-# Entry point for the Pusad Urban Bank loan-enquiry agent.
+# Entry point for the ABC Bank loan-enquiry agent.
 # All logic lives in agent_core.py, session.py, tools.py, prompts.py, config.py.
 import os
 import logging

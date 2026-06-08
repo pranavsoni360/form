@@ -335,10 +335,10 @@ async def entrypoint(ctx: JobContext):
                 part1 = f"Hello, मैं {session.agent_name} {session.bank_name} से बोल {bol} हूँ। यह call quality के लिए record हो रही है।"
                 part2 = f"क्या मेरी बात {session.customer_name} जी से हो रही है?"
 
-            handle1 = agent_session.say(part1, allow_interruptions=False, add_to_chat_ctx=False)
+            handle1 = agent_session.say(part1, allow_interruptions=False, add_to_chat_ctx=True)
             await handle1
             await asyncio.sleep(0.2)
-            handle2 = agent_session.say(part2, allow_interruptions=True, add_to_chat_ctx=False)
+            handle2 = agent_session.say(part2, allow_interruptions=True, add_to_chat_ctx=True)
             await handle2
         except Exception as e:
             logger.warning(f"Greeting failed: {e}")

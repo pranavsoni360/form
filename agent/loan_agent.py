@@ -1,6 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Loan Enquiry Agent - Pusad Urban Bank 🏦
+Loan Enquiry Agent - ABC Bank 🏦
 =========================================
 Updated: Natural friendly flow + Recording disclaimer at very start
 Production-hardened with clean shutdown, transcript-first save, and error recovery.
@@ -125,6 +125,7 @@ class LoanEnquirySession:
         self.email           = metadata.get("email", "")
         self.current_address = metadata.get("current_address", "")
         self.memory = metadata.get("memory", "")  # RAG memory from previous calls
+        self.bank_name = metadata.get("bank_name", "ABC Bank")
 
         self.customer_interested = None
         self.interest_reason = None
@@ -510,7 +511,7 @@ def build_loan_enquiry_instructions(session: LoanEnquirySession) -> str:
     memory_block = f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🧠 RAG MEMORY (PAST CALL DETAILS)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{session.memory}\n" if session.memory else ""
 
     if session.customer_type == CustomerType.EXISTING:
-        return f"""ROLE: {session.agent_name}, पुसद अर्बन बैंक का loan specialist। मौजूदा ग्राहक।
+        return f"""ROLE: {session.agent_name}, {session.bank_name} का banking associate। मौजूदा ग्राहक।
 GOAL: पहचान पुष्टि → Loan offer → Interest check → Details collect → Form भेजो → Call end।
 STYLE: Warm, professional, naturally conversational — जैसे असली relationship manager। छोटे वाक्य, एक बार में एक सवाल। हल्के acknowledgments ("जी", "अच्छा", "ठीक है जी", "नोट कर लिया") use करो। जवाब short रखो — 1-2 वाक्य, ताकि latency कम और बातचीत smooth रहे।
 
@@ -547,7 +548,7 @@ RULES:
 """
 
     else:  # नया ग्राहक
-        return f"""ROLE: {session.agent_name}, पुसद अर्बन बैंक का loan specialist। नया ग्राहक।
+        return f"""ROLE: {session.agent_name}, {session.bank_name} का banking associate। नया ग्राहक।
 GOAL: पहचान पुष्टि → Bank intro → Loan offer → Interest check → Details collect → Form भेजो → Call end।
 STYLE: Warm, professional, naturally conversational — जैसे एक असली bank relationship manager बात करता है। छोटे वाक्य। एक बार में एक सवाल। कभी-कभार हल्के acknowledgments दो: "जी", "अच्छा", "समझ गया जी", "बिल्कुल"। Customer के जवाब सुनकर कभी short reaction दो ("ठीक है", "नोट कर लिया") फिर अगला सवाल। Robotic मत लगो।
 
@@ -563,8 +564,8 @@ LOAN ELIGIBILITY CRITERIA (नए ग्राहकों को clearly बत
 
 FLOW:
 1. ग्राहक हाँ बोले तो — पहले bank का brief intro दो:
-   "पुसद अर्बन बैंक Vidarbha में 30+ सालों से सेवा कर रहा है — सबसे कम interest rates और fast approval के साथ।"
-   फिर loan offer: "आपके लिए Business, Personal या Education loan के options हैं। क्या आप कोई loan लेना चाहेंगे?"
+   "{session.bank_name} में हम Personal Loan और Consumer Loan offer करते हैं — बिल्कुल simple process, कम documents, और competitive interest rates।"
+   फिर पूछो: "क्या आप loan लेने में interested हैं?"
 2. Loan details और eligibility criteria clearly बताओ (ऊपर देखो)।
 3. Strong interest पर transition: "बहुत अच्छा! बस कुछ छोटे-छोटे सवाल पूछने हैं, उसके बाद WhatsApp पर form भेजूँगा। शुरू करते हैं —"
 4. एक-एक करके पूछो। हर जवाब के बाद हल्का सा acknowledge करो ("जी, नोट कर लिया", "ठीक है जी") ताकि customer को लगे कि उनकी बात सुनी और दर्ज की जा रही है। शुरू में एक बार बोलो: "मैं आपके जवाब note करता/करती जाऊँगा/जाऊँगी, ताकि form में सब सही आए।" सवाल:
@@ -791,23 +792,24 @@ async def entrypoint(ctx: JobContext):
             logger.info("🔊 Triggering hardcoded split greeting")
 
             # Order: 1) Intro  2) Recording disclaimer  3) Identity check
+            bank = getattr(session, "bank_name", "ABC Bank")
             if session.language == "english":
-                part1 = f"Hello, this is {session.agent_name} calling from Pusad Urban Bank. This call is being recorded for security and quality purposes."
+                part1 = f"Hello, this is {session.agent_name} calling from {bank}. This call is being recorded for security and quality purposes."
                 part2 = f"Am I speaking with {session.customer_name}?"
             elif session.language == "marathi":
                 bolte = "बोलतेय" if session.gender == "female" else "बोलतोय"
-                part1 = f"नमस्कार, मी {session.agent_name}, पुसद अर्बन बँक मधून {bolte}. ही कॉल सुरक्षेसाठी रेकॉर्ड केली जात आहे."
+                part1 = f"नमस्कार, मी {session.agent_name}, {bank} मधून {bolte}. ही कॉल सुरक्षेसाठी रेकॉर्ड केली जात आहे."
                 part2 = f"मी {session.customer_name} जींशी बोलतोय का?"
             else:  # Hindi
                 bol = "रही" if session.gender == "female" else "रहा"
-                part1 = f"Hello, मैं {session.agent_name} बोल {bol} हूँ पुसद अर्बन बैंक से। यह कॉल सुरक्षा के लिए रिकॉर्ड की जा रही है।"
+                part1 = f"नमस्ते, मैं {session.agent_name} बोल {bol} हूँ {bank} से। यह कॉल सुरक्षा और गुणवत्ता के लिए रिकॉर्ड की जा रही है।"
                 part2 = f"क्या मेरी बात {session.customer_name} जी से हो रही है?"
 
             # Say intro+disclaimer first (non-interruptible, covers AEC warmup)
             handle1 = agent_session.say(
                 part1,
                 allow_interruptions=False,
-                add_to_chat_ctx=False,
+                add_to_chat_ctx=True,
             )
             await handle1
 
@@ -818,7 +820,7 @@ async def entrypoint(ctx: JobContext):
             handle2 = agent_session.say(
                 part2,
                 allow_interruptions=True,
-                add_to_chat_ctx=False,
+                add_to_chat_ctx=True,
             )
             await handle2
         except Exception as e:

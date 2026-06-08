@@ -551,7 +551,7 @@ class Dispatcher:
         customer_gender = (cd.get("gender") if isinstance(cd, dict) else None) or "male"
         agent_purpose = call.get("agent_type", "loan_enquiry")
         bank_name_for_agent = ("Union Bank of India" if agent_purpose == "account_opening"
-                               else "Pusad Urban Bank")
+                               else "ABC Bank")
 
         try:
             # M5: wrap each LiveKit op with circuit breaker + timeout.

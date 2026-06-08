@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { API_URL } from '@/lib/api';
-import { Lock, CheckCircle2, Loader2, Phone, Shield, Zap, Clock } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
+import { Loader2, AlertTriangle, Lock, Shield, CheckCircle2, Clock, Phone } from 'lucide-react';
 
 export default function Home() {
   return <Suspense><OTPPage /></Suspense>;
@@ -39,7 +38,7 @@ function OTPPage() {
   const handleSendOTPRef = useRef<() => void>(() => {});
 
   const handleSendOTP = async () => {
-    if (phone.length !== 10) { setError('Enter valid 10-digit mobile number'); return; }
+    if (phone.length !== 10) { setError('Enter a valid 10-digit mobile number'); return; }
     setLoading(true); setError('');
     try {
       const res = await fetch(`${API_URL}/api/request-otp`, {
@@ -64,7 +63,7 @@ function OTPPage() {
   handleSendOTPRef.current = handleSendOTP;
 
   const handleVerifyOTP = async () => {
-    if (otp.length !== 6) { setError('Enter 6-digit OTP'); return; }
+    if (otp.length !== 6) { setError('Enter the 6-digit OTP'); return; }
     setLoading(true); setError('');
     try {
       const res = await fetch(`${API_URL}/api/verify-otp-session`, {
@@ -78,207 +77,200 @@ function OTPPage() {
         sessionStorage.setItem('session_expiry', data.expires_at);
         router.push('/loan-form');
       } else {
-        setError(data.detail || 'Invalid OTP');
+        setError(data.detail || 'Invalid OTP. Please try again.');
       }
     } catch { setError('Verification failed. Try again.'); }
     finally { setLoading(false); }
   };
 
+  const tiles = [
+    { icon: Phone,        title: 'Mobile OTP',   sub: 'Secure login' },
+    { icon: Shield,       title: 'KYC Verified',  sub: 'Aadhaar + PAN' },
+    { icon: Clock,        title: '24–48 hrs',     sub: 'Decision time' },
+  ];
+
   return (
-    <div className="min-h-screen flex" style={{ background: '#F8F9FC' }}>
+    <div className="min-h-screen flex">
 
-      {/* ── LEFT: Brand panel ── */}
-      <div className="hidden lg:flex flex-col justify-between w-[46%] p-10 text-white relative overflow-hidden"
-        style={{ background: 'linear-gradient(145deg, #1A1A2E 0%, #0F3460 100%)' }}>
+      {/* ── LEFT PANEL ── */}
+      <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
+        style={{ background: 'linear-gradient(160deg, #0A0F1C 0%, #1A1A2E 50%, #0F0A1E 100%)' }}>
 
-        {/* Decorative circles */}
-        <div className="absolute top-[-80px] right-[-80px] w-72 h-72 rounded-full opacity-10"
-          style={{ background: '#2563EB' }} />
-        <div className="absolute bottom-[-60px] left-[-60px] w-56 h-56 rounded-full opacity-10"
-          style={{ background: '#2563EB' }} />
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+        <div className="absolute top-0 right-0 w-96 h-96 pointer-events-none"
+          style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)', transform: 'translate(20%, -20%)' }} />
 
         {/* Logo */}
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-lg"
-            style={{ background: '#2563EB', fontFamily: 'var(--font-heading)' }}>
-            VV
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', fontFamily: 'var(--font-heading)' }}>
+            vv
           </div>
-          <span className="font-semibold text-lg tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
-            VirtualVaani
-          </span>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>VirtualVaani</div>
+            <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Loan Application Portal</div>
+          </div>
         </div>
 
-        {/* Centre content */}
+        {/* Hero text */}
         <div className="relative z-10">
-          <h2 className="text-4xl font-bold leading-tight mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
-            Smart lending,<br />simplified.
-          </h2>
-          <p className="text-base mb-10" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
-            Complete your loan application in minutes with our AI-assisted process.
+          <h1 className="text-[2.75rem] font-bold leading-[1.1] text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
+            Apply for a loan<br />from the comfort<br />
+            <span style={{ color: '#F87171' }}>of your home.</span>
+          </h1>
+          <p className="text-base leading-relaxed mb-10" style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-body)' }}>
+            Quick digital application with Aadhaar and PAN verification. Get a decision in 24–48 hours.
           </p>
-          <div className="space-y-5">
-            {[
-              { icon: Shield, text: 'Bank-grade security with DigiLocker KYC' },
-              { icon: Zap,    text: 'AI voice agent pre-fills your application' },
-              { icon: Clock,  text: 'Decision within 24–48 hours' },
-            ].map(({ icon: Icon, text }) => (
-              <div key={text} className="flex items-center gap-4">
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(37,99,235,0.25)' }}>
-                  <Icon className="w-4 h-4" style={{ color: '#60A5FA' }} />
-                </div>
-                <p className="text-sm" style={{ color: '#CBD5E1', fontFamily: 'var(--font-body)' }}>{text}</p>
+          {/* Feature tiles */}
+          <div className="grid grid-cols-3 gap-3">
+            {tiles.map(({ icon: Icon, title, sub }) => (
+              <div key={title} className="rounded-xl p-3 text-center"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <Icon className="w-5 h-5 mx-auto mb-1.5" style={{ color: 'rgba(255,255,255,0.5)' }} />
+                <p className="text-xs font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>{title}</p>
+                <p className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'var(--font-body)' }}>{sub}</p>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Bottom */}
-        <p className="text-xs relative z-10" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+        <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
           © 2026 VirtualVaani · Powered by Virtual Galaxy Infotech
         </p>
       </div>
 
-      {/* ── RIGHT: Form panel ── */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12 relative">
-        <div className="absolute top-4 right-4"><ThemeToggle /></div>
+      {/* ── RIGHT PANEL ── */}
+      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative" style={{ background: '#fff' }}>
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ backgroundImage: 'radial-gradient(circle, #CBD5E1 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.4 }} />
 
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-sm relative z-10">
 
           {/* Mobile logo */}
-          <div className="flex items-center justify-center gap-3 mb-8 lg:hidden">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-base"
-              style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>VV</div>
-            <span className="font-semibold text-lg" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>
-              VirtualVaani
-            </span>
+          <div className="flex items-center gap-3 mb-8 lg:hidden">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-xs"
+              style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>vv</div>
+            <span className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>VirtualVaani</span>
           </div>
 
-          {/* Card */}
-          <div className="bg-white rounded-2xl shadow-sm p-8" style={{ border: '1px solid #E2E8F0' }}>
-
-            <div className="mb-7">
-              <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>
-                {step === 'phone' ? 'Loan Application' : 'Verify OTP'}
-              </h1>
-              <p className="text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
-                {loading && autoTriggered.current && step === 'phone'
-                  ? 'Sending OTP to your WhatsApp...'
-                  : step === 'phone'
-                    ? 'Enter your registered mobile number to continue'
-                    : `OTP sent to WhatsApp for +91 ${phone}`}
-              </p>
+          {/* Portal icon */}
+          <div className="mb-6">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
+              style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+              <Lock className="w-6 h-6" style={{ color: '#2563EB' }} />
             </div>
-
-            {/* Phone step */}
-            {step === 'phone' && (
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>
-                    Mobile Number <span style={{ color: '#DC2626' }}>*</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <div className="flex items-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm flex-shrink-0"
-                      style={{ background: '#1A1A2E', color: '#fff', fontFamily: 'var(--font-body)' }}>
-                      <Phone className="w-4 h-4" /> +91
-                    </div>
-                    <input type="tel" value={phone}
-                      onChange={e => { setPhone(e.target.value.replace(/\D/g,'').slice(0,10)); setError(''); }}
-                      className="flex-1 min-w-0 px-4 py-3 rounded-xl text-base outline-none transition"
-                      style={{ border: '1.5px solid #E2E8F0', color: '#0F172A', background: '#fff',
-                        fontFamily: 'var(--font-body)', fontSize: '1.05rem' }}
-                      onFocus={e => (e.target.style.borderColor = '#1A1A2E')}
-                      onBlur={e => (e.target.style.borderColor = '#E2E8F0')}
-                      placeholder="10-digit mobile" maxLength={10} autoFocus
-                      onKeyDown={e => e.key === 'Enter' && handleSendOTP()} />
-                  </div>
-                </div>
-
-                {error && (
-                  <div className="rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                    <p className="text-sm" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>{error}</p>
-                  </div>
-                )}
-
-                <button onClick={handleSendOTP} disabled={loading || phone.length !== 10}
-                  className="w-full py-4 rounded-xl font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-                  style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)',
-                    fontFamily: 'var(--font-heading)', fontSize: '0.95rem' }}>
-                  {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Sending OTP...</> : 'Send OTP →'}
-                </button>
-
-                <div className="flex items-center gap-2 px-4 py-3 rounded-xl"
-                  style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                  <Lock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#2563EB' }} />
-                  <p className="text-xs" style={{ color: '#1D4ED8', fontFamily: 'var(--font-body)' }}>
-                    OTP will be sent to your WhatsApp number registered with the bank
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* OTP step */}
-            {step === 'otp' && (
-              <div className="space-y-5">
-                <div className="flex items-center gap-2 px-4 py-3 rounded-xl"
-                  style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: '#059669' }} />
-                  <p className="text-sm" style={{ color: '#065F46', fontFamily: 'var(--font-body)' }}>
-                    OTP sent to WhatsApp for +91 {phone}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>
-                    Enter 6-digit OTP <span style={{ color: '#DC2626' }}>*</span>
-                  </label>
-                  <input type="text" value={otp}
-                    onChange={e => { setOtp(e.target.value.replace(/\D/g,'').slice(0,6)); setError(''); }}
-                    className="w-full px-4 py-4 rounded-xl text-center outline-none transition"
-                    style={{ border: '1.5px solid #E2E8F0', color: '#0F172A', background: '#fff',
-                      fontFamily: 'var(--font-mono-loan)', fontSize: '1.75rem', letterSpacing: '0.4em' }}
-                    onFocus={e => (e.target.style.borderColor = '#1A1A2E')}
-                    onBlur={e => (e.target.style.borderColor = '#E2E8F0')}
-                    placeholder="000000" maxLength={6} autoFocus inputMode="numeric"
-                    onKeyDown={e => e.key === 'Enter' && handleVerifyOTP()} />
-                </div>
-
-                {error && (
-                  <div className="rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                    <p className="text-sm" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>{error}</p>
-                  </div>
-                )}
-
-                <button onClick={handleVerifyOTP} disabled={loading || otp.length !== 6}
-                  className="w-full py-4 rounded-xl font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-                  style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
-                    fontFamily: 'var(--font-heading)', fontSize: '0.95rem' }}>
-                  {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Verifying...</> : 'Verify OTP →'}
-                </button>
-
-                <div className="text-center">
-                  {timer > 0
-                    ? <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
-                        Resend OTP in {timer}s
-                      </p>
-                    : <button onClick={() => { setStep('phone'); setOtp(''); setError(''); }}
-                        className="text-sm font-medium hover:underline"
-                        style={{ color: '#2563EB', fontFamily: 'var(--font-body)' }}>
-                        Change number / Resend OTP
-                      </button>
-                  }
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Bottom */}
-          <div className="mt-6 text-center">
-            <p className="text-xs" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
-              Secure loan application portal · VirtualVaani
+            <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>
+              {step === 'phone' ? 'Loan Application' : 'Verify OTP'}
+            </h1>
+            <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
+              {loading && autoTriggered.current && step === 'phone'
+                ? 'Sending OTP to your WhatsApp...'
+                : step === 'phone'
+                  ? 'Enter your registered mobile number to continue'
+                  : `OTP sent to WhatsApp for +91 ${phone}`}
             </p>
           </div>
 
+          {/* Phone step */}
+          {step === 'phone' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                  Mobile number <span style={{ color: '#DC2626' }}>*</span>
+                </label>
+                <div className="flex gap-2">
+                  <div className="flex items-center gap-1.5 px-3 py-3 rounded-xl flex-shrink-0 font-medium text-sm"
+                    style={{ background: '#0A1628', color: '#fff', fontFamily: 'var(--font-body)', minWidth: '80px', justifyContent: 'center' }}>
+                    IN +91
+                  </div>
+                  <input type="tel" value={phone}
+                    onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
+                    className="flex-1 min-w-0 px-4 py-3 rounded-xl text-sm outline-none transition-all"
+                    style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
+                    onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
+                    onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                    placeholder="10-digit number" maxLength={10} autoFocus
+                    onKeyDown={e => e.key === 'Enter' && handleSendOTP()} />
+                </div>
+              </div>
+
+              {error && (
+                <div className="flex items-start gap-2.5 rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                  <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{error}</p>
+                </div>
+              )}
+
+              <button onClick={handleSendOTP} disabled={loading || phone.length !== 10}
+                className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: loading || phone.length !== 10 ? '#94A3B8' : '#1D4ED8', fontFamily: 'var(--font-heading)' }}
+                onMouseEnter={e => { if (!loading && phone.length === 10) e.currentTarget.style.background = '#1E40AF'; }}
+                onMouseLeave={e => { if (!loading && phone.length === 10) e.currentTarget.style.background = '#1D4ED8'; }}>
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Sending...</> : 'Send OTP on WhatsApp'}
+              </button>
+
+              <div className="flex items-start gap-2 rounded-xl p-3" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                <Lock className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#0284C7' }} />
+                <p className="text-xs" style={{ color: '#075985', fontFamily: 'var(--font-body)' }}>
+                  OTP will be sent to your WhatsApp number registered with the bank
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* OTP step */}
+          {step === 'otp' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 rounded-xl p-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: '#059669' }} />
+                <p className="text-sm" style={{ color: '#065F46', fontFamily: 'var(--font-body)' }}>OTP sent to +91 {phone}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                  Enter 6-digit OTP <span style={{ color: '#DC2626' }}>*</span>
+                </label>
+                <input type="text" value={otp}
+                  onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
+                  className="w-full px-4 py-4 rounded-xl text-center outline-none transition-all"
+                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-mono-loan)', fontSize: '1.5rem', letterSpacing: '0.4em', color: '#111827' }}
+                  onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
+                  onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                  placeholder="000000" maxLength={6} autoFocus inputMode="numeric"
+                  onKeyDown={e => e.key === 'Enter' && handleVerifyOTP()} />
+              </div>
+
+              {error && (
+                <div className="flex items-start gap-2.5 rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                  <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{error}</p>
+                </div>
+              )}
+
+              <button onClick={handleVerifyOTP} disabled={loading || otp.length !== 6}
+                className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: '#059669', fontFamily: 'var(--font-heading)' }}
+                onMouseEnter={e => { if (!loading && otp.length === 6) e.currentTarget.style.background = '#047857'; }}
+                onMouseLeave={e => { if (!loading && otp.length === 6) e.currentTarget.style.background = '#059669'; }}>
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Verifying...</> : 'Verify OTP'}
+              </button>
+
+              <div className="text-center">
+                {timer > 0
+                  ? <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Resend OTP in {timer}s</p>
+                  : <button onClick={() => { setStep('phone'); setOtp(''); setError(''); }}
+                      className="text-sm font-medium" style={{ color: '#1D4ED8', fontFamily: 'var(--font-body)' }}>
+                      Change number / Resend OTP
+                    </button>
+                }
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-center mt-6" style={{ color: '#9CA3AF', fontFamily: 'var(--font-body)' }}>
+            Secure loan application portal · Your data is encrypted
+          </p>
         </div>
       </div>
     </div>

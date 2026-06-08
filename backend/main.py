@@ -222,6 +222,30 @@ if LOS_ENV in {"prod", "production", "staging"}:
 elif JWT_SECRET == _INSECURE_JWT_DEFAULT or ENCRYPTION_KEY == _INSECURE_ENC_DEFAULT:
     print("[config] WARNING: using insecure default JWT_SECRET / ENCRYPTION_KEY. Set them in .env before going to prod.", flush=True)
 
+# ── Aadhaar encryption helpers (Fernet / AES-128-CBC + HMAC-SHA256) ──────────
+# Key is derived from ENCRYPTION_KEY so no extra config is needed.
+# decrypt_aadhaar() falls back to plaintext for existing unencrypted records.
+try:
+    from cryptography.fernet import Fernet as _Fernet
+    _fernet_instance = _Fernet(b64mod.urlsafe_b64encode(hashlib.sha256(ENCRYPTION_KEY.encode()).digest()))
+
+    def encrypt_aadhaar(value: str) -> str:
+        return _fernet_instance.encrypt(value.encode()).decode()
+
+    def decrypt_aadhaar(value: str) -> str:
+        if not value:
+            return value
+        try:
+            return _fernet_instance.decrypt(value.encode()).decode()
+        except Exception:
+            return value  # legacy plaintext record — return as-is
+
+except ImportError:
+    logger_startup = logging.getLogger("los.backend")
+    logger_startup.warning("cryptography package not available — Aadhaar stored as plaintext")
+    def encrypt_aadhaar(value: str) -> str: return value
+    def decrypt_aadhaar(value: str) -> str: return value
+
 WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN", "")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
 AISENSY_API_KEY = os.getenv("AISENSY_API_KEY", "")
@@ -992,8 +1016,9 @@ async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params:
 # STATUS TRANSITION HELPER
 # ============================================
 
-async def record_transition(app_id, from_status, to_status, changed_by_type, changed_by_id, notes=None):
-    await db_pool.execute(
+async def record_transition(app_id, from_status, to_status, changed_by_type, changed_by_id, notes=None, conn=None):
+    executor = conn if conn is not None else db_pool
+    await executor.execute(
         "INSERT INTO status_transitions (application_id, from_status, to_status, changed_by_type, changed_by_id, notes) VALUES ($1, $2, $3, $4, $5, $6)",
         app_id, from_status, to_status, changed_by_type, changed_by_id, notes
     )
@@ -1544,7 +1569,7 @@ async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCrede
         raise HTTPException(status_code=404, detail="Application not found")
     app_dict = _row_to_dict(app_row)
     if app_dict.get("aadhaar_number_encrypted"):
-        app_dict["aadhaar_number"] = app_dict["aadhaar_number_encrypted"]
+        app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC", uuid.UUID(app_id)
     )
@@ -1589,7 +1614,7 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
     app_dict = _row_to_dict(app_row)
     # Map aadhaar_number_encrypted back to aadhaar_number for display
     if app_dict.get("aadhaar_number_encrypted"):
-        app_dict["aadhaar_number"] = app_dict["aadhaar_number_encrypted"]
+        app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
     # Get status history from status_transitions table
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC",
@@ -1890,7 +1915,7 @@ async def validate_token(token: str, request: Request):
                 merged[k] = v
         # Map aadhaar_number_encrypted back to aadhaar_number for frontend
         if app_data.get("aadhaar_number_encrypted"):
-            merged["aadhaar_number"] = app_data["aadhaar_number_encrypted"]
+            merged["aadhaar_number"] = decrypt_aadhaar(app_data["aadhaar_number_encrypted"])
 
     return {
         "status": "valid",
@@ -2053,7 +2078,7 @@ async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
         )
     await db_pool.execute(
         "UPDATE loan_applications SET aadhaar_last4 = $1, aadhaar_number_encrypted = $2, aadhaar_verified = true, aadhaar_verification_timestamp = $3 WHERE token_id = $4",
-        last4, aadhaar_number, now_utc(), token_row["id"]
+        last4, encrypt_aadhaar(aadhaar_number), now_utc(), token_row["id"]
     )
     return {"status": "verified", "message": "Aadhaar verified successfully", "last4": last4}
 
@@ -2857,9 +2882,35 @@ async def request_otp(request: Request):
         raise HTTPException(status_code=400, detail="Phone number required")
     if not phone.startswith('+'):
         phone = '+91' + phone
+    # ── Rate limit: max 3 OTPs per phone per hour ──────────────────────────
+    otp_key = f"otp:{phone}"
+    rate_row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", otp_key)
+    if rate_row:
+        window_start = now_utc() - timedelta(hours=1)
+        if rate_row["last_attempt"] and rate_row["last_attempt"] > window_start:
+            if rate_row["attempts"] >= 3:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many OTP requests. Please wait 1 hour before trying again."
+                )
+            await db_pool.execute(
+                "UPDATE login_attempts SET attempts = attempts + 1, last_attempt = $1 WHERE username = $2",
+                now_utc(), otp_key
+            )
+        else:
+            # Window expired — reset counter
+            await db_pool.execute(
+                "UPDATE login_attempts SET attempts = 1, last_attempt = $1 WHERE username = $2",
+                now_utc(), otp_key
+            )
+    else:
+        await db_pool.execute(
+            "INSERT INTO login_attempts (username, attempts, last_attempt) VALUES ($1, 1, $2)",
+            otp_key, now_utc()
+        )
     # First check for existing application
     app_row = await db_pool.fetchrow(
-        "SELECT * FROM loan_applications WHERE phone = $1 AND status != 'submitted' ORDER BY created_at DESC LIMIT 1", phone
+        "SELECT * FROM loan_applications WHERE phone = $1 ORDER BY created_at DESC LIMIT 1", phone
     )
     if not app_row:
         # Check form_tokens -- admin may have created a token for this phone
@@ -2944,7 +2995,7 @@ async def get_application(session_token: str, request: Request):
     app_dict = _row_to_dict(app_row)
     # Map aadhaar_number_encrypted back to aadhaar_number for frontend
     if app_dict.get("aadhaar_number_encrypted"):
-        app_dict["aadhaar_number"] = app_dict["aadhaar_number_encrypted"]
+        app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
     return {"status": "success", "data": app_dict, "session_valid_until": expires_at.isoformat()}
 
 @app.post("/api/autosave-session")
@@ -3073,7 +3124,7 @@ async def verify_aadhaar_session(session_token: str, aadhaar_number: str, reques
     last4 = aadhaar_number[-4:]
     await db_pool.execute(
         "UPDATE loan_applications SET aadhaar_last4 = $1, aadhaar_number_encrypted = $2, aadhaar_verified = true, aadhaar_verification_timestamp = $3 WHERE id = $4",
-        last4, aadhaar_number, now_utc(), session["application_id"]
+        last4, encrypt_aadhaar(aadhaar_number), now_utc(), session["application_id"]
     )
     return {"status": "verified", "message": "Aadhaar verified successfully", "last4": last4}
 
@@ -3085,9 +3136,17 @@ async def submit_form_session(session_token: str, request: Request):
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
-    await db_pool.execute("UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 WHERE id = $2", now_utc(), app_row["id"])
-    # Record transition
-    await record_transition(app_row["id"], "draft", "submitted", "customer", app_row["id"], "Form submitted by customer via session")
+    # ── Atomic transaction: both writes succeed or both roll back ──
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 WHERE id = $2",
+                now_utc(), app_row["id"]
+            )
+            await record_transition(
+                app_row["id"], "draft", "submitted", "customer", app_row["id"],
+                "Form submitted by customer via session", conn=conn
+            )
     # Send confirmation via AiSensy
     try:
         customer_name = app_row["customer_name"] or "Customer"

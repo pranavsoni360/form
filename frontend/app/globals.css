@@ -18,10 +18,10 @@
 @layer base {
   :root {
     /* Surfaces */
-    --background:        40 30% 97%;            /* #FAF8F4  warm cream */
+    --background:        226 100% 97%;          /* #F0F4FF  light blue-grey */
     --foreground:        222 47% 11%;           /* #0F172A  near-black navy */
     --surface:           0 0% 100%;             /* #FFFFFF  cards */
-    --elevated:          40 30% 99%;            /* hover */
+    --elevated:          0 0% 100%;             /* hover */
 
     --card:              0 0% 100%;
     --card-foreground:   222 47% 11%;
@@ -51,8 +51,8 @@
     --destructive:       0 84% 60%;             /* #EF4444  also = "with confidence" red */
     --destructive-foreground: 0 0% 100%;
 
-    --border:            40 12% 89%;            /* #EAE7E0  soft warm border */
-    --input:             40 12% 89%;
+    --border:            214 32% 91%;           /* #E2E8F0  cool grey border */
+    --input:             214 32% 91%;
     --ring:              263 70% 55%;
 
     --success:           142 71% 38%;           /* #16A34A */

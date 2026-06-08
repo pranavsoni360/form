@@ -1,28 +1,13 @@
 import * as React from "react";
-import { cn } from "@/lib/utils";
-
-/**
- * Simple 4-up stat card matching the VirtualVaani bank dashboard.
- * Difference from KpiCard (in /ops/page.tsx):
- *   - StatCard is for the page-top stat row (4 in a line), no sub-text.
- *   - KpiCard is for the overview grid (6 in 3×2), with sub-label + delta.
- *
- * Layout:
- *   ┌─────────────────────────────┐
- *   │ LABEL (uppercase)    [icon] │
- *   │                             │
- *   │ 2  ←─── mono, large         │
- *   └─────────────────────────────┘
- */
 
 export type StatTone = "info" | "success" | "warning" | "danger" | "neutral";
 
-const TONE_RING = {
-  info:    "bg-info/10 text-info ring-info/20",
-  success: "bg-success/10 text-success ring-success/25",
-  warning: "bg-warning/15 text-[hsl(var(--warning))] ring-warning/25",
-  danger:  "bg-destructive/10 text-destructive ring-destructive/20",
-  neutral: "bg-muted text-muted-foreground ring-border",
+const TONE = {
+  info:    { strip: "#2563EB", iconBg: "rgba(37,99,235,0.08)",  iconColor: "#2563EB", ring: "rgba(37,99,235,0.12)" },
+  success: { strip: "#059669", iconBg: "rgba(5,150,105,0.08)",  iconColor: "#059669", ring: "rgba(5,150,105,0.12)" },
+  warning: { strip: "#D97706", iconBg: "rgba(217,119,6,0.10)",  iconColor: "#D97706", ring: "rgba(217,119,6,0.15)"  },
+  danger:  { strip: "#DC2626", iconBg: "rgba(220,38,38,0.08)",  iconColor: "#DC2626", ring: "rgba(220,38,38,0.12)" },
+  neutral: { strip: "#64748B", iconBg: "rgba(100,116,139,0.08)",iconColor: "#64748B", ring: "rgba(100,116,139,0.12)"},
 } as const;
 
 export function StatCard({
@@ -38,21 +23,33 @@ export function StatCard({
   tone?: StatTone;
   hint?: string;
 }) {
+  const t = TONE[tone];
   return (
-    <div className="rounded-xl border border-border bg-card p-5 transition-shadow hover:shadow-md">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="relative overflow-hidden rounded-2xl bg-white transition-all hover:-translate-y-0.5 hover:shadow-lg"
+      style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+      {/* Accent strip */}
+      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl" style={{ background: t.strip }} />
+
+      <div className="pl-5 pr-4 pt-4 pb-4">
+        <div className="flex items-start justify-between mb-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em]"
+            style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
             {label}
+          </p>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: t.iconBg, border: `1px solid ${t.ring}`, color: t.iconColor }}>
+            <Icon className="h-4 w-4" />
           </div>
-          {hint && <div className="text-[10px] text-muted-foreground/70">{hint}</div>}
         </div>
-        <span className={cn("grid h-9 w-9 place-items-center rounded-xl ring-1", TONE_RING[tone])}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-      <div className="mt-4 font-mono text-3xl font-bold tracking-tight tabular-nums">
-        {value}
+
+        <div className="text-4xl font-bold tabular-nums"
+          style={{ color: '#0F172A', fontFamily: 'var(--font-heading)', lineHeight: 1 }}>
+          {value}
+        </div>
+
+        {hint && (
+          <p className="mt-1.5 text-[11px]" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>{hint}</p>
+        )}
       </div>
     </div>
   );

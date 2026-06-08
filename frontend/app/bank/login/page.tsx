@@ -4,8 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { bankLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
-import { Building2, Loader2, User, Lock } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
+import { Loader2, AlertTriangle, User, Lock, FileText, CheckCircle2, Clock } from 'lucide-react';
 
 export default function BankLoginPage() {
   const router = useRouter();
@@ -24,57 +23,135 @@ export default function BankLoginPage() {
       setCurrentUser('bank', response.user);
       router.push('/bank/dashboard');
     } catch (err: any) {
-      setError(err.message || 'Login failed');
+      setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-gray-950 dark:to-gray-900 flex items-center justify-center p-4 transition-colors">
-      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-2xl dark:shadow-gray-950/50 p-8 max-w-md w-full transition-colors">
-        <div className="flex justify-end mb-2"><ThemeToggle /></div>
-        <div className="text-center mb-8">
-          <div className="mb-4">
-            <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mx-auto">
-              <Building2 className="w-8 h-8 text-blue-600" />
-            </div>
+    <div className="min-h-screen flex">
+
+      {/* ── LEFT PANEL ── */}
+      <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
+        style={{ background: 'linear-gradient(160deg, #0A1628 0%, #0F2040 50%, #0A1628 100%)' }}>
+
+        {/* Subtle texture overlay */}
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+
+        {/* Logo */}
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+            style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.15)', fontFamily: 'var(--font-heading)' }}>
+            vv
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Bank Portal</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">Loan Application Management System</p>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>VirtualVaani</div>
+            <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Bank Officer Portal</div>
+          </div>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Username</label>
-            <div className="relative">
-              <User className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
-                placeholder="Enter username" />
-            </div>
+        {/* Hero text */}
+        <div className="relative z-10">
+          <h1 className="text-[2.75rem] font-bold leading-[1.1] text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
+            Review and approve<br />loan applications<br />
+            <span style={{ color: '#60A5FA' }}>efficiently.</span>
+          </h1>
+          <p className="text-base leading-relaxed mb-10" style={{ color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-body)' }}>
+            AI-assisted review pipeline with complete applicant profiles, document verification, and one-click approval workflows.
+          </p>
+          <div className="space-y-3.5">
+            {[
+              { icon: FileText,     text: 'View complete applicant profiles and documents' },
+              { icon: CheckCircle2, text: 'Officer and supervisor approval workflow' },
+              { icon: Clock,        text: 'Real-time status updates and notifications' },
+            ].map(({ icon: Icon, text }) => (
+              <div key={text} className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <Icon className="w-3.5 h-3.5" style={{ color: 'rgba(255,255,255,0.5)' }} />
+                </div>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-body)' }}>{text}</p>
+              </div>
+            ))}
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password</label>
-            <div className="relative">
-              <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
-                placeholder="Enter password" />
+        </div>
+
+        <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
+          © 2026 VirtualVaani · Authorized bank personnel only
+        </p>
+      </div>
+
+      {/* ── RIGHT PANEL ── */}
+      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative"
+        style={{ background: '#fff' }}>
+        {/* Dot grid */}
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ backgroundImage: 'radial-gradient(circle, #CBD5E1 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.4 }} />
+
+        <div className="w-full max-w-sm relative z-10">
+
+          {/* Portal icon */}
+          <div className="mb-6">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
+              style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+              <FileText className="w-6 h-6" style={{ color: '#2563EB' }} />
             </div>
+            <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Bank Portal</h1>
+            <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Sign in with your bank credentials</p>
           </div>
-          {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-lg">
-              <p className="text-sm text-red-800 dark:text-red-300">{error}</p>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                Username <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
+                <input type="text" value={username} onChange={e => setUsername(e.target.value)} required autoFocus
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
+                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
+                  onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
+                  onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                  placeholder="Enter your username" />
+              </div>
             </div>
-          )}
-          <button type="submit" disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-blue-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-            {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Logging in...</> : 'Login'}
-          </button>
-        </form>
-        <div className="mt-6 text-center">
-          <p className="text-xs text-gray-400 dark:text-gray-500">Contact your administrator for access</p>
+
+            <div>
+              <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                Password <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
+                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
+                  onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
+                  onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                  placeholder="••••••••" />
+              </div>
+            </div>
+
+            {error && (
+              <div className="flex items-start gap-2.5 rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{error}</p>
+              </div>
+            )}
+
+            <button type="submit" disabled={loading}
+              className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+              style={{ background: '#1D4ED8', fontFamily: 'var(--font-heading)', boxShadow: '0 1px 3px rgba(0,0,0,0.12)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#1E40AF')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#1D4ED8')}>
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Signing in...</> : 'Sign in to Bank Portal'}
+            </button>
+          </form>
+
+          <p className="text-xs text-center mt-6" style={{ color: '#9CA3AF', fontFamily: 'var(--font-body)' }}>
+            Contact your administrator if you need access
+          </p>
         </div>
       </div>
     </div>

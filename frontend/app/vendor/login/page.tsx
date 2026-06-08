@@ -2,16 +2,17 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Banknote, Loader2, Lock, User } from "lucide-react";
-
+import { Loader2, AlertTriangle, User, Lock, Banknote, CheckCircle2, TrendingUp } from "lucide-react";
 import { vendorLogin } from "@/lib/api/vendor";
 import { setAccessToken, setCurrentUser } from "@/lib/auth";
 
-// useSearchParams forces client-side bail-out — Next.js requires a Suspense
-// boundary so the rest of the route group can still pre-render.
 export default function VendorLoginPage() {
   return (
-    <React.Suspense fallback={<div className="min-h-screen grid place-items-center text-slate-500">Loading…</div>}>
+    <React.Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#065F46' }} />
+      </div>
+    }>
       <VendorLoginForm />
     </React.Suspense>
   );
@@ -21,7 +22,6 @@ function VendorLoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const redirectTo = params.get("redirect") || "/vendor/dashboard";
-
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
@@ -37,82 +37,135 @@ function VendorLoginForm() {
       setCurrentUser("vendor", resp.user);
       router.replace(redirectTo);
     } catch (err: any) {
-      setError(err?.message || "Login failed — please check your credentials");
+      setError(err?.message || "Invalid credentials. Please try again.");
     } finally {
       setLoading(false);
     }
   }
 
+  const focusStyle = (color: string) => ({
+    onFocus: (e: React.FocusEvent<HTMLInputElement>) => { e.target.style.borderColor = color; e.target.style.boxShadow = `0 0 0 3px ${color}14`; },
+    onBlur:  (e: React.FocusEvent<HTMLInputElement>) => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; },
+  });
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-slate-50 to-teal-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 grid place-items-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-gray-800 dark:bg-gray-900">
-        <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-600 text-white shadow-lg">
-            <Banknote className="h-7 w-7" />
+    <div className="min-h-screen flex">
+
+      {/* ── LEFT PANEL ── */}
+      <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
+        style={{ background: 'linear-gradient(160deg, #052E16 0%, #064E3B 50%, #052E16 100%)' }}>
+
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+
+        {/* Logo */}
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+            style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.15)', fontFamily: 'var(--font-heading)' }}>
+            vv
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-gray-100">
-            Vendor Portal
-          </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-gray-400">
-            NBFC partner disbursement workflow
-          </p>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>VirtualVaani</div>
+            <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Vendor & NBFC Portal</div>
+          </div>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-gray-300">
-              Username
-            </label>
-            <div className="relative">
-              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                required
-                autoFocus
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="vendor username"
-                className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none ring-emerald-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-              />
-            </div>
+        {/* Hero text */}
+        <div className="relative z-10">
+          <h1 className="text-[2.75rem] font-bold leading-[1.1] text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
+            Disburse loans<br />and grow your<br />
+            <span style={{ color: '#34D399' }}>lending portfolio.</span>
+          </h1>
+          <p className="text-base leading-relaxed mb-10" style={{ color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-body)' }}>
+            Access pre-approved loan applications, manage disbursements, and track settlements — all in one platform.
+          </p>
+          <div className="space-y-3.5">
+            {[
+              { icon: Banknote,      text: 'Access pre-approved loan applications' },
+              { icon: CheckCircle2,  text: 'One-click disbursement workflow' },
+              { icon: TrendingUp,    text: 'Track settlements and portfolio performance' },
+            ].map(({ icon: Icon, text }) => (
+              <div key={text} className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <Icon className="w-3.5 h-3.5" style={{ color: 'rgba(255,255,255,0.5)' }} />
+                </div>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-body)' }}>{text}</p>
+              </div>
+            ))}
           </div>
+        </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-gray-300">
-              Password
-            </label>
-            <div className="relative">
-              <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none ring-emerald-500 focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-              />
-            </div>
-          </div>
-
-          {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Sign in
-          </button>
-        </form>
-
-        <p className="mt-6 text-center text-xs text-slate-500 dark:text-gray-500">
-          Need access? Contact your bank's admin to create your account.
+        <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
+          © 2026 VirtualVaani · Authorized NBFC partners only
         </p>
+      </div>
+
+      {/* ── RIGHT PANEL ── */}
+      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative" style={{ background: '#fff' }}>
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ backgroundImage: 'radial-gradient(circle, #CBD5E1 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.4 }} />
+
+        <div className="w-full max-w-sm relative z-10">
+
+          <div className="mb-6">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
+              style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+              <User className="w-6 h-6" style={{ color: '#059669' }} />
+            </div>
+            <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Vendor Portal</h1>
+            <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>NBFC & lender access</p>
+          </div>
+
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                Username <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
+                <input type="text" value={username} onChange={e => setUsername(e.target.value)} required autoFocus
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
+                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
+                  {...focusStyle('#059669')}
+                  placeholder="Enter your username" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                Password <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
+                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
+                  {...focusStyle('#059669')}
+                  placeholder="••••••••" />
+              </div>
+            </div>
+
+            {error && (
+              <div className="flex items-start gap-2.5 rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{error}</p>
+              </div>
+            )}
+
+            <button type="submit" disabled={loading}
+              className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+              style={{ background: '#059669', fontFamily: 'var(--font-heading)', boxShadow: '0 1px 3px rgba(0,0,0,0.12)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#047857')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#059669')}>
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Signing in...</> : 'Sign in to Vendor Portal'}
+            </button>
+          </form>
+
+          <p className="text-xs text-center mt-6" style={{ color: '#9CA3AF', fontFamily: 'var(--font-body)' }}>
+            Contact your administrator for access
+          </p>
+        </div>
       </div>
     </div>
   );

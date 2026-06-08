@@ -13,6 +13,30 @@ import { ConnectionDot } from "./ConnectionDot";
  * Left:  breadcrumb path derived from the pathname (Admin › Dashboard)
  * Right: SSE connection dot · theme toggle · notification bell · user avatar pill
  */
+function UserPill() {
+  const [name, setName] = React.useState("Admin");
+  React.useEffect(() => {
+    try {
+      const u = localStorage.getItem("los_admin_user");
+      if (u) {
+        const parsed = JSON.parse(u);
+        const display = parsed?.username || parsed?.email?.split("@")[0] || "Admin";
+        setName(display.charAt(0).toUpperCase() + display.slice(1));
+      }
+    } catch {}
+  }, []);
+  const initials = name.slice(0, 2).toUpperCase();
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-2 py-1.5 pr-3">
+      <span className="grid h-7 w-7 place-items-center rounded-lg text-xs font-bold text-white ring-1 ring-blue-300/30"
+        style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)' }}>
+        {initials}
+      </span>
+      <span className="text-xs font-semibold hidden sm:block">{name}</span>
+    </div>
+  );
+}
+
 export function TopBar({ title }: { title?: string }) {
   const pathname = usePathname();
   const crumbs = derivedCrumbs(pathname || "/ops");
@@ -62,16 +86,12 @@ export function TopBar({ title }: { title?: string }) {
         </button>
 
         {/* User avatar pill */}
-        <div className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-2 py-1.5 pr-3">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-primary/15 text-xs font-bold text-primary ring-1 ring-primary/30">
-            U
-          </span>
-          <span className="text-xs font-semibold">Admin</span>
-        </div>
+        <UserPill />
       </div>
     </header>
   );
 }
+
 
 /* ─── Breadcrumb helper ───────────────────────────────────────────────────── */
 

@@ -333,11 +333,15 @@ async def upload_excel(
             "least-loaded across the pool."
         ),
     ),
+    bank_id: Optional[str] = Query(
+        None,
+        description="UUID of the bank to assign this batch to. When set, all calls and applications are visible to that bank's officers.",
+    ),
     background_tasks: BackgroundTasks = None,
     # no auth — operator access
 ):
     """Upload Excel/CSV with customer data for batch calling."""
-    bank_id = None  # operator — no bank scoping
+    # bank_id comes from the query param (operator selects which bank)
 
     try:
         filename = file.filename.lower()

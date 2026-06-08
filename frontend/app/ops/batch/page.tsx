@@ -108,8 +108,20 @@ export default function OpsBatchPage() {
   // "From number" — empty string = auto-pick from pool, else a phone_numbers UUID
   const [phoneNumberId, setPhoneNumberId] = React.useState<string>("");
 
+  // Bank assignment — empty = no bank scoping (calls won't appear in bank portal)
+  const [bankId, setBankId] = React.useState<string>("");
+
   // Selected batch for detail dialog
   const [openBatchId, setOpenBatchId] = React.useState<string | null>(null);
+
+  /* ─── Banks list (for bank assignment dropdown) ───────────────────────── */
+  const banks = useQuery<{ banks: Array<{ id: string; name: string }> }>({
+    queryKey: ["banks-list"],
+    queryFn: () => fetch(`${API_URL}/api/admin/banks`, {
+      headers: { Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('los_admin_token') || '' : ''}` }
+    }).then(r => r.json()),
+    staleTime: 60_000,
+  });
 
   /* ─── Phone pool (for "From number" dropdown) ─────────────────────────── */
 
@@ -192,6 +204,7 @@ export default function OpsBatchPage() {
       // dispatcher auto-pick least-loaded.
       const params = new URLSearchParams({ language, gender, agent_type: agentType });
       if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
+      if (bankId) params.set("bank_id", bankId);
       const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
         method: "POST",
         body: fd,
@@ -378,6 +391,26 @@ export default function OpsBatchPage() {
                 <div className="flex items-center text-xs text-muted-foreground">
                   <span className="rounded-md bg-info/10 px-2 py-1 text-info ring-1 ring-info/20">
                     All calls in the next batch will dial FROM this number.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Bank assignment — without this, calls won't appear in any bank portal */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Select
+                label="Assign to bank"
+                value={bankId}
+                onChange={setBankId}
+                options={[
+                  { value: "", label: banks.isLoading ? "Loading banks…" : "⚠️ No bank (ops only)" },
+                  ...(banks.data?.banks ?? []).map((b) => ({ value: b.id, label: b.name })),
+                ]}
+              />
+              {!bankId && (
+                <div className="flex items-center text-xs text-muted-foreground">
+                  <span className="rounded-md bg-warning/10 px-2 py-1 text-warning ring-1 ring-warning/20">
+                    Without a bank, applications won't appear in the bank officer portal.
                   </span>
                 </div>
               )}

@@ -206,6 +206,16 @@ export default function ApplicationDetailPage() {
           </div>
         </Section>
 
+        {/* Guarantor */}
+        {(app.guarantor_name || app.guarantor_phone) && (
+          <Section title="Guarantor Details" icon={User} sectionKey="guarantor">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
+              <Field label="Guarantor Name" value={app.guarantor_name} />
+              <Field label="Guarantor Phone" value={app.guarantor_phone} />
+            </div>
+          </Section>
+        )}
+
         {/* Loan Details */}
         <Section title="Loan Details" icon={Banknote} sectionKey="loan">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">

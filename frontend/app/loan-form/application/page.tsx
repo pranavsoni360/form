@@ -1251,6 +1251,27 @@ export default function LoanApplication() {
                 </div>
               </div>{/* p-5 */}
               </div>{/* financial card */}
+              {/* ── Guarantor Details ── */}
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0F9FF', borderBottom: '1px solid #BAE6FD' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E918' }}><span style={{ fontSize: '13px' }}>🤝</span></div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Guarantor Details</p>
+                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#E0F2FE', color: '#0369A1', fontFamily: 'var(--font-body)' }}>Optional</span>
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <F label="Guarantor Name" fieldName="guarantor_name" fieldSources={formData.field_sources}>
+                      <input type="text" value={formData.guarantor_name || ''} onChange={e => onChange('guarantor_name', e.target.value)}
+                        className={inp('')} placeholder="Full name of guarantor" />
+                    </F>
+                    <F label="Guarantor Phone Number" fieldName="guarantor_phone" fieldSources={formData.field_sources}>
+                      <input type="tel" value={formData.guarantor_phone || ''} onChange={e => onChange('guarantor_phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        className={inp('')} placeholder="10-digit mobile number" maxLength={10} inputMode="numeric" />
+                    </F>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-xl p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5" />
@@ -1375,6 +1396,12 @@ export default function LoanApplication() {
                 <RR label="Purpose" value={codeLabel(13, formData.purpose_of_loan)} />
                 <RR label="Net Income" value={formData.monthly_net_income ? `₹${parseFloat(formData.monthly_net_income).toLocaleString('en-IN')}` : ''} />
               </RS>
+              {(formData.guarantor_name || formData.guarantor_phone) && (
+                <RS title="Guarantor">
+                  <RR label="Name" value={formData.guarantor_name} />
+                  <RR label="Phone" value={formData.guarantor_phone} />
+                </RS>
+              )}
               <div className="rounded-2xl p-4" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 rounded" />

@@ -1140,6 +1140,8 @@ AUTOSAVE_COLUMNS = {
     # Consumer durable loan fields (v15)
     "consumer_loan_type", "product_name", "brand", "model_number",
     "dealer_name", "dealer_address", "quotation_amount", "quotation_url",
+    # Guarantor fields (v16)
+    "guarantor_name", "guarantor_phone",
 }
 
 # ============================================

@@ -124,13 +124,15 @@ async def send_whatsapp_form(request: Request):
                         agent_call_id, full_name, employer_name, designation, employment_type,
                         monthly_gross_income, monthly_emi_existing, current_address,
                         purpose_of_loan, loan_amount_requested, customer_type, industry_type,
-                        total_work_experience, qualification, consumer_loan_type
+                        total_work_experience, qualification, consumer_loan_type,
+                        guarantor_name, guarantor_phone
                     ) VALUES (
                         $1, $2, $3, 1, 'draft', $4, $5,
                         $6, $7, $8, $9, $10,
                         $11, $12, $13,
                         $14, $15, $16, $17,
-                        $18, $19, $20
+                        $18, $19, $20,
+                        $21, $22
                     ) RETURNING id""",
                     customer_name or "Customer",
                     phone_norm,
@@ -152,6 +154,8 @@ async def send_whatsapp_form(request: Request):
                     collected.get("working_experience") or None,
                     collected.get("qualification") or None,
                     _consumer_loan_type,
+                    collected.get("guarantor_name") or None,
+                    collected.get("guarantor_phone") or None,
                 )
                 app_id = row["id"]
                 logger.info(f"Created loan_application {app_id} for {phone_norm} from call {call_id}")
@@ -173,6 +177,8 @@ async def send_whatsapp_form(request: Request):
                     "qualification": collected.get("qualification"),
                     "customer_name": customer_name,
                     "full_name": customer_name,
+                    "guarantor_name": collected.get("guarantor_name"),
+                    "guarantor_phone": collected.get("guarantor_phone"),
                 }
                 for field, value in field_map.items():
                     if value and str(value).strip():

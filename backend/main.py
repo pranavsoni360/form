@@ -3164,6 +3164,8 @@ async def submit_form_session(session_token: str, request: Request):
         first_name = customer_name.strip().split()[0]
         loan_id = app_row["loan_id"] or ""
         phone = app_row["phone"] or ""
+        raw_loan_type = app_row.get("consumer_loan_type") or "personal"
+        loan_type_label = "Consumer Durable Loan" if raw_loan_type == "consumer_durable" else "Personal Loan"
         if AISENSY_API_KEY and AISENSY_SUBMISSION_CAMPAIGN and phone:
             phone_formatted = "".join(filter(str.isdigit, phone))
             if len(phone_formatted) == 10:
@@ -3173,7 +3175,7 @@ async def submit_form_session(session_token: str, request: Request):
                 "campaignName": AISENSY_SUBMISSION_CAMPAIGN,
                 "destination": phone_formatted,
                 "userName": AISENSY_USERNAME,
-                "templateParams": [first_name, loan_id],
+                "templateParams": [first_name, loan_id, loan_type_label],
                 "source": "loan-form-submission",
                 "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
                 "paramsFallbackValue": {"FirstName": first_name},

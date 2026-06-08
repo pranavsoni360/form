@@ -1,0 +1,16 @@
+[Unit]
+Description=LOS Pusad Loan Voice Agent (LiveKit)
+After=network-online.target los-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/vaani_los_form/agent
+EnvironmentFile=/root/vaani_los_form/agent/.env.local
+ExecStart=/root/vaani_los_form/agent/venv/bin/python los_updated.py start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

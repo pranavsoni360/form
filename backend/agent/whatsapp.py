@@ -32,9 +32,20 @@ async def send_whatsapp_form(request: Request):
     call_id = data.get("call_id")
 
     # ── 1. Fetch call data ──
+    # Prefer collected_data sent in the payload by the voice agent — it captures
+    # everything the customer just said on the call. The DB-side agent_calls.collected_data
+    # only gets populated by the end-of-call transcript webhook (~8s after this
+    # endpoint fires), so without the inline payload we'd race against a fast
+    # customer who clicks the WhatsApp link before the backfill lands.
     call_row = None
     call_uuid = None
-    collected = {}
+    payload_collected = data.get("collected_data") or {}
+    if isinstance(payload_collected, str):
+        try:
+            payload_collected = json.loads(payload_collected)
+        except Exception:
+            payload_collected = {}
+    db_collected: dict = {}
     if call_id:
         try:
             call_uuid = uuid.UUID(call_id)
@@ -43,9 +54,17 @@ async def send_whatsapp_form(request: Request):
                 cd = call_row["collected_data"]
                 if isinstance(cd, str):
                     cd = json.loads(cd)
-                collected = cd if isinstance(cd, dict) else {}
+                db_collected = cd if isinstance(cd, dict) else {}
         except Exception as e:
             logger.warning(f"Could not fetch call data: {e}")
+    # Merge: DB first (oldest), payload last (freshest) — payload wins where set.
+    collected = {**db_collected, **{k: v for k, v in payload_collected.items() if v not in (None, "")}}
+    if payload_collected:
+        logger.info(
+            f"send-whatsapp-form: payload_collected has "
+            f"{len([v for v in payload_collected.values() if v])} fields; "
+            f"merged with db_collected ({len(db_collected)} fields)"
+        )
 
     # ── 2. Normalize phone ──
     if phone and not phone.startswith("+"):

@@ -1,0 +1,34 @@
+name: Deploy to GPU
+
+# Auto-deploy the LOS system to the GPU server on every push to master.
+# Manual runs available via the "Run workflow" button (workflow_dispatch).
+on:
+  push:
+    branches: [master]
+    # Skip deploys for docs-only changes (optional; remove if undesired).
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+# Never run two deploys at once; let an in-flight deploy finish.
+concurrency:
+  group: gpu-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH (git pull + rebuild + restart + health gate)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GPU_HOST }}
+          username: ${{ secrets.GPU_USER }}
+          port: ${{ secrets.GPU_PORT }}
+          key: ${{ secrets.GPU_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -e
+            cd /root/vaani_los_form
+            bash scripts/deploy.sh --update

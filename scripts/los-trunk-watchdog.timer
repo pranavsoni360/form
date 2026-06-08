@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the LOS SIP trunk watchdog every 5 minutes
+
+[Timer]
+# First run shortly after boot, then every 5 minutes while the system is up.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Don't pile up runs if one is slow; run once when missed.
+Persistent=true
+Unit=los-trunk-watchdog.service
+
+[Install]
+WantedBy=timers.target

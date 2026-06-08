@@ -1,0 +1,27 @@
+{
+  "_comment": "Copy to trunks.config.json (gitignored) and fill in real provider secrets. Used by ensure_trunks.py / the los-trunk-watchdog systemd timer.",
+  "pool": "pusad-default",
+  "trunks": [
+    {
+      "provider": "vobiz",
+      "number": "+910000000000",
+      "address": "xxxxxxx.sip.vobiz.ai",
+      "auth_username": "VOBIZ_USER",
+      "auth_password": "REPLACE_ME"
+    },
+    {
+      "provider": "viva",
+      "number": "+910000000001",
+      "address": "vivap1.vivphone.com",
+      "auth_username": "00910000000001",
+      "auth_password": "REPLACE_ME"
+    },
+    {
+      "provider": "twilio",
+      "number": "+10000000000",
+      "address": "xx-xx-xx-xx.pstn.twilio.com",
+      "auth_username": "TWILIO_SIP_USER",
+      "auth_password": "REPLACE_ME"
+    }
+  ]
+}

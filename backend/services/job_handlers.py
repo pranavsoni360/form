@@ -45,7 +45,7 @@ async def transcript_analyze(payload: dict, db_pool: asyncpg.Pool) -> None:
     """
     # Import lazily so this module stays import-cheap and avoids circular
     # imports against backend.agent.analytics (which itself may want to enqueue).
-    from agent.analytics import analyze_transcript_with_llm
+    from agent.analytics import analyze_transcript_with_llm_async
     from agent.state import now_ist, _row_to_dict
 
     call_id_str = payload.get("call_id")
@@ -86,10 +86,11 @@ async def transcript_analyze(payload: dict, db_pool: asyncpg.Pool) -> None:
         logger.info("transcript_analyze: call %s has empty transcript; skipping", call_uuid)
         return
 
-    # The LLM call is blocking; run it in a thread so we don't pin the worker
-    # event loop. Gemini SDK is not natively async.
-    import asyncio
-    analysis: dict[str, Any] = await asyncio.to_thread(analyze_transcript_with_llm, transcript)
+    # Pass call_started_at so Gemini can resolve relative datetime references
+    call_started_at = call.get("started_at") or call.get("created_at")
+    analysis: dict[str, Any] = await analyze_transcript_with_llm_async(
+        transcript, call_started_at=call_started_at
+    )
 
     existing = call.get("call_analysis") or {}
     if isinstance(existing, str):
@@ -105,8 +106,10 @@ async def transcript_analyze(payload: dict, db_pool: asyncpg.Pool) -> None:
         "how_to_follow_up": analysis.get("how_to_follow_up"),
         "when_to_follow_up": analysis.get("when_to_follow_up"),
         # Don't clobber an agent-set lead_quality with a None from the LLM
-        "lead_quality":     analysis.get("lead_quality") or merged.get("lead_quality"),
-        "summary":          f"Category: {analysis.get('category')} | Follow-up: {analysis.get('follow_up_needed')}",
+        "lead_quality":          analysis.get("lead_quality") or merged.get("lead_quality"),
+        "summary":               f"Category: {analysis.get('category')} | Follow-up: {analysis.get('follow_up_needed')}",
+        "callback_requested":    analysis.get("callback_requested", False),
+        "callback_datetime_iso": analysis.get("callback_datetime_iso"),
     }.items():
         if v is not None:
             merged[k] = v
@@ -123,6 +126,19 @@ async def transcript_analyze(payload: dict, db_pool: asyncpg.Pool) -> None:
         call_uuid,
     )
     logger.info("transcript_analyze: call %s → %s", call_uuid, analysis.get("category"))
+
+    # Safety net: if Gemini detected a callback intent but the live agent never
+    # called schedule_callback() (scheduled_callback_at is NULL), schedule it now.
+    if analysis.get("callback_requested") and not call.get("scheduled_callback_at"):
+        cb_iso = analysis.get("callback_datetime_iso")
+        if cb_iso:
+            # Re-fetch the call to get the freshest scheduled_callback_at value
+            # (in case a concurrent webhook already set it)
+            fresh_row = await db_pool.fetchrow(
+                "SELECT scheduled_callback_at FROM agent_calls WHERE id = $1", call_uuid
+            )
+            if fresh_row and fresh_row["scheduled_callback_at"] is None:
+                await _schedule_callback_from_analysis(db_pool, call_uuid, cb_iso, call)
 
 
 # ============================================================================
@@ -158,6 +174,83 @@ async def recording_archive_b2(payload: dict, db_pool: asyncpg.Pool) -> None:
     Wired in M8 — needs B2 credentials and rclone setup first.
     """
     raise NotImplementedError("recording_archive_b2 handler is wired in M8")
+
+
+# ============================================================================
+# _schedule_callback_from_analysis  (shared safety-net helper)
+# ============================================================================
+
+async def _schedule_callback_from_analysis(
+    db_pool: asyncpg.Pool,
+    call_uuid: uuid.UUID,
+    callback_iso: str,
+    call: dict,
+) -> None:
+    """Safety-net: schedule a callback that the live voice agent missed.
+
+    Parses callback_iso (ISO 8601 IST string from Gemini), clamps it into
+    calling hours, then writes status='Called - Callback Requested' and
+    reactivates the parent batch — mirroring callbacks.py logic exactly.
+    """
+    from datetime import datetime, timedelta
+    from agent.state import now_ist, IST, CALL_START_HOUR, CALL_END_HOUR
+
+    try:
+        if callback_iso.endswith("Z"):
+            callback_iso = callback_iso[:-1] + "+00:00"
+        dt = datetime.fromisoformat(callback_iso)
+        if dt.tzinfo is None:
+            dt = IST.localize(dt)
+    except (ValueError, TypeError) as e:
+        logger.warning("_schedule_callback_from_analysis: invalid callback_iso %r: %s", callback_iso, e)
+        return
+
+    dt_ist = dt.astimezone(IST)
+    now_local = now_ist()
+
+    # Clamp to [now+2min, calling hours] — same logic as callbacks.py
+    if dt_ist < now_local + timedelta(minutes=1):
+        dt_ist = now_local + timedelta(minutes=2)
+    if dt_ist.hour < CALL_START_HOUR or dt_ist.hour >= CALL_END_HOUR:
+        next_day = (
+            dt_ist.date()
+            if dt_ist.hour < CALL_START_HOUR
+            else (dt_ist + timedelta(days=1)).date()
+        )
+        dt_ist = IST.localize(
+            datetime.combine(next_day, datetime.min.time())
+        ).replace(hour=CALL_START_HOUR)
+
+    await db_pool.execute(
+        """UPDATE agent_calls
+           SET status = 'Called - Callback Requested',
+               scheduled_callback_at = $1,
+               callback_reason = 'user_busy_llm_detected',
+               error_message = NULL,
+               updated_at = $2
+           WHERE id = $3""",
+        dt_ist,
+        now_local,
+        call_uuid,
+    )
+
+    # Reactivate parent batch (completed or paused) so dispatcher picks this up
+    batch_row = await db_pool.fetchrow(
+        "SELECT batch_id FROM agent_calls WHERE id = $1", call_uuid
+    )
+    if batch_row and batch_row["batch_id"]:
+        await db_pool.execute(
+            """UPDATE agent_batches
+               SET status = 'running'
+               WHERE batch_id = $1
+                 AND status IN ('completed', 'paused')""",
+            batch_row["batch_id"],
+        )
+
+    logger.info(
+        "Safety-net callback scheduled for call %s at %s (LLM-detected)",
+        call_uuid, dt_ist.isoformat(),
+    )
 
 
 # ============================================================================

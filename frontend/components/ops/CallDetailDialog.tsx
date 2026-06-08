@@ -388,8 +388,11 @@ function LeadBadge({ q }: { q: string }) {
   return <Badge variant="outline">{q}</Badge>;
 }
 
-export function statusVariant(s: string): "success" | "warning" | "destructive" | "secondary" | "info" {
+export function statusVariant(
+  s: string,
+): "success" | "warning" | "destructive" | "secondary" | "info" | "callback" {
   if (!s) return "secondary";
+  if (s === "Called - Callback Requested") return "callback";
   if (s.startsWith("Called") && s.includes("Interested")) return "success";
   if (s.startsWith("Called")) return "info";
   if (s === "Failed" || s === "Invalid Phone") return "destructive";

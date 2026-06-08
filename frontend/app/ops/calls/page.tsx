@@ -72,6 +72,7 @@ interface CallRow {
   lead_quality?: string;
   started_at?: string;
   created_at?: string;
+  scheduled_callback_at?: string | null;
 }
 
 interface CallsResponse {
@@ -93,6 +94,7 @@ const STATUS_OPTIONS = [
   "Called",
   "Called - Interested",
   "Called - Not Interested",
+  "Called - Callback Requested",
   "Not Answered",
   "Call Not Connected",
   "Failed",
@@ -210,11 +212,22 @@ export default function OpsCallsPage() {
     {
       key: "status",
       header: "Status",
-      render: (r) => (
-        <Badge variant={statusVariant(r.status || r.call_status || "")}>
-          {r.status || r.call_status || "—"}
-        </Badge>
-      ),
+      render: (r) => {
+        const st = r.status || r.call_status || "";
+        const isCallback = st === "Called - Callback Requested";
+        return (
+          <div className="space-y-0.5">
+            <Badge variant={statusVariant(st)}>
+              {isCallback ? "Callback Scheduled" : st || "—"}
+            </Badge>
+            {isCallback && r.scheduled_callback_at && (
+              <div className="font-mono text-[10px] text-amber-400/80">
+                {fmtCallbackTime(r.scheduled_callback_at)}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "lead",
@@ -631,6 +644,26 @@ function fmtWhen(iso: string): string {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}
+
+/** Format a scheduled_callback_at ISO string as "Mon 26 May, 10:00 AM" in IST. */
+function fmtCallbackTime(iso: string): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
     });
   } catch {
     return iso;

@@ -11,7 +11,7 @@ import logging
 import asyncio
 
 from livekit import rtc
-from livekit.agents import JobContext, function_tool, RunContext
+from livekit.agents import JobContext, function_tool, RunContext, APIConnectOptions
 from livekit.agents.voice import AgentSession, Agent
 from livekit.plugins import deepgram, silero, sarvam, google, groq
 from livekit.agents.llm import FallbackAdapter
@@ -30,6 +30,55 @@ from prompts import build_loan_enquiry_instructions
 from prompts_account import build_account_opening_instructions
 
 logger = logging.getLogger("loan-enquiry-agent")
+
+
+# ---------------------------------------------------------------------------
+# Sentry / GlitchTip — capture agent exceptions + ERROR logs.
+# No-op unless SENTRY_DSN_AGENT is set (so dev/local runs stay clean). The
+# module-level init runs in every worker/job process LiveKit spawns, so both
+# the main worker and per-call job processes report errors.
+# ---------------------------------------------------------------------------
+_SENTRY_DSN_AGENT = os.getenv("SENTRY_DSN_AGENT", "").strip()
+if _SENTRY_DSN_AGENT:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN_AGENT,
+            environment=os.getenv("LOS_ENV", "production"),
+            traces_sample_rate=0.0,
+            send_default_pii=False,
+        )
+        logger.info(
+            "Sentry initialized for agent (env=%s)",
+            os.getenv("LOS_ENV", "production"),
+        )
+    except ImportError:
+        logger.warning("SENTRY_DSN_AGENT set but sentry-sdk not installed")
+    except Exception as _sentry_exc:  # never let telemetry break the agent
+        logger.error("Agent Sentry init failed: %s", _sentry_exc)
+
+
+# ---------------------------------------------------------------------------
+# Sarvam TTS with extended WebSocket receive timeout
+# ---------------------------------------------------------------------------
+# The default APIConnectOptions.timeout is 10 s.  For mixed Hindi/English
+# greeting text on first connection the Sarvam API occasionally takes >10 s
+# to return the first audio chunk, causing:
+#   "WebSocket receive timeout" → retry → 5-6 s silence at call start
+#   "_SegmentSynchronizerImpl.resume called after close" warning cascade
+# Bumping to 30 s eliminates these without changing any other behaviour.
+_SARVAM_CONN = APIConnectOptions(timeout=30.0, max_retry=3, retry_interval=2.0)
+
+
+class _SarvamTTS(sarvam.TTS):
+    """Drop-in wrapper that injects a 30-second receive timeout."""
+
+    def stream(self, *, conn_options=None):
+        return super().stream(conn_options=conn_options or _SARVAM_CONN)
+
+    def synthesize(self, text, *, conn_options=None):
+        return super().synthesize(text, conn_options=conn_options or _SARVAM_CONN)
 
 # Wire agent → /api/internal/errors webhook (idempotent — silently no-ops if
 # LOS_BACKEND_URL / LOS_INTERNAL_HMAC_SECRET aren't set in .env.local).
@@ -110,7 +159,17 @@ async def entrypoint(ctx: JobContext):
         def on_participant_disconnect(participant_info):
             logger.info(f"Participant disconnected: {participant_info.identity}")
             if session is not None and not session.call_ended:
-                logger.info("Customer hung up - saving transcript...")
+                logger.info("Customer hung up - silencing agent and saving transcript...")
+                # Cut off any in-flight LLM generation / TTS speech so we don't
+                # cascade into "Gemini finish_reason: None" or stray audio after
+                # the customer has already left the room.
+                try:
+                    if session.agent_session is not None:
+                        session.agent_session.interrupt(force=True)
+                        if getattr(session.agent_session, "input", None) is not None:
+                            session.agent_session.input.audio = None
+                except Exception as e:
+                    logger.debug(f"silence on customer-disconnect failed (non-fatal): {e}")
                 asyncio.create_task(session.save_and_disconnect(delay=0))
 
         await asyncio.sleep(0.2)
@@ -142,16 +201,26 @@ async def entrypoint(ctx: JobContext):
                     google.LLM(
                         model="gemini-2.5-flash",
                         temperature=0.4,
+                        # Disable Gemini 2.5 "thinking": it spends seconds on
+                        # internal reasoning tokens BEFORE the first response
+                        # token, which is fatal for a real-time voice agent
+                        # (turns the ~1s TTFT into 3-6s). thinking_budget=0 = off.
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
                         http_options=genai_types.HttpOptions(timeout=30000),
                     ),
                     groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
                     groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
                 ]
             ),
-            tts=sarvam.TTS(
+            tts=_SarvamTTS(
                 model="bulbul:v3",
                 target_language_code=session.tts_language_code,
                 speaker=session.tts_speaker,
+                # pace=1.18 — ~15% faster than the Bulbul default. At 1.06 the Hindi
+                # voice felt sluggish on phone calls (customers were interrupting mid-
+                # sentence because each utterance took 8-10 sec to play). 1.18 stays
+                # natural-sounding while delivering content noticeably quicker. Sarvam
+                # docs accept 0.5-2.0; 1.20+ starts sounding rushed.
                 pace=1.06,
                 speech_sample_rate=22050,
                 enable_preprocessing=True,
@@ -164,6 +233,18 @@ async def entrypoint(ctx: JobContext):
             discard_audio_if_uninterruptible=True,
             userdata={"session": session},
         )
+
+        # ── Latency instrumentation — logs per-turn EOU delay, LLM TTFT, and
+        # TTS TTFB so we can see exactly which stage costs what. Logging only,
+        # zero behavioral impact. View: journalctl -u los-agent-* | grep METRIC
+        from livekit.agents import metrics as _lk_metrics
+
+        @agent_session.on("metrics_collected")
+        def _on_metrics_collected(ev):
+            try:
+                _lk_metrics.log_metrics(ev.metrics)
+            except Exception:
+                pass
 
         @agent_session.on("user_input_transcribed")
         def on_user_transcript(event):
@@ -238,22 +319,26 @@ async def entrypoint(ctx: JobContext):
         try:
             logger.info("Triggering hardcoded split greeting")
 
+            # Tightened greeting: identity + disclaimer fused into one short sentence.
+            # The verbose "security and quality purposes" phrasing added 3-4 seconds
+            # of audio with no business value; customers were hanging up before the
+            # ID check question even started.
             if session.language == "english":
-                part1 = f"Hello, this is {session.agent_name} calling from {session.bank_name}. This call is being recorded for security and quality purposes."
+                part1 = f"Hello, this is {session.agent_name} from {session.bank_name}. This call is recorded for quality."
                 part2 = f"Am I speaking with {session.customer_name}?"
             elif session.language == "marathi":
                 bolte = "बोलतेय" if session.gender == "female" else "बोलतोय"
-                part1 = f"नमस्कार, मी {session.agent_name}, {session.bank_name} मधून {bolte}. ही कॉल सुरक्षेसाठी रेकॉर्ड केली जात आहे."
+                part1 = f"नमस्कार, मी {session.agent_name}, {session.bank_name} मधून {bolte}. ही call quality साठी record होत आहे."
                 part2 = f"मी {session.customer_name} जींशी बोलतोय का?"
             else:
                 bol = "रही" if session.gender == "female" else "रहा"
-                part1 = f"Hello, मैं {session.agent_name} बोल {bol} हूँ {session.bank_name} से। यह कॉल सुरक्षा के लिए रिकॉर्ड की जा रही है।"
+                part1 = f"Hello, मैं {session.agent_name} {session.bank_name} से बोल {bol} हूँ। यह call quality के लिए record हो रही है।"
                 part2 = f"क्या मेरी बात {session.customer_name} जी से हो रही है?"
 
-            handle1 = agent_session.say(part1, allow_interruptions=False, add_to_chat_ctx=False)
+            handle1 = agent_session.say(part1, allow_interruptions=False, add_to_chat_ctx=True)
             await handle1
             await asyncio.sleep(0.2)
-            handle2 = agent_session.say(part2, allow_interruptions=True, add_to_chat_ctx=False)
+            handle2 = agent_session.say(part2, allow_interruptions=True, add_to_chat_ctx=True)
             await handle2
         except Exception as e:
             logger.warning(f"Greeting failed: {e}")

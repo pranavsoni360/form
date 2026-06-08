@@ -18,12 +18,23 @@ logging.basicConfig(
 )
 
 AGENT_NAME = os.getenv("UNION_BANK_AGENT_NAME", "union-bank-account-opening")
+# Each worker opens its own HTTP health-check server. Two workers on the same
+# host MUST use different ports or the second one fails with
+# `OSError 10048: only one usage of each socket address ... is normally permitted`.
+# Union Bank → 8081 (default), Pusad loan agent → 8082 (see los_updated.py).
+AGENT_HTTP_PORT = int(os.getenv("UNION_BANK_AGENT_PORT", "8081"))
 
 if __name__ == "__main__":
     while True:
         try:
-            logging.getLogger("loan-enquiry-agent").info("Starting Union Bank Account Opening Agent Worker...")
-            cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name=AGENT_NAME))
+            logging.getLogger("loan-enquiry-agent").info(
+                f"Starting Union Bank Account Opening Agent Worker on :{AGENT_HTTP_PORT}..."
+            )
+            cli.run_app(WorkerOptions(
+                entrypoint_fnc=entrypoint,
+                agent_name=AGENT_NAME,
+                port=AGENT_HTTP_PORT,
+            ))
         except KeyboardInterrupt:
             logging.getLogger("loan-enquiry-agent").info("Worker stopped by user")
             break

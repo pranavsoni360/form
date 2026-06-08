@@ -22,7 +22,8 @@ async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
     Used by the dashboard's 'Upcoming Callbacks' section."""
     rows = await _state.db_pool.fetch(
         """SELECT * FROM agent_calls
-           WHERE status = 'Scheduled' AND scheduled_callback_at IS NOT NULL
+           WHERE status IN ('Scheduled', 'Called - Callback Requested')
+             AND scheduled_callback_at IS NOT NULL
            ORDER BY scheduled_callback_at ASC LIMIT $1""",
         limit,
     )
@@ -34,7 +35,8 @@ async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
 async def schedule_callback(request: Request):
     """Triggered by the voice agent when a customer says they are busy and asks
     to be called back at a specific time. Clamps the time into working hours,
-    sets the call's status to 'Scheduled' so the batch dispatcher will re-dial."""
+    sets the call's status to 'Called - Callback Requested' so the batch
+    dispatcher will re-dial when scheduled_callback_at arrives."""
     data = await request.json()
     call_id = data.get("call_id")
     callback_iso = data.get("callback_iso")
@@ -69,7 +71,7 @@ async def schedule_callback(request: Request):
 
     await _state.db_pool.execute(
         """UPDATE agent_calls
-           SET status = 'Scheduled',
+           SET status = 'Called - Callback Requested',
                scheduled_callback_at = $1,
                callback_reason = $2,
                error_message = NULL,

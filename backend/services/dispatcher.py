@@ -268,7 +268,8 @@ class Dispatcher:
                 WHERE batch_id = $1
                   AND (
                     status = 'Pending'
-                    OR (status = 'Scheduled' AND (scheduled_callback_at IS NULL OR scheduled_callback_at <= NOW()))
+                    OR (status IN ('Scheduled', 'Called - Callback Requested')
+                        AND (scheduled_callback_at IS NULL OR scheduled_callback_at <= NOW()))
                   )
                 ORDER BY COALESCE(scheduled_callback_at, created_at) ASC
                 LIMIT $2""",
@@ -550,7 +551,7 @@ class Dispatcher:
         customer_gender = (cd.get("gender") if isinstance(cd, dict) else None) or "male"
         agent_purpose = call.get("agent_type", "loan_enquiry")
         bank_name_for_agent = ("Union Bank of India" if agent_purpose == "account_opening"
-                               else "Pusad Urban Bank")
+                               else "ABC Bank")
 
         try:
             # M5: wrap each LiveKit op with circuit breaker + timeout.
@@ -632,10 +633,10 @@ class Dispatcher:
         result = await self.wait_for_call_completion(str(call_uuid), room_name)
         if result:
             fs = result.get("status", "Unknown")
-            # 'Scheduled' means the agent ran schedule_callback() during this
-            # conversation — treat it as a soft success (trunk released without
-            # cooldown, counted as successful, SSE shows "scheduled" not "failed").
-            if fs == "Scheduled":
+            # Callback statuses mean the agent ran schedule_callback() during this
+            # conversation — treat as soft success (trunk released without cooldown,
+            # counted as successful, SSE shows "completed" not "failed").
+            if fs in ("Scheduled", "Called - Callback Requested"):
                 return True
             return fs in ("Called", "Completed", "Called - Interested", "Called - Not Interested")
         return False

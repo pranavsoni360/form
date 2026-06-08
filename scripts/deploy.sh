@@ -16,7 +16,7 @@ set -euo pipefail
 
 SCRIPT_VERSION="2.0.0"
 REPO_URL="https://github.com/pranavsoni360/form.git"
-REPO_BRANCH="${LOS_BRANCH:-main}"
+REPO_BRANCH="${LOS_BRANCH:-master}"
 INSTALL_DIR="/root/vaani_los_form"
 BACKEND_PORT=8200
 FRONTEND_PORT=3001
@@ -150,16 +150,45 @@ do_update() {
         warn "npm not found — skipping frontend rebuild"
     fi
 
-    # 6. Restart services
+    # 6. Restart services (backend, frontend, both modular voice agents)
     log "Restarting services..."
-    systemctl restart los-backend los-frontend
+    systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
 
-    # 7. Health check
-    sleep 3
-    if curl -fsk "https://localhost:${BACKEND_PORT}/" >/dev/null 2>&1; then
-        log "Backend health check passed (port ${BACKEND_PORT})."
+    # 6b. Refresh SIP trunk watchdog units (no-op if unchanged) + ensure enabled.
+    if [ -f "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" ]; then
+        install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.service" /etc/systemd/system/los-trunk-watchdog.service
+        install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" /etc/systemd/system/los-trunk-watchdog.timer
+        systemctl daemon-reload
+        if [ -f "${INSTALL_DIR}/agent/trunks.config.json" ]; then
+            systemctl enable --now los-trunk-watchdog.timer 2>/dev/null || true
+        fi
+    fi
+
+    # 6c. Refresh gpu-error-tailer (docker/livekit/sip/agent errors → /ops/errors).
+    # Only restarts if its env file already exists (set up during full setup).
+    if have_cmd docker && [ -f "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" ]; then
+        install -m 755 "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" /usr/local/bin/gpu-error-tailer.sh
+        install -m 644 "${INSTALL_DIR}/scripts/gpu-error-tailer.service" /etc/systemd/system/gpu-error-tailer.service
+        systemctl daemon-reload
+        if [ -f /etc/los/gpu-tailer.env ]; then
+            systemctl enable gpu-error-tailer >/dev/null 2>&1 || true
+            systemctl restart gpu-error-tailer || warn "gpu-error-tailer restart failed"
+        fi
+    fi
+
+    # 7. Health check — backend readyz + both agents active
+    sleep 5
+    if curl -fsk "https://localhost:${BACKEND_PORT}/readyz" >/dev/null 2>&1; then
+        log "Backend health check passed (/readyz on ${BACKEND_PORT})."
     else
-        warn "Backend health check failed. Check: journalctl -u los-backend -n 50"
+        warn "Backend health check FAILED. Check: journalctl -u los-backend -n 50"
+        exit 1
+    fi
+    if systemctl is-active --quiet los-agent-union && systemctl is-active --quiet los-agent-pusad; then
+        log "Both voice agents active."
+    else
+        warn "An agent is not active. Check: journalctl -u los-agent-union -u los-agent-pusad -n 50"
+        exit 1
     fi
 
     # 8. Summary
@@ -383,8 +412,28 @@ RestartSec=3
 WantedBy=multi-user.target
 SVC
 
+# Voice agents — install the two modular agent units from the repo
+# (los-agent-union :8081, los-agent-pusad :8082). These replace the old
+# single los-agent.service (loan_agent.py).
+install -m 644 "${INSTALL_DIR}/scripts/los-agent-union.service" /etc/systemd/system/los-agent-union.service
+install -m 644 "${INSTALL_DIR}/scripts/los-agent-pusad.service" /etc/systemd/system/los-agent-pusad.service
+
+# SIP trunk watchdog — self-healing timer that recreates any missing LiveKit
+# trunk (additive only) and re-syncs phone_numbers every 5 min. Only enabled
+# when the GPU-only secrets file (agent/trunks.config.json, gitignored) exists;
+# otherwise the units are installed but left inert (e.g. dev hosts).
+install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.service" /etc/systemd/system/los-trunk-watchdog.service
+install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" /etc/systemd/system/los-trunk-watchdog.timer
+
 systemctl daemon-reload
-systemctl enable los-backend los-frontend
+systemctl disable --now los-agent.service 2>/dev/null || true
+systemctl enable los-backend los-frontend los-agent-union los-agent-pusad
+if [ -f "${INSTALL_DIR}/agent/trunks.config.json" ]; then
+    systemctl enable --now los-trunk-watchdog.timer
+    log "SIP trunk watchdog timer enabled."
+else
+    warn "agent/trunks.config.json not found — trunk watchdog installed but NOT enabled."
+fi
 
 log "Phase 7 complete"
 
@@ -448,7 +497,7 @@ fi
 
 log "── Phase 9: Start Services ──"
 
-systemctl restart los-backend los-frontend
+systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
 
 sleep 5
 wait_for_port ${BACKEND_PORT} "Backend" 15

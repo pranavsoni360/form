@@ -15,6 +15,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Bac
 from livekit import api
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.events import EVENT_JOB_ERROR
 
 from . import state as _state
 from .state import (
@@ -32,6 +33,30 @@ logger = logging.getLogger("agent-batch")
 router = APIRouter()
 
 _scheduler: AsyncIOScheduler = None
+
+
+def _on_job_error(event):
+    """apscheduler EVENT_JOB_ERROR -> /ops/errors (source=backend).
+
+    Background cron jobs (batch runner, analytics, error cleanup) run OUTSIDE
+    the HTTP request path, so the FastAPI global exception handler never sees
+    their failures. This listener mirrors that handler's publish so every
+    scheduled-job crash also surfaces on /ops/errors (and the status pill),
+    not just in logs/GlitchTip.
+    """
+    try:
+        from lib.event_bus import event_bus
+        exc = getattr(event, "exception", None)
+        event_bus.publish("errors", {
+            "type": "error",
+            "source": "backend",
+            "level": "error",
+            "exc_type": type(exc).__name__ if exc else "ScheduledJobError",
+            "message": f"scheduled job '{getattr(event, 'job_id', '?')}' failed: {str(exc)[:280]}",
+            "metadata": {"job_id": getattr(event, "job_id", None)},
+        })
+    except Exception:
+        pass  # never raise from the error-reporting path
 
 
 async def agent_startup():
@@ -70,6 +95,7 @@ async def agent_startup():
         id="error_cleanup",
         replace_existing=True,
     )
+    _scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     _scheduler.start()
     logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, error_cleanup daily 03:00 IST, max_retries={MAX_RETRIES})")
 
@@ -295,7 +321,9 @@ async def process_batch_run(batch_uuid_str: str = None):
         # Check if batch has any remaining pending calls
         if batch_row:
             remaining = await _state.db_pool.fetchval(
-                "SELECT COUNT(*) FROM agent_calls WHERE batch_id = $1 AND status IN ('Pending', 'Scheduled')",
+                """SELECT COUNT(*) FROM agent_calls
+                   WHERE batch_id = $1
+                     AND status IN ('Pending', 'Scheduled', 'Called - Callback Requested')""",
                 call_batch_id,
             )
             if remaining == 0:
@@ -604,7 +632,7 @@ async def batch_status(
             *bk_params, *extra_params,
         )
 
-    pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled')")
+    pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
     active_count = await _count(" AND status = 'Calling'")
     failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")

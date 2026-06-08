@@ -1141,11 +1141,60 @@ export default function LoanApplication() {
                       <input type="text" value={formData.dealer_address || ''} onChange={e => onChange('dealer_address', e.target.value)}
                         className={inp('')} placeholder="Shop address" />
                     </F>
-                    <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                      <span style={{ fontSize: '14px' }}>📎</span>
-                      <p className="text-xs" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>
-                        Please upload the dealer quotation in the Documents step (Step 5). It is required for consumer durable loans.
-                      </p>
+                    {/* Quotation upload — inline on Step 4 */}
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+                        Dealer Quotation (PDF / Image) <span style={{ color: '#DC2626' }}>*</span>
+                      </label>
+                      <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData.quotation_url ? 'border-green-400/50 bg-green-50' : 'border-dashed border-orange-300 bg-orange-50/40'}`}>
+                        <div>
+                          {formData.quotation_url ? (
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-green-600" />
+                              <span className="text-sm font-medium" style={{ color: '#065F46' }}>Quotation uploaded</span>
+                              <a href={`${API_URL}${formData.quotation_url}`} target="_blank" rel="noopener noreferrer">
+                                <Eye className="w-4 h-4 text-blue-500 hover:text-blue-700" />
+                              </a>
+                            </div>
+                          ) : (
+                            <div>
+                              <p className="text-sm font-medium" style={{ color: '#92400E' }}>Upload dealer quotation</p>
+                              <p className="text-xs mt-0.5" style={{ color: '#B45309' }}>PDF, JPG or PNG · Max 5MB</p>
+                            </div>
+                          )}
+                          {errors.quotation_url && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{errors.quotation_url}</p>}
+                        </div>
+                        <label className="cursor-pointer">
+                          <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (!['image/jpeg','image/jpg','image/png','application/pdf'].includes(file.type)) {
+                                setErrors((p: any) => ({ ...p, quotation_url: 'Only JPG, PNG or PDF allowed' }));
+                                e.target.value = ''; return;
+                              }
+                              if (file.size > 5 * 1024 * 1024) {
+                                setErrors((p: any) => ({ ...p, quotation_url: 'File too large. Max 5MB allowed' }));
+                                e.target.value = ''; return;
+                              }
+                              setErrors((p: any) => ({ ...p, quotation_url: '' }));
+                              const fd = new FormData();
+                              fd.append('session_token', getSession() || '');
+                              fd.append('document_type', 'quotation');
+                              fd.append('file', file);
+                              try {
+                                const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
+                                const data = await res.json();
+                                if (data.url) onChange('quotation_url', data.url);
+                                else setErrors((p: any) => ({ ...p, quotation_url: 'Upload failed. Try again.' }));
+                              } catch { setErrors((p: any) => ({ ...p, quotation_url: 'Upload failed. Try again.' })); }
+                            }}
+                          />
+                          <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData.quotation_url ? 'bg-green-600 text-white' : 'bg-orange-500 text-white hover:bg-orange-600'}`}>
+                            {formData.quotation_url ? 'Replace' : 'Upload'}
+                          </span>
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>

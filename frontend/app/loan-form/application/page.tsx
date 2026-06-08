@@ -529,7 +529,14 @@ export default function LoanApplication() {
     return ok;
   };
   const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
-  const step4Valid = () => validate({ loan_amount_requested: 'Required', purpose_of_loan: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+  const step4Valid = () => {
+    const base = validate({ loan_amount_requested: 'Required', purpose_of_loan: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+    if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
+      const extra = validate({ product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
+      return base && extra;
+    }
+    return base;
+  };
 
   const handleNext = () => {
     if (currentStep === 1 && nameMatchLocked) {
@@ -1061,6 +1068,89 @@ export default function LoanApplication() {
           {currentStep === 4 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="₹" color="#7C3AED" title="Loan & Financial Details" />
+
+              {/* ── Loan Type Selector ── */}
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><span style={{ fontSize: '13px' }}>🏷️</span></div>
+                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Type</p>
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {[
+                      { value: 'personal', label: 'Personal Loan', desc: 'For any personal need — medical, travel, wedding, etc.', icon: '👤' },
+                      { value: 'consumer_durable', label: 'Consumer Durable Loan', desc: 'For buying electronics or home appliances with a dealer quotation.', icon: '🛒' },
+                    ].map(opt => (
+                      <button key={opt.value} type="button"
+                        onClick={() => onChange('consumer_loan_type', opt.value)}
+                        className="text-left p-4 rounded-xl border-2 transition-all"
+                        style={{
+                          borderColor: (formData.consumer_loan_type || 'personal') === opt.value ? '#7C3AED' : '#E2E8F0',
+                          background: (formData.consumer_loan_type || 'personal') === opt.value ? '#F5F3FF' : '#fff',
+                        }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span style={{ fontSize: '18px' }}>{opt.icon}</span>
+                          <span className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{opt.label}</span>
+                          {(formData.consumer_loan_type || 'personal') === opt.value && (
+                            <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#7C3AED', color: '#fff' }}>Selected</span>
+                          )}
+                        </div>
+                        <p className="text-xs" style={{ color: '#64748B', fontFamily: 'var(--font-body)' }}>{opt.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Consumer Durable Fields (conditional) ── */}
+              {(formData.consumer_loan_type || 'personal') === 'consumer_durable' && (
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #FED7AA', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#FFF7ED', borderBottom: '1px solid #FED7AA' }}>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#F9731618' }}><span style={{ fontSize: '13px' }}>🛒</span></div>
+                    <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Product & Dealer Details</p>
+                  </div>
+                  <div className="p-5 space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      <F label="Product Name" required error={errors.product_name}>
+                        <input type="text" value={formData.product_name || ''} onChange={e => onChange('product_name', e.target.value)}
+                          className={inp(errors.product_name)} placeholder="e.g. LG 1.5 Ton Split AC" />
+                      </F>
+                      <F label="Brand" required error={errors.brand}>
+                        <input type="text" value={formData.brand || ''} onChange={e => onChange('brand', e.target.value)}
+                          className={inp(errors.brand)} placeholder="e.g. LG, Samsung, Dell" />
+                      </F>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      <F label="Model Number">
+                        <input type="text" value={formData.model_number || ''} onChange={e => onChange('model_number', e.target.value)}
+                          className={inp('')} placeholder="e.g. KS-Q18YNZA" />
+                      </F>
+                      <F label="Quotation Amount (₹)" required error={errors.quotation_amount}>
+                        <input type="number" value={formData.quotation_amount || ''} onChange={e => {
+                          const v = e.target.value;
+                          onChange('quotation_amount', v);
+                          onChange('loan_amount_requested', v);
+                        }} className={inp(errors.quotation_amount)} placeholder="As per dealer quotation" />
+                      </F>
+                    </div>
+                    <F label="Dealer Name" required error={errors.dealer_name}>
+                      <input type="text" value={formData.dealer_name || ''} onChange={e => onChange('dealer_name', e.target.value)}
+                        className={inp(errors.dealer_name)} placeholder="e.g. Vijay Sales, Croma" />
+                    </F>
+                    <F label="Dealer Shop Address">
+                      <input type="text" value={formData.dealer_address || ''} onChange={e => onChange('dealer_address', e.target.value)}
+                        className={inp('')} placeholder="Shop address" />
+                    </F>
+                    <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+                      <span style={{ fontSize: '14px' }}>📎</span>
+                      <p className="text-xs" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>
+                        Please upload the dealer quotation in the Documents step (Step 5). It is required for consumer durable loans.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
                   <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><span style={{ fontSize: '13px' }}>💳</span></div>
@@ -1135,6 +1225,9 @@ export default function LoanApplication() {
                   { key: 'bank_statements_url', label: 'Bank Statements (Last 6 months)', required: true },
                   { key: 'proof_of_identification_url', label: 'Proof of Identification', required: false },
                   { key: 'proof_of_residence_url', label: 'Proof of Residence', required: false },
+                  ...((formData.consumer_loan_type || 'personal') === 'consumer_durable'
+                    ? [{ key: 'quotation_url', label: 'Dealer Quotation (PDF/Image)', required: true }]
+                    : []),
                 ].map(doc => {
                   const fs = formData.field_sources?.[doc.key];
                   const isDigilocker = fs?.source === 'aadhaar';

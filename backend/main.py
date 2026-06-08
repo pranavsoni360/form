@@ -1137,6 +1137,9 @@ AUTOSAVE_COLUMNS = {
     "current_pincode", "current_state_code", "current_city_code",
     "permanent_house", "permanent_street", "permanent_landmark", "permanent_locality",
     "permanent_pincode", "permanent_state_code", "permanent_city_code",
+    # Consumer durable loan fields (v15)
+    "consumer_loan_type", "product_name", "brand", "model_number",
+    "dealer_name", "dealer_address", "quotation_amount", "quotation_url",
 }
 
 # ============================================
@@ -2423,7 +2426,10 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
     field_mapping = {
         "aadhaar_front": "aadhaar_front_url", "aadhaar_back": "aadhaar_back_url",
         "pan_card": "pan_card_url", "photo": "photo_url",
-        "income_proof": "income_proof_url", "bank_statement": "bank_statement_url"
+        "income_proof": "income_proof_url", "bank_statement": "bank_statement_url",
+        "salary_slips": "salary_slips_url", "itr_form16": "itr_form16_url",
+        "bank_statements": "bank_statements_url", "proof_of_identification": "proof_of_identification_url",
+        "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
         await db_pool.execute(
@@ -3072,7 +3078,10 @@ async def upload_document_session(
     field_mapping = {
         "aadhaar_front": "aadhaar_front_url", "aadhaar_back": "aadhaar_back_url",
         "pan_card": "pan_card_url", "photo": "photo_url",
-        "income_proof": "income_proof_url", "bank_statement": "bank_statement_url"
+        "income_proof": "income_proof_url", "bank_statement": "bank_statement_url",
+        "salary_slips": "salary_slips_url", "itr_form16": "itr_form16_url",
+        "bank_statements": "bank_statements_url", "proof_of_identification": "proof_of_identification_url",
+        "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
         await db_pool.execute(

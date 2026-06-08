@@ -209,12 +209,25 @@ export default function ApplicationDetailPage() {
         {/* Loan Details */}
         <Section title="Loan Details" icon={Banknote} sectionKey="loan">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
-            <Field label="Loan Type" value={app.loan_type} />
+            <Field label="Loan Type" value={app.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : 'Personal Loan'} />
             <Field label="Requested Amount" value={app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : (app.loan_amount ? formatCurrency(app.loan_amount) : null)} />
             <Field label="Purpose" value={app.purpose_of_loan} />
             <Field label="Tenure" value={app.repayment_period_years ? `${app.repayment_period_years} years` : null} />
             <Field label="Scheme" value={app.scheme} />
           </div>
+          {app.consumer_loan_type === 'consumer_durable' && (
+            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700/50">
+              <p className="text-xs font-semibold uppercase tracking-wider text-orange-600 mb-3">Product & Dealer Details</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
+                <Field label="Product Name" value={app.product_name} />
+                <Field label="Brand" value={app.brand} />
+                <Field label="Model Number" value={app.model_number} />
+                <Field label="Quotation Amount" value={app.quotation_amount ? formatCurrency(app.quotation_amount) : null} />
+                <Field label="Dealer Name" value={app.dealer_name} />
+                <Field label="Dealer Address" value={app.dealer_address} />
+              </div>
+            </div>
+          )}
         </Section>
 
         {/* KYC Verification */}
@@ -248,6 +261,9 @@ export default function ApplicationDetailPage() {
             <DocItem label="Photo" url={app.photo_url} />
             <DocItem label="Income Proof" url={app.income_proof_url} />
             <DocItem label="Bank Statement" url={app.bank_statement_url} />
+            {app.consumer_loan_type === 'consumer_durable' && (
+              <DocItem label="Dealer Quotation" url={app.quotation_url} />
+            )}
           </div>
         </Section>
 

@@ -104,6 +104,16 @@ async def send_whatsapp_form(request: Request):
                     return None
 
             loan_amount = parse_num(call_row["loan_amount"] if call_row else None) or parse_num(collected.get("loan_amount"))
+
+            # Auto-detect consumer durable loan from purpose keywords
+            _purpose_raw = (collected.get("loan_purpose") or "").lower()
+            _consumer_keywords = [
+                "fridge", "refrigerator", "tv", "television", "laptop", "computer", "pc",
+                "ac", "air conditioner", "washing machine", "washer", "mobile", "phone",
+                "smartphone", "furniture", "sofa", "bed", "microwave", "camera", "led",
+                "two wheeler", "bike", "scooter", "electronic", "appliance", "consumer"
+            ]
+            _consumer_loan_type = "consumer_durable" if any(kw in _purpose_raw for kw in _consumer_keywords) else "personal"
             monthly_income = parse_num(collected.get("monthly_income"))
             existing_emi = parse_num(collected.get("existing_emi"))
 
@@ -114,13 +124,13 @@ async def send_whatsapp_form(request: Request):
                         agent_call_id, full_name, employer_name, designation, employment_type,
                         monthly_gross_income, monthly_emi_existing, current_address,
                         purpose_of_loan, loan_amount_requested, customer_type, industry_type,
-                        total_work_experience, qualification
+                        total_work_experience, qualification, consumer_loan_type
                     ) VALUES (
                         $1, $2, $3, 1, 'draft', $4, $5,
                         $6, $7, $8, $9, $10,
                         $11, $12, $13,
                         $14, $15, $16, $17,
-                        $18, $19
+                        $18, $19, $20
                     ) RETURNING id""",
                     customer_name or "Customer",
                     phone_norm,
@@ -141,6 +151,7 @@ async def send_whatsapp_form(request: Request):
                     collected.get("business_type") or None,
                     collected.get("working_experience") or None,
                     collected.get("qualification") or None,
+                    _consumer_loan_type,
                 )
                 app_id = row["id"]
                 logger.info(f"Created loan_application {app_id} for {phone_norm} from call {call_id}")

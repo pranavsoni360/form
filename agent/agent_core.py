@@ -199,15 +199,15 @@ async def entrypoint(ctx: JobContext):
             llm=FallbackAdapter(
                 [
                     google.LLM(
-                        # flash-lite = Google's low-latency variant. Measured on
-                        # this key: ~0.8s TTFT and 8/8 clean responses, vs full
-                        # 2.5-flash at ~1.4s with intermittent 503 "overloaded"
-                        # + streaming "finish_reason: None" empties — those empties
-                        # stalled turns (agent went silent) and forced a mid-call
-                        # Groq fallback, which is the lag/"agent kuch bola nahi"
-                        # users saw. Lighter model = higher free-tier throughput
-                        # + fewer throttles. Groq stays as the instant fallback.
-                        model="gemini-2.5-flash-lite",
+                        # Primary = full gemini-2.5-flash (billing/paid tier
+                        # enabled). Chosen for conversation + tool-call quality.
+                        # The old lag was FREE-TIER throttling — slow throughput
+                        # (5 tok/s) + streaming "finish_reason: None" empties;
+                        # billing removes that. 2.5-flash can still return an
+                        # occasional 503 "high demand", but that's an INSTANT
+                        # error (not a hang), so the FallbackAdapter switches to
+                        # Groq in ~1s — no dead air. Groq stays the fallback.
+                        model="gemini-2.5-flash",
                         temperature=0.4,
                         # Disable Gemini 2.5 "thinking": it spends seconds on
                         # internal reasoning tokens BEFORE the first response

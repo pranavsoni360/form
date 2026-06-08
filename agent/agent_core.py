@@ -246,6 +246,21 @@ async def entrypoint(ctx: JobContext):
             except Exception:
                 pass
 
+        # Track agent activity so the silence-monitor never counts the agent's
+        # OWN thinking/speaking time as "customer silence" (that caused false
+        # "you seem busy" hang-ups during long agent turns). Resets the silence
+        # clock on every agent state change. Guarded so an unknown event name
+        # can never break the call.
+        session.agent_busy = False
+        try:
+            @agent_session.on("agent_state_changed")
+            def _on_agent_state(ev):
+                st = getattr(ev, "new_state", None) or getattr(ev, "state", None)
+                session.agent_busy = st in ("thinking", "speaking")
+                session.last_speech_time = asyncio.get_event_loop().time()
+        except Exception:
+            pass
+
         @agent_session.on("user_input_transcribed")
         def on_user_transcript(event):
             try:
@@ -347,7 +362,7 @@ async def entrypoint(ctx: JobContext):
             while not session.call_ended:
                 await asyncio.sleep(3)
                 gap = asyncio.get_event_loop().time() - session.last_speech_time
-                if gap > 20 and not session.call_ended:
+                if gap > 25 and not session.call_ended and not getattr(session, "agent_busy", False):
                     logger.warning("Over 25s silence — hanging up.")
                     if session.agent_session:
                         try:

@@ -68,38 +68,40 @@
   .dark {
     /* Dark mode keeps the dotted-cream vibe replaced by a deep navy canvas */
     --background:        222 47% 6%;            /* #0A0F1C */
-    --foreground:        40 30% 96%;
+    --foreground:        215 25% 92%;           /* soft off-white, not harsh */
     --surface:           222 47% 9%;            /* #131A2A */
     --elevated:          222 40% 13%;
 
-    --card:              222 47% 9%;
-    --card-foreground:   40 30% 96%;
-    --popover:           222 47% 9%;
-    --popover-foreground: 40 30% 96%;
+    --card:              222 40% 11%;           /* slightly lifted from bg */
+    --card-foreground:   215 25% 92%;
+    --popover:           222 40% 11%;
+    --popover-foreground: 215 25% 92%;
 
     --primary:           263 75% 65%;           /* lifted violet for dark bg */
     --primary-foreground: 0 0% 100%;
 
-    --solid:             0 0% 100%;             /* invert: white on dark */
+    /* Keep solid as a near-white for places that genuinely need an inverted button,
+       but components that need brand identity (logo, nav) use --primary directly. */
+    --solid:             215 25% 92%;
     --solid-foreground:  222 47% 11%;
 
     --accent:            217 91% 65%;
-    --accent-foreground: 222 47% 11%;
+    --accent-foreground: 0 0% 100%;
 
     --muted:             222 30% 16%;
     --muted-foreground:  217 14% 65%;
     --secondary:         222 30% 16%;
-    --secondary-foreground: 40 30% 96%;
+    --secondary-foreground: 215 25% 92%;
 
-    --destructive:       0 84% 65%;
+    --destructive:       0 72% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border:            222 25% 20%;
-    --input:             222 25% 20%;
+    --border:            222 22% 22%;
+    --input:             222 22% 22%;
     --ring:              263 75% 65%;
 
-    --success:           142 71% 50%;
-    --warning:           38 92% 60%;
+    --success:           142 60% 45%;
+    --warning:           38 85% 55%;
     --info:              217 91% 65%;
   }
 
@@ -195,10 +197,20 @@
 
 .dark { color-scheme: dark; }
 .dark select {
-  background-color: #1e2433;
-  color: rgb(243 244 246);
-  border-color: rgb(75 85 99);
+  background-color: hsl(222 40% 11%);
+  color: hsl(215 25% 92%);
+  border-color: hsl(222 22% 22%);
+}
+.dark input {
+  background-color: hsl(222 40% 11%);
+  color: hsl(215 25% 92%);
+  border-color: hsl(222 22% 22%);
+}
+.dark textarea {
+  background-color: hsl(222 40% 11%);
+  color: hsl(215 25% 92%);
+  border-color: hsl(222 22% 22%);
 }
 .dark input::placeholder,
-.dark textarea::placeholder { color: rgb(156 163 175); }
-.dark select option { background-color: #161b27; }
+.dark textarea::placeholder { color: hsl(217 14% 50%); }
+.dark select option { background-color: hsl(222 47% 9%); }

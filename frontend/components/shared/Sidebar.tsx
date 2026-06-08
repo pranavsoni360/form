@@ -109,7 +109,8 @@ export function Sidebar({ className }: { className?: string }) {
         className="flex items-center gap-3 px-5 py-5"
         aria-label="VirtualVaani Ops"
       >
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-[hsl(var(--solid))] text-white shadow-sm">
+        <span className="grid h-10 w-10 place-items-center rounded-xl text-white shadow-sm"
+          style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)' }}>
           <span className="font-mono text-sm font-bold tracking-tighter">vv</span>
         </span>
         <div className="leading-tight">
@@ -146,7 +147,7 @@ export function Sidebar({ className }: { className?: string }) {
                     className={cn(
                       "group flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all",
                       isActive
-                        ? "bg-[hsl(var(--solid))] text-[hsl(var(--solid-foreground))] shadow-sm"
+                        ? "bg-primary text-white shadow-sm"
                         : "text-foreground/70 hover:bg-muted hover:text-foreground"
                     )}
                   >

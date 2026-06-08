@@ -148,8 +148,12 @@ export default function LoanApplication() {
       const linkData = await linkRes.json();
       if (!linkRes.ok) throw new Error(linkData.detail || 'Failed to generate DigiLocker link');
 
-      // Save state before redirecting to DigiLocker
+      // Save state before redirecting to DigiLocker.
+      // Store in both sessionStorage (same-tab) and localStorage (cross-tab fallback
+      // for mobile browsers that open DigiLocker in a new tab).
       sessionStorage.setItem('digilocker_request_id', linkData.request_id);
+      localStorage.setItem('digilocker_request_id', linkData.request_id);
+      localStorage.setItem('digilocker_session_backup', session || '');
 
       // Redirect user to DigiLocker (not popup — popups get blocked)
       window.location.href = linkData.link;
@@ -190,7 +194,19 @@ export default function LoanApplication() {
   }, [logout]);
 
   useEffect(() => {
-    const session = getSession();
+    let session = getSession();
+    // If DigiLocker opened a new tab and redirected back, sessionStorage is empty in the new tab.
+    // Restore session from the localStorage backup we set before redirecting.
+    if (!session) {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('digilocker') === 'success') {
+        const backup = localStorage.getItem('digilocker_session_backup');
+        if (backup) {
+          sessionStorage.setItem('loan_session', backup);
+          session = backup;
+        }
+      }
+    }
     if (!session) { router.push('/loan-form'); return; }
     loadApplication();
     const events = ['mousedown', 'keypress', 'scroll', 'touchstart'];
@@ -205,7 +221,9 @@ export default function LoanApplication() {
 
   // Detect return from DigiLocker redirect
   useEffect(() => {
-    const requestId = sessionStorage.getItem('digilocker_request_id');
+    // Support both same-tab (sessionStorage) and new-tab (localStorage) flows
+    const requestId = sessionStorage.getItem('digilocker_request_id')
+                   || localStorage.getItem('digilocker_request_id');
     if (!requestId || !appData) return;
     const session = getSession();
     if (!session) return;
@@ -213,6 +231,8 @@ export default function LoanApplication() {
     // Clear the flag immediately to prevent re-running
     sessionStorage.removeItem('digilocker_request_id');
     sessionStorage.removeItem('digilocker_aadhaar');
+    localStorage.removeItem('digilocker_request_id');
+    localStorage.removeItem('digilocker_session_backup');
 
     setDigilockerStep('fetching');
     setAadhaarVerifying(true);
@@ -1074,6 +1094,13 @@ export default function LoanApplication() {
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
                   <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><span style={{ fontSize: '13px' }}>🏷️</span></div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Type</p>
+                  {(() => {
+                    const src = formData.field_sources?.consumer_loan_type;
+                    if (!src) return null;
+                    return src.modified
+                      ? <span className="ml-2 px-1.5 py-0.5 text-[9px] font-medium rounded bg-orange-100 text-orange-700">Modified</span>
+                      : <span className="ml-2 px-1.5 py-0.5 text-[9px] font-medium rounded bg-green-100 text-green-700">Voice Call</span>;
+                  })()}
                 </div>
                 <div className="p-5">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

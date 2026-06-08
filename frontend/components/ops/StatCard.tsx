@@ -25,15 +25,15 @@ export function StatCard({
 }) {
   const t = TONE[tone];
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-white transition-all hover:-translate-y-0.5 hover:shadow-lg"
-      style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+    <div className="relative overflow-hidden rounded-2xl bg-card transition-all hover:-translate-y-0.5 hover:shadow-lg border border-border"
+      style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
       {/* Accent strip */}
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl" style={{ background: t.strip }} />
 
       <div className="pl-5 pr-4 pt-4 pb-4">
         <div className="flex items-start justify-between mb-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em]"
-            style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground"
+            style={{ fontFamily: 'var(--font-body)' }}>
             {label}
           </p>
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
@@ -42,13 +42,13 @@ export function StatCard({
           </div>
         </div>
 
-        <div className="text-4xl font-bold tabular-nums"
-          style={{ color: '#0F172A', fontFamily: 'var(--font-heading)', lineHeight: 1 }}>
+        <div className="text-4xl font-bold tabular-nums text-foreground"
+          style={{ fontFamily: 'var(--font-heading)', lineHeight: 1 }}>
           {value}
         </div>
 
         {hint && (
-          <p className="mt-1.5 text-[11px]" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>{hint}</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground" style={{ fontFamily: 'var(--font-body)' }}>{hint}</p>
         )}
       </div>
     </div>

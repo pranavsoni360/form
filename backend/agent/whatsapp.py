@@ -194,6 +194,7 @@ async def send_whatsapp_form(request: Request):
                     "industry_type": collected.get("business_type"),
                     "total_work_experience": collected.get("working_experience"),
                     "qualification": collected.get("qualification"),
+                    "consumer_loan_type": _consumer_loan_type,
                     "customer_name": customer_name,
                     "full_name": customer_name,
                     "guarantor_name": collected.get("guarantor_name"),

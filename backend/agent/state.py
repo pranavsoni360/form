@@ -280,7 +280,8 @@ def _serialize_call(c: dict) -> dict:
             cd = {}
     for k in ["monthly_income", "employment_type", "employer_name", "loan_purpose",
               "aadhar_number", "pan_number", "designation", "age", "business_type",
-              "existing_emi", "collected_address", "monthly_turnover", "business_age"]:
+              "existing_emi", "collected_address", "monthly_turnover", "business_age",
+              "is_salaried", "individual_purpose"]:
         if k not in c or not c[k]:
             c[k] = cd.get(k, "")
 
@@ -412,6 +413,9 @@ class TranscriptPayload(BaseModel):
     business_age: Optional[str] = None
     monthly_turnover: Optional[str] = None
     collected_address: Optional[str] = None
+    # Eligibility flags (loan-enquiry agent) — "yes"/"no" confirmed up-front
+    is_salaried: Optional[str] = None
+    individual_purpose: Optional[str] = None
     # Account opening fields (Union Bank agent)
     account_type: str = ""
     initial_deposit: str = ""

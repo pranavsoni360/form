@@ -91,6 +91,8 @@ interface CallDetail {
   monthly_income?: string | number;
   employment_type?: string;
   employer_name?: string;
+  is_salaried?: string;
+  individual_purpose?: string;
   aadhar_number?: string;
   pan_number?: string;
 
@@ -212,9 +214,22 @@ export function CallDetailDialog({
           </div>
 
           {/* Form data card */}
-          {(data.monthly_income || data.employer_name || data.loan_purpose) && (
+          {(data.monthly_income || data.employer_name || data.loan_purpose ||
+            data.is_salaried || data.individual_purpose) && (
             <Section title="Collected information" icon={FileText}>
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                {data.is_salaried && (
+                  <FactSmall
+                    label="Salaried employee"
+                    value={/^y/i.test(String(data.is_salaried)) ? 'Yes' : 'No'}
+                  />
+                )}
+                {data.individual_purpose && (
+                  <FactSmall
+                    label="Individual purpose"
+                    value={/^y/i.test(String(data.individual_purpose)) ? 'Yes' : 'No'}
+                  />
+                )}
                 {data.monthly_income && (
                   <FactSmall label="Monthly income" value={`₹ ${data.monthly_income}`} />
                 )}

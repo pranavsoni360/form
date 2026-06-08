@@ -98,6 +98,8 @@ async def save_transcript(data: TranscriptPayload):
         "business_age": data.business_age or existing_collected.get("business_age"),
         "monthly_turnover": data.monthly_turnover or existing_collected.get("monthly_turnover"),
         "collected_address": data.collected_address or existing_collected.get("collected_address"),
+        "is_salaried": data.is_salaried or existing_collected.get("is_salaried"),
+        "individual_purpose": data.individual_purpose or existing_collected.get("individual_purpose"),
     }
     existing_collected.update({k: v for k, v in qualification_data.items() if v})
 

@@ -84,6 +84,8 @@ class LoanEnquirySession:
         self.business_type = None
         self.business_age = None
         self.monthly_turnover = None
+        self.is_salaried = None
+        self.individual_purpose = None
 
         self.initial_deposit = None
 
@@ -146,6 +148,8 @@ class LoanEnquirySession:
             "address": "collected_address",
             "account_type": "account_type",
             "initial_deposit": "initial_deposit",
+            "is_salaried": "is_salaried",
+            "individual_purpose": "individual_purpose",
         }
         attr = mapping.get(field.lower().strip())
         if attr:
@@ -273,6 +277,8 @@ class LoanEnquirySession:
             "collected_address": self.collected_address,
             "account_type": self.account_type or "",
             "initial_deposit": self.initial_deposit or "",
+            "is_salaried": self.is_salaried,
+            "individual_purpose": self.individual_purpose,
         }
 
         logger.info(

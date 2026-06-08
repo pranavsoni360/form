@@ -45,6 +45,8 @@ def _build_collected_data(session: LoanEnquirySession) -> dict:
         "account_type":       getattr(session, "account_type", None),
         "initial_deposit":    getattr(session, "initial_deposit", None),
         "customer_type":      getattr(session, "customer_type", None),
+        "is_salaried":        getattr(session, "is_salaried", None),
+        "individual_purpose": getattr(session, "individual_purpose", None),
     }
     return {k: v for k, v in raw.items() if v not in (None, "", 0)}
 
@@ -299,6 +301,8 @@ async def collect_all_data(
     address: str = "",
     account_type: str = "",
     initial_deposit: str = "",
+    is_salaried: str = "",
+    individual_purpose: str = "",
 ) -> str:
     session: LoanEnquirySession = context.userdata["session"]
     fields = {
@@ -309,6 +313,7 @@ async def collect_all_data(
         "loan_purpose": loan_purpose, "business_type": business_type, "business_age": business_age,
         "monthly_turnover": monthly_turnover, "address": address,
         "account_type": account_type, "initial_deposit": initial_deposit,
+        "is_salaried": is_salaried, "individual_purpose": individual_purpose,
     }
     saved = 0
     for f, v in fields.items():

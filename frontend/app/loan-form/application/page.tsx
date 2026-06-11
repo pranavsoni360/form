@@ -553,11 +553,13 @@ export default function LoanApplication() {
     const base = validate({ loan_amount_requested: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
     const loanAmt = parseFloat(formData.loan_amount_requested || '0');
     const guarantorValid = loanAmt > 100000 ? validate({ guarantor_name: 'Required', guarantor_phone: 'Required' }) : true;
+    const criminalValid = formData.criminal_records === true;
+    if (!criminalValid) setErrors((p: any) => ({ ...p, criminal_records: 'You must confirm you have no pending criminal cases to proceed' }));
     if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
       const extra = validate({ product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
-      return base && extra && guarantorValid;
+      return base && extra && guarantorValid && criminalValid;
     }
-    return base;
+    return base && guarantorValid && criminalValid;
   };
 
   const handleNext = () => {
@@ -1310,9 +1312,10 @@ export default function LoanApplication() {
 
               <div className="rounded-xl p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5" />
+                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => { onChange('criminal_records', e.target.checked); if (e.target.checked) setErrors((p: any) => ({ ...p, criminal_records: undefined })); }} className="mt-1 w-5 h-5" />
                   <span className="text-sm" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>I do not have any pending criminal cases or criminal records</span>
                 </label>
+                {errors.criminal_records && <p className="mt-2 text-xs text-red-600">{errors.criminal_records}</p>}
               </div>
               <Nav onPrev={() => setCurrentStep(3)} onNext={handleNext} />
             </div>

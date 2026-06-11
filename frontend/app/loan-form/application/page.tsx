@@ -550,10 +550,12 @@ export default function LoanApplication() {
   };
   const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
   const step4Valid = () => {
-    const base = validate({ loan_amount_requested: 'Required', purpose_of_loan: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+    const base = validate({ loan_amount_requested: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+    const loanAmt = parseFloat(formData.loan_amount_requested || '0');
+    const guarantorValid = loanAmt > 100000 ? validate({ guarantor_name: 'Required', guarantor_phone: 'Required' }) : true;
     if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
       const extra = validate({ product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
-      return base && extra;
+      return base && extra && guarantorValid;
     }
     return base;
   };
@@ -1244,11 +1246,8 @@ export default function LoanApplication() {
                     </select>
                   </F>
                 </div>
-                <F label="Purpose of Loan" required error={errors.purpose_of_loan} fieldName="purpose_of_loan" fieldSources={formData.field_sources}>
-                  <select value={formData.purpose_of_loan || ''} onChange={e => onChange('purpose_of_loan', e.target.value)} className={inp(errors.purpose_of_loan)}>
-                    <option value="">Select</option>
-                    {(codeLists[13] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
-                  </select>
+                <F label="Purpose of Loan" fieldName="purpose_of_loan" fieldSources={formData.field_sources}>
+                  <input type="text" value={formData.purpose_of_loan || ''} onChange={e => onChange('purpose_of_loan', e.target.value)} className={inp('')} placeholder="e.g. Medical, Travel, Wedding..." />
                 </F>
                 <F label="Scheme"><input type="text" value={formData.scheme || ''} onChange={e => onChange('scheme', e.target.value)} className={inp('')} placeholder="Optional" /></F>
               </div>{/* p-5 */}
@@ -1279,30 +1278,40 @@ export default function LoanApplication() {
               </div>{/* p-5 */}
               </div>{/* financial card */}
               {/* ── Guarantor Details ── */}
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0F9FF', borderBottom: '1px solid #BAE6FD' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E918' }}><span style={{ fontSize: '13px' }}>🤝</span></div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Guarantor Details</p>
-                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#E0F2FE', color: '#0369A1', fontFamily: 'var(--font-body)' }}>Optional</span>
-                </div>
-                <div className="p-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <F label="Guarantor Name" fieldName="guarantor_name" fieldSources={formData.field_sources}>
-                      <input type="text" value={formData.guarantor_name || ''} onChange={e => onChange('guarantor_name', e.target.value)}
-                        className={inp('')} placeholder="Full name of guarantor" />
-                    </F>
-                    <F label="Guarantor Phone Number" fieldName="guarantor_phone" fieldSources={formData.field_sources}>
-                      <input type="tel" value={formData.guarantor_phone || ''} onChange={e => onChange('guarantor_phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
-                        className={inp('')} placeholder="10-digit mobile number" maxLength={10} inputMode="numeric" />
-                    </F>
+              {(() => {
+                const loanAmt = parseFloat(formData.loan_amount_requested || '0');
+                const required = loanAmt > 100000;
+                const disabled = !required;
+                return (
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', opacity: disabled ? 0.5 : 1 }}>
+                  <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0F9FF', borderBottom: '1px solid #BAE6FD' }}>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E918' }}><span style={{ fontSize: '13px' }}>🤝</span></div>
+                    <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Guarantor Details</p>
+                    {required
+                      ? <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#FEE2E2', color: '#B91C1C', fontFamily: 'var(--font-body)' }}>Required for loans &gt; ₹1 lakh</span>
+                      : <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#F1F5F9', color: '#64748B', fontFamily: 'var(--font-body)' }}>Required only for loans &gt; ₹1 lakh</span>
+                    }
+                  </div>
+                  <div className="p-5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      <F label="Guarantor Name" required={required} error={errors.guarantor_name} fieldName="guarantor_name" fieldSources={formData.field_sources}>
+                        <input type="text" value={formData.guarantor_name || ''} onChange={e => onChange('guarantor_name', e.target.value)}
+                          className={inp(errors.guarantor_name)} placeholder="Full name of guarantor" disabled={disabled} />
+                      </F>
+                      <F label="Guarantor Phone Number" required={required} error={errors.guarantor_phone} fieldName="guarantor_phone" fieldSources={formData.field_sources}>
+                        <input type="tel" value={formData.guarantor_phone || ''} onChange={e => onChange('guarantor_phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                          className={inp(errors.guarantor_phone)} placeholder="10-digit mobile number" maxLength={10} inputMode="numeric" disabled={disabled} />
+                      </F>
+                    </div>
                   </div>
                 </div>
-              </div>
+                );
+              })()}
 
               <div className="rounded-xl p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input type="checkbox" checked={formData.criminal_records || false} onChange={e => onChange('criminal_records', e.target.checked)} className="mt-1 w-5 h-5" />
-                  <span className="text-sm" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>I have pending criminal cases or criminal records</span>
+                  <span className="text-sm" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>I do not have any pending criminal cases or criminal records</span>
                 </label>
               </div>
               <Nav onPrev={() => setCurrentStep(3)} onNext={handleNext} />
@@ -1420,7 +1429,7 @@ export default function LoanApplication() {
               </RS>
               <RS title="Loan & Financial">
                 <RR label="Amount" value={formData.loan_amount_requested ? `₹${parseFloat(formData.loan_amount_requested).toLocaleString('en-IN')}` : ''} />
-                <RR label="Purpose" value={codeLabel(13, formData.purpose_of_loan)} />
+                <RR label="Purpose" value={formData.purpose_of_loan} />
                 <RR label="Net Income" value={formData.monthly_net_income ? `₹${parseFloat(formData.monthly_net_income).toLocaleString('en-IN')}` : ''} />
               </RS>
               {(formData.guarantor_name || formData.guarantor_phone) && (

@@ -352,8 +352,8 @@ export default function OpsBatchPage() {
                 value={gender}
                 onChange={(v) => setGender(v as typeof gender)}
                 options={[
-                  { value: "male", label: "👨 Male (Rajesh)" },
-                  { value: "female", label: "👩 Female (Diya)" },
+                  { value: "male", label: "Male (Rajesh)" },
+                  { value: "female", label: "Female (Diya)" },
                 ]}
               />
               <Select

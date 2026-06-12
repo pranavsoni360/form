@@ -207,11 +207,19 @@ export default function ApplicationDetailPage() {
         </Section>
 
         {/* Guarantor */}
-        {(app.guarantor_name || app.guarantor_phone) && (
+        {(app.guarantor_name || app.guarantor_phone || app.guarantor_consent) && (
           <Section title="Guarantor Details" icon={User} sectionKey="guarantor">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
               <Field label="Guarantor Name" value={app.guarantor_name} />
               <Field label="Guarantor Phone" value={app.guarantor_phone} />
+              <Field
+                label="Consent"
+                value={
+                  app.guarantor_consent === 'yes' ? 'Yes' :
+                  app.guarantor_consent === 'no' ? 'No' :
+                  app.guarantor_consent === 'pending' ? 'Pending' : '—'
+                }
+              />
             </div>
           </Section>
         )}

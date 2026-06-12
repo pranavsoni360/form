@@ -34,7 +34,7 @@ async def enqueue_guarantor_consent_call(db_pool, application_id) -> None:
         logger.info("Guarantor enqueue skipped (no guarantor details) app=%s", application_id)
         return
 
-    if g_phone_digits[-10:] == _digits(app["phone"])[-10:] and len(g_phone_digits) >= 10:
+    if len(g_phone_digits) >= 10 and g_phone_digits[-10:] == _digits(app["phone"])[-10:]:
         logger.warning("Guarantor phone == customer phone; skipping app=%s", application_id)
         return
 
@@ -64,7 +64,8 @@ async def enqueue_guarantor_consent_call(db_pool, application_id) -> None:
             """INSERT INTO guarantor_consent_calls
                  (application_id, bank_id, bank_name, guarantor_name, guarantor_phone,
                   borrower_name, loan_amount, language, status, scheduled_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW(),NOW(),NOW())""",
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW(),NOW(),NOW())
+               ON CONFLICT (application_id) DO NOTHING""",
             application_id, app["bank_id"], bank_name, g_name, g_phone_digits,
             app["customer_name"], app["loan_amount_requested"], language,
         )
@@ -77,7 +78,7 @@ async def enqueue_guarantor_consent_call(db_pool, application_id) -> None:
         return
 
     # Row exists: re-call only if not yet completed AND number changed.
-    if existing["status"] != "completed" and _digits(existing["guarantor_phone"]) != g_phone_digits:
+    if existing["status"] in ("pending", "no_answer", "failed") and _digits(existing["guarantor_phone"]) != g_phone_digits:
         await db_pool.execute(
             """UPDATE guarantor_consent_calls
                  SET guarantor_phone=$1, status='pending', retry_count=0,

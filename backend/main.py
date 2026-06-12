@@ -159,6 +159,10 @@ app.include_router(vendor_admin_router)
 app.include_router(vendor_bank_router)
 app.include_router(vendor_router)
 
+# Guarantor consent + transcript webhooks (no JWT, same trust model as /api/agent/transcript)
+from guarantor.routes import router as guarantor_router  # noqa: E402
+app.include_router(guarantor_router, prefix="/api/guarantor", tags=["guarantor"])
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):

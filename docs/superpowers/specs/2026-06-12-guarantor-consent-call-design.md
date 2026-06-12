@@ -110,13 +110,16 @@ Trigger is best-effort additive; the runner cron is the source of truth for dial
    - If timeout/no participant → mark `no_answer`.
 4. `except` → mark attempt failed.
 5. **`finally:`** `await _release_trunk_to_db(db_pool, trunk, success=<terminal completed>)` — **always**, even on exception. (Prevents trunk `active_calls` leak that would throttle customer calls.)
-6. Retry: if terminal state is `no_answer`/`failed` and `retry_count+1 < MAX_RETRIES` → set `status='pending'`, `retry_count += 1`, `scheduled_at = NOW() + backoff` (e.g. 5/15/30 min). Else leave terminal (consent stays whatever captured, NULL if unreached).
+6. Dispatch does NOT do retry. `_claim` increments `retry_count` (= attempts made). The call outcome is set by the webhook (`completed`/`no_answer`); dispatch only marks `failed` when the webhook never finalized, guarded by `WHERE status='calling'` so a webhook-set terminal is never clobbered.
+
+**Retry (owned by the runner, Task 4):** each tick, before dispatching fresh `pending` rows, the runner promotes retryable terminals — `status IN ('no_answer','failed') AND retry_count < MAX_ATTEMPTS(=3) AND ended_at <= NOW() - backoff(retry_count)` (backoff 5/15 min) → back to `pending`. So an unanswered call retries up to 3 total attempts. After max attempts it stays terminal (consent NULL = unreached). APScheduler `max_instances=1` + the atomic claim make overlapping ticks safe.
 
 **State machine:**
 ```
-pending ──claim──> calling ──> completed (consent yes/no)
-                            ├─> no_answer ─┐ retry_count<3 → pending(+backoff)
-                            └─> failed   ──┘ else terminal
+pending ──claim(retry_count++)──> calling ──> completed (consent yes/no)   [terminal]
+                                          ├─> no_answer (webhook, empty transcript)
+                                          └─> failed    (dispatch, webhook never finalized)
+   runner promotes no_answer/failed (retry_count < 3, past backoff) ──> pending
 ```
 
 ## Agent side

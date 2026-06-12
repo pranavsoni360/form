@@ -164,7 +164,7 @@ async def enqueue_guarantor_consent_call(db_pool, application_id) -> None:
         logger.info("Guarantor enqueue skipped (no guarantor details) app=%s", application_id)
         return
 
-    if g_phone_digits[-10:] == _digits(app["phone"])[-10:] and len(g_phone_digits) >= 10:
+    if len(g_phone_digits) >= 10 and g_phone_digits[-10:] == _digits(app["phone"])[-10:]:
         logger.warning("Guarantor phone == customer phone; skipping app=%s", application_id)
         return
 
@@ -194,7 +194,8 @@ async def enqueue_guarantor_consent_call(db_pool, application_id) -> None:
             """INSERT INTO guarantor_consent_calls
                  (application_id, bank_id, bank_name, guarantor_name, guarantor_phone,
                   borrower_name, loan_amount, language, status, scheduled_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW(),NOW(),NOW())""",
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW(),NOW(),NOW())
+               ON CONFLICT (application_id) DO NOTHING""",
             application_id, app["bank_id"], bank_name, g_name, g_phone_digits,
             app["customer_name"], app["loan_amount_requested"], language,
         )
@@ -207,7 +208,7 @@ async def enqueue_guarantor_consent_call(db_pool, application_id) -> None:
         return
 
     # Row exists: re-call only if not yet completed AND number changed.
-    if existing["status"] != "completed" and _digits(existing["guarantor_phone"]) != g_phone_digits:
+    if existing["status"] in ("pending", "no_answer", "failed") and _digits(existing["guarantor_phone"]) != g_phone_digits:
         await db_pool.execute(
             """UPDATE guarantor_consent_calls
                  SET guarantor_phone=$1, status='pending', retry_count=0,
@@ -323,15 +324,28 @@ _POLL_INTERVAL_S = 3
 
 
 async def _claim(db_pool, row_id) -> bool:
-    """Atomic claim: only one runner tick wins pending→calling."""
+    """Atomic claim: only one runner tick wins pending→calling. Increments
+    retry_count so it always reflects the number of dial attempts made."""
     claimed = await db_pool.fetchval(
         """UPDATE guarantor_consent_calls
-             SET status='calling', started_at=NOW(), updated_at=NOW()
+             SET status='calling', retry_count=retry_count+1,
+                 started_at=NOW(), updated_at=NOW()
            WHERE id=$1 AND status='pending'
         RETURNING id""",
         row_id,
     )
     return claimed is not None
+
+
+async def _mark_failed_if_calling(db_pool, row_id) -> None:
+    """Mark 'failed' ONLY if still 'calling' (webhook never finalized). Guarded
+    so a webhook-set terminal is never clobbered. Runner owns retry."""
+    await db_pool.execute(
+        """UPDATE guarantor_consent_calls
+             SET status='failed', ended_at=NOW(), updated_at=NOW()
+           WHERE id=$1 AND status='calling'""",
+        row_id,
+    )
 
 
 async def _wait_terminal(db_pool, row_id) -> str:
@@ -361,7 +375,7 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
     try:
         if not trunk:
             logger.error("No trunk available for guarantor call %s", row_id)
-            await _mark_attempt(db_pool, row, terminal="failed")
+            await _mark_failed_if_calling(db_pool, row_id)
             return
 
         room_name = f"gcc_{uuid.uuid4().hex[:6]}_{int(time.time())}"
@@ -404,12 +418,12 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
         if terminal == "completed":
             success = True
         elif terminal in ("no_answer", "failed"):
-            pass  # webhook already set it
-        else:  # timeout
-            await _mark_attempt(db_pool, row, terminal="no_answer")
+            pass  # webhook already recorded the outcome
+        else:  # timeout — webhook never finalized
+            await _mark_failed_if_calling(db_pool, row_id)
     except Exception as e:
         logger.error("Guarantor dispatch error %s: %s", row_id, e, exc_info=True)
-        await _mark_attempt(db_pool, row, terminal="failed")
+        await _mark_failed_if_calling(db_pool, row_id)
     finally:
         if trunk:
             try:
@@ -420,30 +434,9 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
             await lk.aclose()
         except Exception:
             pass
-
-
-async def _mark_attempt(db_pool, row: dict, terminal: str) -> None:
-    """Apply retry/backoff. If retries remain, go back to pending with backoff;
-    else leave terminal (consent stays whatever was captured / NULL)."""
-    max_retries = int(os.getenv("GUARANTOR_MAX_RETRIES", "3"))
-    attempt = (row["retry_count"] or 0) + 1
-    backoff_min = {1: 5, 2: 15}.get(attempt, 30)
-    if attempt < max_retries:
-        await db_pool.execute(
-            """UPDATE guarantor_consent_calls
-                 SET status='pending', retry_count=$1,
-                     scheduled_at=NOW() + ($2 || ' minutes')::interval, updated_at=NOW()
-               WHERE id=$3""",
-            attempt, str(backoff_min), row["id"],
-        )
-    else:
-        await db_pool.execute(
-            """UPDATE guarantor_consent_calls
-                 SET status=$1, retry_count=$2, ended_at=NOW(), updated_at=NOW()
-               WHERE id=$3""",
-            terminal, attempt, row["id"],
-        )
 ```
+
+> Retry is NOT handled here — the runner (Task 4) promotes retryable `no_answer`/`failed` rows. `_claim` increments `retry_count` (= attempts made); dispatch only marks `failed` when the webhook never finalized, guarded by `WHERE status='calling'`.
 
 - [ ] **Step 2: Write the critical-invariant verification script**
 
@@ -560,6 +553,12 @@ Create `backend/guarantor/runner.py`:
 """Cron-driven guarantor dispatch lane. Respects calling hours + emergency stop
 (reused from agent.batch). Concurrency-capped so it can't starve customer calls
 on the shared trunk pool.
+
+Owns RETRY: before dispatching fresh pending rows, it promotes retryable
+no_answer/failed rows back to pending with escalating backoff. retry_count is
+incremented at claim time (in dispatch._claim) so it equals attempts made.
+APScheduler's default max_instances=1 prevents overlapping ticks; the atomic
+claim in dispatch makes any residual overlap harmless.
 """
 import os
 import asyncio
@@ -570,6 +569,24 @@ from guarantor.dispatch import dispatch_guarantor_call
 logger = logging.getLogger("guarantor-runner")
 
 _CONCURRENCY = int(os.getenv("GUARANTOR_CONCURRENCY", "2"))
+_MAX_ATTEMPTS = int(os.getenv("GUARANTOR_MAX_ATTEMPTS", "3"))
+
+
+async def _promote_retryable(db_pool) -> None:
+    """Re-queue no_answer/failed rows that still have attempts left, once their
+    per-attempt backoff has elapsed. retry_count = attempts already made."""
+    await db_pool.execute(
+        """UPDATE guarantor_consent_calls
+             SET status='pending', scheduled_at=NOW(), updated_at=NOW()
+           WHERE status IN ('no_answer','failed')
+             AND retry_count < $1
+             AND ended_at IS NOT NULL
+             AND ended_at <= NOW() - (CASE retry_count
+                    WHEN 1 THEN INTERVAL '5 minutes'
+                    WHEN 2 THEN INTERVAL '15 minutes'
+                    ELSE INTERVAL '30 minutes' END)""",
+        _MAX_ATTEMPTS,
+    )
 
 
 async def process_guarantor_run() -> None:
@@ -579,20 +596,21 @@ async def process_guarantor_run() -> None:
     if not is_within_calling_hours():
         return
     try:
-        if is_emergency_stop_active():
+        stop = is_emergency_stop_active()
+        if asyncio.iscoroutine(stop):
+            stop = await stop
+        if stop:
             return
-    except TypeError:
-        # is_emergency_stop_active may be async in this codebase
-        if await is_emergency_stop_active():
-            return
+    except Exception:
+        pass
+
+    await _promote_retryable(_state.db_pool)
 
     rows = await _state.db_pool.fetch(
         """SELECT * FROM guarantor_consent_calls
              WHERE status='pending' AND scheduled_at <= NOW()
-               AND retry_count < $1
              ORDER BY scheduled_at ASC
-             LIMIT $2""",
-        int(os.getenv("GUARANTOR_MAX_RETRIES", "3")),
+             LIMIT $1""",
         _CONCURRENCY,
     )
     if not rows:

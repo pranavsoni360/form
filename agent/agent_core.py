@@ -25,9 +25,10 @@ except ImportError:
 
 from config import IST, BACKEND_URL, LANG_CONFIG, GENDER_CONFIG
 from session import LoanEnquirySession, CustomerType
-from tools import send_form_link, end_call, schedule_callback, collect_all_data
+from tools import send_form_link, end_call, schedule_callback, collect_all_data, record_guarantor_consent
 from prompts import build_loan_enquiry_instructions
 from prompts_account import build_account_opening_instructions
+from prompts_guarantor import build_guarantor_consent_instructions
 
 logger = logging.getLogger("loan-enquiry-agent")
 
@@ -307,7 +308,10 @@ async def entrypoint(ctx: JobContext):
         session.agent_session = agent_session
 
         agent_purpose = metadata.get("agent_purpose", "loan_enquiry")
-        if agent_purpose == "account_opening":
+        if agent_purpose == "guarantor_consent":
+            instructions = build_guarantor_consent_instructions(session)
+            agent_tools = [record_guarantor_consent, end_call]
+        elif agent_purpose == "account_opening":
             instructions = build_account_opening_instructions(
                 customer_name=session.customer_name,
                 phone=session.phone,
@@ -315,15 +319,14 @@ async def entrypoint(ctx: JobContext):
                 gender=session.gender,
                 agent_name=session.agent_name,
             )
+            agent_tools = [send_form_link, end_call, schedule_callback, collect_all_data]
         else:
             instructions = build_loan_enquiry_instructions(session)
+            agent_tools = [send_form_link, end_call, schedule_callback, collect_all_data]
 
         await agent_session.start(
             room=ctx.room,
-            agent=Agent(
-                instructions=instructions,
-                tools=[send_form_link, end_call, schedule_callback, collect_all_data],
-            ),
+            agent=Agent(instructions=instructions, tools=agent_tools),
         )
         logger.info("Session started with production settings")
 

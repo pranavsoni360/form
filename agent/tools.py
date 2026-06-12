@@ -338,7 +338,12 @@ async def record_guarantor_consent(
 ) -> str:
     session: LoanEnquirySession = context.userdata["session"]
     c = (consent or "").strip().lower()
-    session.guarantor_consent = c if c in ("yes", "no") else None
+    if c in ("yes", "y", "haan", "ho", "हाँ", "हो"):
+        session.guarantor_consent = "yes"
+    elif c in ("no", "n", "nahi", "नहीं", "नाही"):
+        session.guarantor_consent = "no"
+    else:
+        session.guarantor_consent = None
     session.guarantor_consent_note = note or None
     logger.info(f"record_guarantor_consent: consent={session.guarantor_consent!r} note={note!r}")
     # Best-effort immediate post (robust against call drop); transcript webhook also carries it.

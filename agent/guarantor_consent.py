@@ -1,6 +1,6 @@
 # agent/guarantor_consent.py
 # Entry point for the Guarantor Consent agent.
-# All logic lives in agent_core.py, session.py, tools.py, prompts_account.py, config.py.
+# All logic lives in agent_core.py, session.py, tools.py, prompts_guarantor.py, config.py.
 import os
 import logging
 import time

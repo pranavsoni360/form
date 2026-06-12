@@ -236,7 +236,8 @@ export function CallDetailDialog({
                     label="Guarantor consent"
                     value={
                       data.guarantor_consent === 'yes' ? 'Yes' :
-                      data.guarantor_consent === 'no' ? 'No' : 'Pending'
+                      data.guarantor_consent === 'no' ? 'No' :
+                      data.guarantor_consent === 'no_answer' ? 'No answer' : 'Pending'
                     }
                   />
                 )}

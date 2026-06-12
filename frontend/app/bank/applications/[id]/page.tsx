@@ -217,6 +217,7 @@ export default function ApplicationDetailPage() {
                 value={
                   app.guarantor_consent === 'yes' ? 'Yes' :
                   app.guarantor_consent === 'no' ? 'No' :
+                  app.guarantor_consent === 'no_answer' ? 'No answer' :
                   app.guarantor_consent === 'pending' ? 'Pending' : '—'
                 }
               />

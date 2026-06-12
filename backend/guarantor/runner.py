@@ -38,6 +38,31 @@ async def _promote_retryable(db_pool) -> None:
     )
 
 
+async def _reclaim_stuck(db_pool) -> None:
+    """Recover rows wedged in 'calling' (backend restart / worker down). The
+    dispatch wait caps at ~370s, so 10 min is safely past any live call."""
+    await db_pool.execute(
+        """UPDATE guarantor_consent_calls
+             SET status='failed', ended_at=NOW(), updated_at=NOW()
+           WHERE status='calling' AND started_at < NOW() - INTERVAL '10 minutes'"""
+    )
+
+
+async def _mark_exhausted_unreached(db_pool) -> None:
+    """Once all attempts are spent without consent, reflect a terminal
+    'no_answer' on the application so the UI stops showing 'pending' forever."""
+    await db_pool.execute(
+        """UPDATE loan_applications la
+             SET guarantor_consent='no_answer', guarantor_consent_at=NOW()
+           FROM guarantor_consent_calls g
+           WHERE g.application_id = la.id
+             AND g.status IN ('no_answer','failed')
+             AND g.retry_count >= $1
+             AND la.guarantor_consent = 'pending'""",
+        _MAX_ATTEMPTS,
+    )
+
+
 async def process_guarantor_run() -> None:
     from agent import state as _state
     from agent.state import is_within_calling_hours, is_emergency_stop_active
@@ -53,7 +78,9 @@ async def process_guarantor_run() -> None:
     except Exception:
         pass
 
+    await _reclaim_stuck(_state.db_pool)
     await _promote_retryable(_state.db_pool)
+    await _mark_exhausted_unreached(_state.db_pool)
 
     rows = await _state.db_pool.fetch(
         """SELECT * FROM guarantor_consent_calls

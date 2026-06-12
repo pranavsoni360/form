@@ -194,6 +194,14 @@ Greeting block (346-368) unchanged (generic, reused).
 - `scripts/deploy.sh`: add `los-agent-guarantor` to restart list + health check.
 - Migration `migration_v17_guarantor_consent.sql` runs via deploy migration step.
 
+## Post-review hardening (implemented)
+
+Final whole-implementation review added two runner sweeps (both within the isolated guarantor lane, run each tick before dispatch):
+- **`_reclaim_stuck`** — rows wedged in `calling` (backend restart / worker down) older than 10 min → `failed`, so they re-enter the retry path. 10 min is safely past the 370s max dispatch wait.
+- **`_mark_exhausted_unreached`** — once a row is terminal `no_answer`/`failed` with `retry_count >= MAX_ATTEMPTS`, mirror `loan_applications.guarantor_consent = 'no_answer'` so the UI stops showing `pending` forever. Frontend maps `no_answer` → "No answer".
+
+Also: the agent tool's local consent normalization now accepts the same hi/mr tokens as the webhook (`haan/ho/नहीं/नाही/…`) so a non-English answer isn't lost if the immediate consent POST fails.
+
 ## Out of scope (future)
 
 - Transcript-parse backup for consent when tool not called.

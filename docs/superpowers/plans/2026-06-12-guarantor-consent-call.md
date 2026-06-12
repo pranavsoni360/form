@@ -26,7 +26,7 @@
 - `backend/guarantor/routes.py` — `/api/guarantor/consent` + `/api/guarantor/transcript` (APIRouter).
 - `agent/prompts_guarantor.py` — `build_guarantor_consent_instructions(session)` (Hindi/English/Marathi).
 - `agent/guarantor_consent.py` — entry-point shim (`AGENT_NAME=guarantor-consent`).
-- `deploy/los-agent-guarantor.service` — systemd unit (or document inline for ops).
+- `scripts/los-agent-guarantor.service` — systemd unit (or document inline for ops).
 - `scripts/verify_guarantor_claim_release.py` — standalone invariant test for the critical trunk-release/claim logic.
 
 **Modified files:**
@@ -1152,7 +1152,7 @@ git commit -m "feat(agent): guarantor_consent branch (prompt + minimal tools) + 
 
 **Files:**
 - Create: `agent/guarantor_consent.py`
-- Create: `deploy/los-agent-guarantor.service`
+- Create: `scripts/los-agent-guarantor.service`
 - Modify: `scripts/deploy.sh`
 
 - [ ] **Step 1: Entry-point shim**
@@ -1192,7 +1192,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: systemd unit**
 
-Create `deploy/los-agent-guarantor.service` (mirror the existing `los-agent-union` unit — confirm paths/venv against the running units on the server with `systemctl cat los-agent-union`):
+Create `scripts/los-agent-guarantor.service` (mirror the existing `los-agent-union` unit — confirm paths/venv against the running units on the server with `systemctl cat los-agent-union`):
 
 ```ini
 [Unit]

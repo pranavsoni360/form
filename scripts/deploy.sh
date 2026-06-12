@@ -150,9 +150,9 @@ do_update() {
         warn "npm not found — skipping frontend rebuild"
     fi
 
-    # 6. Restart services (backend, frontend, both modular voice agents)
+    # 6. Restart services (backend, frontend, all three modular voice agents)
     log "Restarting services..."
-    systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
+    systemctl restart los-backend los-frontend los-agent-union los-agent-pusad los-agent-guarantor
 
     # 6b. Refresh SIP trunk watchdog units (no-op if unchanged) + ensure enabled.
     if [ -f "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" ]; then
@@ -184,10 +184,10 @@ do_update() {
         warn "Backend health check FAILED. Check: journalctl -u los-backend -n 50"
         exit 1
     fi
-    if systemctl is-active --quiet los-agent-union && systemctl is-active --quiet los-agent-pusad; then
-        log "Both voice agents active."
+    if systemctl is-active --quiet los-agent-union && systemctl is-active --quiet los-agent-pusad && systemctl is-active --quiet los-agent-guarantor; then
+        log "All three voice agents active."
     else
-        warn "An agent is not active. Check: journalctl -u los-agent-union -u los-agent-pusad -n 50"
+        warn "An agent is not active. Check: journalctl -u los-agent-union -u los-agent-pusad -u los-agent-guarantor -n 50"
         exit 1
     fi
 
@@ -417,6 +417,7 @@ SVC
 # single los-agent.service (loan_agent.py).
 install -m 644 "${INSTALL_DIR}/scripts/los-agent-union.service" /etc/systemd/system/los-agent-union.service
 install -m 644 "${INSTALL_DIR}/scripts/los-agent-pusad.service" /etc/systemd/system/los-agent-pusad.service
+install -m 644 "${INSTALL_DIR}/scripts/los-agent-guarantor.service" /etc/systemd/system/los-agent-guarantor.service
 
 # SIP trunk watchdog — self-healing timer that recreates any missing LiveKit
 # trunk (additive only) and re-syncs phone_numbers every 5 min. Only enabled
@@ -427,7 +428,7 @@ install -m 644 "${INSTALL_DIR}/scripts/los-trunk-watchdog.timer" /etc/systemd/sy
 
 systemctl daemon-reload
 systemctl disable --now los-agent.service 2>/dev/null || true
-systemctl enable los-backend los-frontend los-agent-union los-agent-pusad
+systemctl enable los-backend los-frontend los-agent-union los-agent-pusad los-agent-guarantor
 if [ -f "${INSTALL_DIR}/agent/trunks.config.json" ]; then
     systemctl enable --now los-trunk-watchdog.timer
     log "SIP trunk watchdog timer enabled."
@@ -497,7 +498,7 @@ fi
 
 log "── Phase 9: Start Services ──"
 
-systemctl restart los-backend los-frontend los-agent-union los-agent-pusad
+systemctl restart los-backend los-frontend los-agent-union los-agent-pusad los-agent-guarantor
 
 sleep 5
 wait_for_port ${BACKEND_PORT} "Backend" 15

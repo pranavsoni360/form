@@ -4,6 +4,12 @@ acquire→dispatch→SIP→wait→RELEASE shape, but on the isolated guarantor t
 
 CRITICAL: the trunk MUST be released in `finally` (decrement active_calls),
 else the shared phone pool leaks capacity and customer calls get starved.
+
+Retry policy lives in the RUNNER, not here. This module owns exactly one call's
+lifecycle: claim (increment attempt) -> place -> wait for the webhook to record
+the outcome -> release the trunk. If the webhook never finalizes (true hang /
+timeout) or the call can't be placed, we mark the row 'failed' (guarded so we
+never clobber a webhook-set terminal) and the runner decides whether to retry.
 """
 import os
 import json
@@ -24,15 +30,29 @@ _POLL_INTERVAL_S = 3
 
 
 async def _claim(db_pool, row_id) -> bool:
-    """Atomic claim: only one runner tick wins pending→calling."""
+    """Atomic claim: only one runner tick wins pending->calling. Increments
+    retry_count so it always reflects the number of dial attempts made."""
     claimed = await db_pool.fetchval(
         """UPDATE guarantor_consent_calls
-             SET status='calling', started_at=NOW(), updated_at=NOW()
+             SET status='calling', retry_count=retry_count+1,
+                 started_at=NOW(), updated_at=NOW()
            WHERE id=$1 AND status='pending'
         RETURNING id""",
         row_id,
     )
     return claimed is not None
+
+
+async def _mark_failed_if_calling(db_pool, row_id) -> None:
+    """Mark 'failed' ONLY if still 'calling' (i.e. the webhook never finalized).
+    Guarded so a webhook-set terminal (completed/no_answer) is never clobbered.
+    The runner owns whether this gets retried."""
+    await db_pool.execute(
+        """UPDATE guarantor_consent_calls
+             SET status='failed', ended_at=NOW(), updated_at=NOW()
+           WHERE id=$1 AND status='calling'""",
+        row_id,
+    )
 
 
 async def _wait_terminal(db_pool, row_id) -> str:
@@ -51,9 +71,8 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
     if not await _claim(db_pool, row_id):
         return  # another tick took it
 
-    lk_url = os.environ["LIVEKIT_URL"]
     lk = api.LiveKitAPI(
-        url=lk_url,
+        url=os.environ["LIVEKIT_URL"],
         api_key=os.environ["LIVEKIT_API_KEY"],
         api_secret=os.environ["LIVEKIT_API_SECRET"],
     )
@@ -62,7 +81,7 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
     try:
         if not trunk:
             logger.error("No trunk available for guarantor call %s", row_id)
-            await _mark_attempt(db_pool, row, terminal="failed")
+            await _mark_failed_if_calling(db_pool, row_id)
             return
 
         room_name = f"gcc_{uuid.uuid4().hex[:6]}_{int(time.time())}"
@@ -105,12 +124,12 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
         if terminal == "completed":
             success = True
         elif terminal in ("no_answer", "failed"):
-            pass  # webhook already set it
-        else:  # timeout
-            await _mark_attempt(db_pool, row, terminal="no_answer")
+            pass  # webhook already recorded the outcome
+        else:  # timeout — webhook never finalized
+            await _mark_failed_if_calling(db_pool, row_id)
     except Exception as e:
         logger.error("Guarantor dispatch error %s: %s", row_id, e, exc_info=True)
-        await _mark_attempt(db_pool, row, terminal="failed")
+        await _mark_failed_if_calling(db_pool, row_id)
     finally:
         if trunk:
             try:
@@ -121,26 +140,3 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
             await lk.aclose()
         except Exception:
             pass
-
-
-async def _mark_attempt(db_pool, row: dict, terminal: str) -> None:
-    """Apply retry/backoff. If retries remain, go back to pending with backoff;
-    else leave terminal (consent stays whatever was captured / NULL)."""
-    max_retries = int(os.getenv("GUARANTOR_MAX_RETRIES", "3"))
-    attempt = (row["retry_count"] or 0) + 1
-    backoff_min = {1: 5, 2: 15}.get(attempt, 30)
-    if attempt < max_retries:
-        await db_pool.execute(
-            """UPDATE guarantor_consent_calls
-                 SET status='pending', retry_count=$1,
-                     scheduled_at=NOW() + ($2 || ' minutes')::interval, updated_at=NOW()
-               WHERE id=$3""",
-            attempt, str(backoff_min), row["id"],
-        )
-    else:
-        await db_pool.execute(
-            """UPDATE guarantor_consent_calls
-                 SET status=$1, retry_count=$2, ended_at=NOW(), updated_at=NOW()
-               WHERE id=$3""",
-            terminal, attempt, row["id"],
-        )

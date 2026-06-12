@@ -322,3 +322,34 @@ async def collect_all_data(
             saved += 1
     logger.info(f"collect_all_data: saved {saved} fields")
     return "ok"
+
+
+@function_tool(
+    name="record_guarantor_consent",
+    description=(
+        "Record the guarantor's consent. consent must be 'yes', 'no', or '' (unclear). "
+        "Call this exactly once, as soon as the guarantor gives a clear answer."
+    ),
+)
+async def record_guarantor_consent(
+    context: RunContext,
+    consent: str = "",
+    note: str = "",
+) -> str:
+    session: LoanEnquirySession = context.userdata["session"]
+    c = (consent or "").strip().lower()
+    session.guarantor_consent = c if c in ("yes", "no") else None
+    session.guarantor_consent_note = note or None
+    logger.info(f"record_guarantor_consent: consent={session.guarantor_consent!r} note={note!r}")
+    # Best-effort immediate post (robust against call drop); transcript webhook also carries it.
+    try:
+        async with aiohttp.ClientSession() as http:
+            await http.post(
+                f"{BACKEND_URL}/api/guarantor/consent",
+                json={"call_id": session.call_id, "consent": consent, "note": note},
+                timeout=aiohttp.ClientTimeout(total=8),
+                ssl=False,
+            )
+    except Exception as e:
+        logger.warning(f"immediate consent post failed (non-fatal): {e}")
+    return "ok"

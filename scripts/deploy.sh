@@ -150,6 +150,16 @@ do_update() {
         warn "npm not found — skipping frontend rebuild"
     fi
 
+    # 5b. Install/refresh the guarantor agent unit (new in this release). The
+    #     --update path does not otherwise install agent units, so without this
+    #     the restart below would fail on a first deploy ("unit not found").
+    #     Idempotent — mirrors the watchdog/tailer refresh pattern above.
+    if [ -f "${INSTALL_DIR}/scripts/los-agent-guarantor.service" ]; then
+        install -m 644 "${INSTALL_DIR}/scripts/los-agent-guarantor.service" /etc/systemd/system/los-agent-guarantor.service
+        systemctl daemon-reload
+        systemctl enable los-agent-guarantor >/dev/null 2>&1 || true
+    fi
+
     # 6. Restart services (backend, frontend, all three modular voice agents)
     log "Restarting services..."
     systemctl restart los-backend los-frontend los-agent-union los-agent-pusad los-agent-guarantor

@@ -252,6 +252,8 @@ AISENSY_API_KEY = os.getenv("AISENSY_API_KEY", "")
 AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_CAMPAIGN_NAME", "Call")
 AISENSY_USERNAME = os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA")
 AISENSY_SUBMISSION_CAMPAIGN = os.getenv("AISENSY_SUBMISSION_CAMPAIGN", "")
+AISENSY_APPROVAL_CAMPAIGN = os.getenv("AISENSY_APPROVAL_CAMPAIGN", "loan_approved_confirm")
+AISENSY_DISBURSEMENT_CAMPAIGN = os.getenv("AISENSY_DISBURSEMENT_CAMPAIGN", "loan_disbursement_initiated")
 
 # UPLOAD_DIR: prefer env, else <repo>/uploads (works on Windows + Linux). Was hardcoded to /root/...
 _DEFAULT_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
@@ -1726,15 +1728,26 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
         supervisor_id, now_utc(), body.notes, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "approved", "bank_supervisor", supervisor_id, body.notes)
-    # Send approval notification
-    if app_row["phone"]:
-        message = (
-            f"Congratulations {app_row['customer_name']}!\n\n"
-            f"Your loan application has been APPROVED.\n\n"
-            f"Loan ID: {app_row['loan_id']}\n\n"
-            f"Our team will contact you within 24 hours for next steps.\n\n- Your Bank"
-        )
-        await send_whatsapp_message(app_row["phone"], message)
+    if app_row["phone"] and AISENSY_API_KEY:
+        first_name = (app_row["customer_name"] or "Customer").strip().split()[0]
+        loan_amount_str = f"{float(app_row['loan_amount_requested']):,.0f}" if app_row.get("loan_amount_requested") else "N/A"
+        phone_formatted = clean_phone(app_row["phone"]).replace(' ', '')
+        approval_payload = {
+            "apiKey": AISENSY_API_KEY,
+            "campaignName": AISENSY_APPROVAL_CAMPAIGN,
+            "destination": phone_formatted,
+            "userName": AISENSY_USERNAME,
+            "templateParams": [first_name, app_row["loan_id"], loan_amount_str],
+            "source": "loan-approval",
+            "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
+            "paramsFallbackValue": {"FirstName": first_name},
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            try:
+                resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=approval_payload)
+                print(f"[AiSensy Approval] {phone_formatted} → {resp.status_code} {resp.text}", flush=True)
+            except Exception as e:
+                print(f"[AiSensy Approval] ERROR: {e}", flush=True)
     return {"status": "success", "message": "Application approved by supervisor", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-reject")
@@ -1823,14 +1836,26 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
         now_utc(), supervisor_id, body.notes, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "approved", "bank_supervisor", supervisor_id, body.notes)
-    if app_row["phone"]:
-        message = (
-            f"Dear {app_row['customer_name']},\n\n"
-            f"Great news! Disbursement has been initiated for your loan.\n\n"
-            f"Loan ID: {app_row['loan_id']}\n\n"
-            f"You will receive the funds shortly.\n\n- Your Bank"
-        )
-        await send_whatsapp_message(app_row["phone"], message)
+    if app_row["phone"] and AISENSY_API_KEY:
+        first_name = (app_row["customer_name"] or "Customer").strip().split()[0]
+        loan_amount_str = f"{float(app_row['loan_amount_requested']):,.0f}" if app_row.get("loan_amount_requested") else "N/A"
+        phone_formatted = clean_phone(app_row["phone"]).replace(' ', '')
+        disburse_payload = {
+            "apiKey": AISENSY_API_KEY,
+            "campaignName": AISENSY_DISBURSEMENT_CAMPAIGN,
+            "destination": phone_formatted,
+            "userName": AISENSY_USERNAME,
+            "templateParams": [first_name, app_row["loan_id"], loan_amount_str],
+            "source": "loan-disbursement",
+            "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
+            "paramsFallbackValue": {"FirstName": first_name},
+        }
+        async with httpx.AsyncClient(verify=False) as client:
+            try:
+                resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=disburse_payload)
+                print(f"[AiSensy Disburse] {phone_formatted} → {resp.status_code} {resp.text}", flush=True)
+            except Exception as e:
+                print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
 
 # ============================================

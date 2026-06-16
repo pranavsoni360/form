@@ -62,6 +62,9 @@ class LoanEnquirySession:
         self.memory          = metadata.get("memory", "")
         self.agent_purpose   = metadata.get("agent_purpose", "loan_enquiry")
         self.bank_name       = metadata.get("bank_name", "ABC Bank")
+        self.borrower_name = metadata.get("borrower_name", "")
+        self.guarantor_consent = None
+        self.guarantor_consent_note = None
 
         self.customer_interested = None
         self.interest_reason = None
@@ -72,6 +75,8 @@ class LoanEnquirySession:
         self.collected_address = None
         self.loan_type = None
         self.loan_amount = None
+        if metadata.get("loan_amount"):
+            self.loan_amount = metadata.get("loan_amount")
         self.loan_purpose = None
         self.employment_type = None
         self.employer_name = None
@@ -245,6 +250,38 @@ class LoanEnquirySession:
     async def _send_transcript(self):
         if self.transcript_sent:
             logger.info("Transcript already sent, skipping duplicate POST")
+            return
+
+        if self.agent_purpose == "guarantor_consent":
+            recording_path = f"/recordings/{self.room_name}.ogg" if self.egress_id else None
+            payload = {
+                "room": self.room_name,
+                "call_id": self.call_id,
+                "transcript": self.transcript,
+                "message_count": len(self.transcript),
+                "recording_path": recording_path,
+                "consent": self.guarantor_consent or "",
+                "consent_note": self.guarantor_consent_note or "",
+            }
+            for attempt in range(3):
+                try:
+                    async with aiohttp.ClientSession() as http:
+                        async with http.post(
+                            f"{BACKEND_URL}/api/guarantor/transcript",
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=15),
+                            ssl=False,
+                        ) as resp:
+                            if resp.status == 200:
+                                self.transcript_sent = True
+                                logger.info(f"Guarantor transcript saved ({len(self.transcript)} msgs)")
+                                return
+                            logger.error(f"Guarantor transcript {resp.status}: {await resp.text()}")
+                except Exception as e:
+                    logger.error(f"Guarantor transcript save failed (attempt {attempt+1}/3): {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(1.0)
+            logger.error(f"CRITICAL: guarantor transcript save failed for {self.room_name}")
             return
 
         recording_path = f"/recordings/{self.room_name}.ogg" if self.egress_id else None

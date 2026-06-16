@@ -39,7 +39,17 @@ async def get_call_alias(call_id: str):
     row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
-    return _serialize_call(_row_to_dict(row))
+    result = _serialize_call(_row_to_dict(row))
+    try:
+        gconsent = await _state.db_pool.fetchval(
+            "SELECT guarantor_consent FROM loan_applications"
+            " WHERE agent_call_id = $1 ORDER BY last_saved_at DESC NULLS LAST LIMIT 1",
+            call_uuid,
+        )
+        result["guarantor_consent"] = gconsent
+    except Exception:
+        logger.exception("Failed to fetch guarantor_consent for call %s", call_id)
+    return result
 
 @router.get("/call/{call_id}/transcript")
 async def get_call_transcript_alias(call_id: str):

@@ -86,6 +86,13 @@ async def agent_startup():
         id="analytics_runner",
         replace_existing=True,
     )
+    from guarantor.runner import process_guarantor_run
+    _scheduler.add_job(
+        process_guarantor_run,
+        CronTrigger(hour=_hour_expr, minute="*/3", timezone="Asia/Kolkata"),
+        id="guarantor_runner",
+        replace_existing=True,
+    )
     # Daily system_errors cleanup — runs at 03:00 IST (low-traffic window).
     # Retention configurable via LOS_ERROR_RETENTION_DAYS env, default 1 day.
     # Bounded DELETE so the table never grows unbounded across deployments.

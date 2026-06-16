@@ -159,6 +159,10 @@ app.include_router(vendor_admin_router)
 app.include_router(vendor_bank_router)
 app.include_router(vendor_router)
 
+# Guarantor consent + transcript webhooks (no JWT, same trust model as /api/agent/transcript)
+from guarantor.routes import router as guarantor_router  # noqa: E402
+app.include_router(guarantor_router, prefix="/api/guarantor", tags=["guarantor"])
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
@@ -2486,6 +2490,12 @@ async def submit_form(token: str, request: Request):
     await db_pool.execute("UPDATE form_tokens SET is_used = true, form_status = 'submitted' WHERE id = $1", token_row["id"])
     # Record status transition
     await record_transition(app_uuid, "draft", "submitted", "customer", app_uuid, "Form submitted by customer")
+    # Guarantor consent call (additive, best-effort — never block submission)
+    try:
+        from guarantor.trigger import enqueue_guarantor_consent_call
+        await enqueue_guarantor_consent_call(db_pool, app_uuid)
+    except Exception as e:
+        logger.warning(f"Guarantor enqueue failed (non-blocking): {e}")
     la = float(token_row["loan_amount"]) if token_row["loan_amount"] else 0
     message = (
         f"Dear {token_row['customer_name']},\n\nYour loan application has been submitted successfully!\n\n"
@@ -3183,6 +3193,12 @@ async def submit_form_session(session_token: str, request: Request):
                 app_row["id"], "draft", "submitted", "customer", app_row["id"],
                 "Form submitted by customer via session", conn=conn
             )
+    # Guarantor consent call (additive, best-effort — never block submission)
+    try:
+        from guarantor.trigger import enqueue_guarantor_consent_call
+        await enqueue_guarantor_consent_call(db_pool, app_row["id"])
+    except Exception as e:
+        logger.warning(f"Guarantor enqueue failed (non-blocking): {e}")
     # Send confirmation via AiSensy
     try:
         customer_name = app_row["customer_name"] or "Customer"

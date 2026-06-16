@@ -95,6 +95,7 @@ interface CallDetail {
   individual_purpose?: string;
   aadhar_number?: string;
   pan_number?: string;
+  guarantor_consent?: string;
 
   // Audio + transcript
   recording_url?: string | null;
@@ -215,7 +216,7 @@ export function CallDetailDialog({
 
           {/* Form data card */}
           {(data.monthly_income || data.employer_name || data.loan_purpose ||
-            data.is_salaried || data.individual_purpose) && (
+            data.is_salaried || data.individual_purpose || data.guarantor_consent) && (
             <Section title="Collected information" icon={FileText}>
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                 {data.is_salaried && (
@@ -228,6 +229,16 @@ export function CallDetailDialog({
                   <FactSmall
                     label="Individual purpose"
                     value={/^y/i.test(String(data.individual_purpose)) ? 'Yes' : 'No'}
+                  />
+                )}
+                {data.guarantor_consent && (
+                  <FactSmall
+                    label="Guarantor consent"
+                    value={
+                      data.guarantor_consent === 'yes' ? 'Yes' :
+                      data.guarantor_consent === 'no' ? 'No' :
+                      data.guarantor_consent === 'no_answer' ? 'No answer' : 'Pending'
+                    }
                   />
                 )}
                 {data.monthly_income && (

@@ -388,14 +388,14 @@ async def upload_excel(
             # Try UTF-8 first (Excel exports include a BOM). Many vendors
             # ship files in Windows-1252 / latin-1, so fall back to that.
             try:
-                df = pd.read_csv(io.StringIO(contents.decode("utf-8-sig")))
+                df = pd.read_csv(io.StringIO(contents.decode("utf-8-sig")), dtype=str)
             except Exception as utf_err:
                 logger.warning(
                     "CSV decode failed as UTF-8 (%s); retrying as latin-1",
                     utf_err,
                 )
                 try:
-                    df = pd.read_csv(io.StringIO(contents.decode("latin-1")))
+                    df = pd.read_csv(io.StringIO(contents.decode("latin-1")), dtype=str)
                 except Exception as latin_err:
                     # Both encodings failed — bubble up a clean 400 so the
                     # operator sees "fix your file encoding" instead of a
@@ -409,7 +409,7 @@ async def upload_excel(
                         ),
                     ) from latin_err
         else:
-            df = pd.read_excel(io.BytesIO(contents))
+            df = pd.read_excel(io.BytesIO(contents), dtype=str)
 
         # Normalize column names
         column_map = {

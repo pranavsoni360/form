@@ -48,10 +48,12 @@ export default function BatchPage() {
   const [loading, setLoading]         = useState(true);
 
   // Upload
-  const [uploading, setUploading] = useState(false);
-  const [language, setLanguage]   = useState('hindi');
-  const [gender, setGender]       = useState('male');
-  const [agentType, setAgentType] = useState('loan_enquiry');
+  const [uploading, setUploading]     = useState(false);
+  const [language, setLanguage]       = useState('hindi');
+  const [gender, setGender]           = useState('male');
+  const [agentType, setAgentType]     = useState('loan_enquiry');
+  const [phoneNumberId, setPhoneNumberId] = useState('');
+  const [phoneOptions, setPhoneOptions]   = useState<{ id: string; phone: string; provider: string }[]>([]);
 
   // Action loading states
   const [starting, setStarting]   = useState(false);
@@ -78,7 +80,7 @@ export default function BatchPage() {
     setTimeout(() => setNotice(null), 4000);
   }, []);
 
-  // ── Auth init ───────────────────────────────────────────────────────────────
+  // ── Auth init + phone pool fetch ────────────────────────────────────────────
 
   useEffect(() => {
     const t = getAccessToken('bank');
@@ -86,6 +88,26 @@ export default function BatchPage() {
     if (!t || !u) { router.push('/bank/login'); return; }
     setToken(t);
     setBankId(u.bank_id || '');
+
+    // Fetch active phone numbers for the caller-ID dropdown (no auth required)
+    fetch(`${API_URL}/api/ops/phone-pools`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        const opts: { id: string; phone: string; provider: string }[] = [];
+        for (const pool of data.pools ?? []) {
+          for (const n of pool.numbers ?? []) {
+            if (!n.phone_number || n.status !== 'active') continue;
+            opts.push({
+              id: n.id,
+              phone: n.phone_number,
+              provider: n.phone_number.startsWith('+1')  ? 'Twilio US'  :
+                        n.phone_number.startsWith('+91') ? 'Viva India' : 'Other',
+            });
+          }
+        }
+        setPhoneOptions(opts.sort((a, b) => a.phone.localeCompare(b.phone)));
+      })
+      .catch(() => {});
   }, []);
 
   // ── Data fetchers ───────────────────────────────────────────────────────────
@@ -155,7 +177,8 @@ export default function BatchPage() {
         language,
         gender,
         agent_type: agentType,
-        ...(bankId ? { bank_id: bankId } : {}),
+        ...(bankId       ? { bank_id: bankId }               : {}),
+        ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
       });
       const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
         method: 'POST', body: fd,
@@ -193,7 +216,8 @@ export default function BatchPage() {
     if (!confirm('Start batch calling? This will initiate calls to all pending customers.')) return;
     setStarting(true);
     try {
-      const data = await apiPost('/api/agent/batch-call');
+      const qs = phoneNumberId ? `?phone_number_id=${encodeURIComponent(phoneNumberId)}` : '';
+      const data = await apiPost(`/api/agent/batch-call${qs}`);
       notify(data.message || 'Batch started');
       refresh();
     } catch (err: any) { notify(err.message, false); }
@@ -334,6 +358,16 @@ export default function BatchPage() {
               className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white">
               <option value="loan_enquiry">Loan Enquiry — Pusad Urban Bank</option>
               <option value="account_opening">Account Opening — Union Bank of India</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">From Number (Caller ID)</label>
+            <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white">
+              <option value="">Auto (pool picks least-loaded)</option>
+              {phoneOptions.map(p => (
+                <option key={p.id} value={p.id}>{p.phone} · {p.provider}</option>
+              ))}
             </select>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 w-full">

@@ -349,7 +349,7 @@ export default function BatchPage() {
             <select value={gender} onChange={e => setGender(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white">
               <option value="male">Male (Rajesh)</option>
-              <option value="female">Female (Diya)</option>
+              <option value="female">Female (Priya)</option>
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">

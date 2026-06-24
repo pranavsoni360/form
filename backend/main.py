@@ -1602,11 +1602,9 @@ async def bank_list_applications(status: Optional[str] = None, officer: dict = D
     bank_id = uuid.UUID(officer["bank_id"])
     base_query = """
         SELECT la.*,
-               ac.interested,
-               ft.form_status
+               (SELECT ac2.interested FROM agent_calls ac2 WHERE ac2.id = la.agent_call_id LIMIT 1) AS interested,
+               (SELECT ft2.form_status FROM form_tokens ft2 WHERE ft2.id = la.token_id LIMIT 1) AS form_status
         FROM loan_applications la
-        LEFT JOIN agent_calls ac ON la.agent_call_id = ac.id
-        LEFT JOIN form_tokens ft ON la.token_id = ft.id
         WHERE la.bank_id = $1
     """
     if status:

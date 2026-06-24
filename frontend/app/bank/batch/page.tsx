@@ -57,7 +57,7 @@ export default function BatchPage() {
   const [gender, setGender]           = useState('male');
   const [agentType, setAgentType]     = useState('loan_enquiry');
   const [phoneNumberId, setPhoneNumberId] = useState('');
-  const [phoneOptions, setPhoneOptions]   = useState<{ id: string; phone: string; provider: string }[]>([]);
+  const [phoneOptions, setPhoneOptions]   = useState<{ id: string; phone: string; provider: string; trunkId: string }[]>([]);
   const [starting, setStarting]   = useState(false);
   const [stopping, setStopping]   = useState(false);
   const [retrying, setRetrying]   = useState(false);
@@ -81,15 +81,29 @@ export default function BatchPage() {
     if (!t || !u) { router.push('/bank/login'); return; }
     setToken(t);
     setBankId(u.bank_id || '');
+    const TRUNK_PROVIDERS: Record<string, string> = {
+      'ST_pTYcg7Az9q8R': 'Vobiz',
+      'ST_7AXVHfHRbCwP': 'Viva India',
+    };
+    const providerFromTrunk = (trunkId: string, phone: string) => {
+      if (trunkId && TRUNK_PROVIDERS[trunkId]) return TRUNK_PROVIDERS[trunkId];
+      if (phone.startsWith('+1')) return 'Twilio US';
+      return trunkId || 'Unknown';
+    };
+
     const savedDefault = localStorage.getItem(`bank_default_phone_${u.bank_id || 'default'}`);
     fetch(`${API_URL}/api/ops/phone-pools`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
-        const opts: { id: string; phone: string; provider: string }[] = [];
+        const opts: { id: string; phone: string; provider: string; trunkId: string }[] = [];
         for (const pool of data.pools ?? []) {
           for (const n of pool.numbers ?? []) {
             if (!n.phone_number || n.status !== 'active') continue;
-            opts.push({ id: n.id, phone: n.phone_number, provider: pool.name || 'Unknown' });
+            opts.push({
+              id: n.id, phone: n.phone_number,
+              trunkId: n.livekit_trunk_id || '',
+              provider: providerFromTrunk(n.livekit_trunk_id || '', n.phone_number),
+            });
           }
         }
         const sorted = opts.sort((a, b) => a.phone.localeCompare(b.phone));

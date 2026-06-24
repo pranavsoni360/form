@@ -331,23 +331,19 @@ export default function BatchPage() {
               </div>
             ))}
             <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>From Number (Caller ID)</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium" style={{ color: P.sub }}>From Number (Caller ID)</label>
+                {phoneNumberId && (
+                  <button onClick={() => { localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, phoneNumberId); notify('Default number saved'); }}
+                    className="text-xs" style={{ color: P.muted }}>★ save</button>
+                )}
+              </div>
               <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)} style={selStyle}>
                 <option value="">Auto — pool picks least-loaded</option>
                 {phoneOptions.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.phone}{p.provider ? ` · ${p.provider}` : ''}
-                  </option>
+                  <option key={p.id} value={p.id}>{p.phone}{p.provider ? ` · ${p.provider}` : ''}</option>
                 ))}
               </select>
-              {phoneNumberId && (
-                <button
-                  onClick={() => { localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, phoneNumberId); notify('Default number saved'); }}
-                  className="mt-1.5 text-xs"
-                  style={{ color: P.muted }}>
-                  ★ Save as default
-                </button>
-              )}
             </div>
           </div>
           <p className="text-xs mt-3" style={{ color: P.border }}>

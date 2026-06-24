@@ -59,10 +59,12 @@ export default function BankDashboardPage() {
       const data = await getBankApplications(token, statusFilter);
       setApplications(data.applications || []);
     } catch (error: any) {
-      if (error.message?.includes('401') || error.message?.includes('Invalid')) {
+      const msg = error.message || '';
+      if (msg.includes('401') || msg.includes('Invalid') || msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('token')) {
+        authLogout('bank');
         router.push('/bank/login');
       } else {
-        setFetchError(error.message || 'Failed to load applications');
+        setFetchError(msg || 'Failed to load applications');
       }
     } finally { setLoading(false); }
   };

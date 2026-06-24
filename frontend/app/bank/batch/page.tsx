@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_URL, formatDateTime } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
-import { ArrowLeft, Upload, Play, Square, RefreshCw, FileSpreadsheet, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Upload, Play, Square, RefreshCw, FileSpreadsheet, Loader2 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useEventStream } from '@/lib/realtime/useEventStream';
 import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
@@ -20,9 +20,6 @@ export default function BatchPage() {
   const [gender, setGender] = useState('male');
   const [agentType, setAgentType] = useState<string>('loan_enquiry');
 
-  // SSE subscription: every batch_progress event triggers a debounced refetch
-  // of /api/agent/batch-status. Replaces the previous 5s polling loop
-  // (~17K useless requests/day per open tab → ~0 idle requests).
   const liveBatches = useEventStream<BatchesState>('batches', batchesReducer, initialBatchesState);
 
   useEffect(() => {
@@ -49,24 +46,18 @@ export default function BatchPage() {
     } catch { }
   };
 
-  // Initial fetch on login.
   useEffect(() => {
     if (!token) return;
     fetchStatus();
   }, [token]);
 
-  // Live refresh: any batch_progress event over SSE → debounced refetch.
-  // The reducer's `byId` reference changes on each event, so the effect
-  // re-runs only when something genuinely moved.
   useEffect(() => {
     if (!token) return;
-    // Skip the very first run while reducer state is still empty.
     if (Object.keys(liveBatches.byId).length === 0) return;
     const timer = setTimeout(fetchStatus, 500);
     return () => clearTimeout(timer);
   }, [token, liveBatches.byId]);
 
-  // Window focus → refetch (user came back to tab after time away).
   useEffect(() => {
     if (!token) return;
     const onFocus = () => fetchStatus();
@@ -107,137 +98,184 @@ export default function BatchPage() {
     } catch { }
   };
 
+  const sel = "w-full px-3 py-2 rounded-md border border-[#2D3139] bg-[#1A1D23] text-sm text-[#C8CBD4] focus:outline-none focus:border-[#4A5568] transition-colors";
+
+  const statItems = [
+    { label: 'Active Calls', value: batchStatus?.active_calls || 0 },
+    { label: 'Completed',    value: batchStatus?.completed    || 0 },
+    { label: 'Pending',      value: batchStatus?.pending      || 0 },
+    { label: 'Failed',       value: batchStatus?.failed       || 0 },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
-      <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+    <div className="min-h-screen" style={{ background: '#0F1117' }}>
+
+      {/* Header */}
+      <div style={{ background: '#13161C', borderBottom: '1px solid #1E2128' }}>
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/bank/dashboard')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-              <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            <button
+              onClick={() => router.push('/bank/dashboard')}
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: '#8B92A5' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#1E2128')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Batch Calling</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Upload Excel, trigger calls, monitor progress</p>
+              <h1 className="text-base font-semibold" style={{ color: '#E8EAF0', letterSpacing: '-0.01em' }}>Batch Calling</h1>
+              <p className="text-xs" style={{ color: '#565D6E' }}>Upload Excel, trigger calls, monitor progress</p>
             </div>
           </div>
           <ThemeToggle />
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-5xl mx-auto px-6 py-6 space-y-4">
+
         {/* Live Status */}
         {batchStatus && (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-5">
-            <h2 className="font-semibold text-gray-900 dark:text-white mb-3">Live Status</h2>
+          <div className="rounded-xl p-5" style={{ background: '#13161C', border: '1px solid #1E2128' }}>
+            <p className="text-xs font-medium mb-4" style={{ color: '#565D6E', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Live Status</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-blue-600">{batchStatus.active_calls || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Active Calls</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-green-600">{batchStatus.completed || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Completed</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-yellow-600">{batchStatus.pending || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Pending</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-red-600">{batchStatus.failed || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Failed</p>
-              </div>
+              {statItems.map(({ label, value }) => (
+                <div key={label} className="rounded-lg px-4 py-3" style={{ background: '#0F1117', border: '1px solid #1E2128' }}>
+                  <p className="text-2xl font-semibold" style={{ color: '#E8EAF0', letterSpacing: '-0.02em' }}>{value}</p>
+                  <p className="text-xs mt-0.5" style={{ color: '#565D6E' }}>{label}</p>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        {/* Agent voice config — applied to every record in the next upload */}
-        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-5 flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">🌐 Agent Language</label>
-            <select
-              value={language}
-              onChange={e => setLanguage(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
-            >
-              <option value="hindi">🇮🇳 Hindi</option>
-              <option value="marathi">🏛️ Marathi</option>
-              <option value="english">🌍 English</option>
-            </select>
+        {/* Voice Config */}
+        <div className="rounded-xl p-5" style={{ background: '#13161C', border: '1px solid #1E2128' }}>
+          <p className="text-xs font-medium mb-4" style={{ color: '#565D6E', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Voice Config & Upload</p>
+          <div className="flex flex-wrap gap-4 items-end">
+            <div className="flex-1 min-w-[180px]">
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#8B92A5' }}>Language</label>
+              <select value={language} onChange={e => setLanguage(e.target.value)} className={sel}>
+                <option value="hindi">Hindi</option>
+                <option value="marathi">Marathi</option>
+                <option value="english">English</option>
+              </select>
+            </div>
+            <div className="flex-1 min-w-[180px]">
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#8B92A5' }}>Voice</label>
+              <select value={gender} onChange={e => setGender(e.target.value)} className={sel}>
+                <option value="male">Male (Rajesh)</option>
+                <option value="female">Female (Diya)</option>
+              </select>
+            </div>
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#8B92A5' }}>Agent Type</label>
+              <select value={agentType} onChange={e => setAgentType(e.target.value)} className={sel}>
+                <option value="loan_enquiry">Loan Enquiry — Pusad Urban</option>
+                <option value="account_opening">Account Opening — Union Bank</option>
+              </select>
+            </div>
           </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">👤 Agent Voice</label>
-            <select
-              value={gender}
-              onChange={e => setGender(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
-            >
-              <option value="male">Male (Rajesh)</option>
-              <option value="female">Female (Diya)</option>
-            </select>
-          </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">🏦 Agent Type</label>
-            <select
-              value={agentType}
-              onChange={(e) => setAgentType(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
-            >
-              <option value="loan_enquiry">Loan Enquiry — Pusad Urban Bank</option>
-              <option value="account_opening">Account Opening — Union Bank of India</option>
-            </select>
-          </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 w-full">
-            Selected voice + language are stored per row at upload. Existing batches keep their original config.
+          <p className="text-xs mt-3" style={{ color: '#3D4452' }}>
+            These are baked into every row at upload time. Existing batches keep their original config.
           </p>
         </div>
 
-        {/* Actions */}
-        <div className="flex flex-wrap gap-3">
-          <label className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700 transition">
-            <Upload className="w-4 h-4" /> {uploading ? 'Uploading...' : 'Upload Excel'}
+        {/* Action Buttons */}
+        <div className="flex flex-wrap gap-2">
+          <label
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors"
+            style={{ background: '#1E2128', color: '#C8CBD4', border: '1px solid #2D3139' }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#252830')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1E2128')}
+          >
+            <Upload className="w-4 h-4" />
+            {uploading ? 'Uploading...' : 'Upload Excel'}
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleUpload} disabled={uploading} />
           </label>
-          <button onClick={triggerBatch} className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition">
+
+          <button
+            onClick={triggerBatch}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ background: '#1E2128', color: '#C8CBD4', border: '1px solid #2D3139' }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#252830')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1E2128')}
+          >
             <Play className="w-4 h-4" /> Start Batch
           </button>
-          <button onClick={emergencyStop} className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition">
-            <Square className="w-4 h-4" /> Emergency Stop
+
+          <button
+            onClick={fetchStatus}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ background: '#1E2128', color: '#C8CBD4', border: '1px solid #2D3139' }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#252830')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1E2128')}
+          >
+            <RefreshCw className="w-4 h-4" /> Resume
           </button>
-          <button onClick={fetchBatches} className="flex items-center gap-2 px-4 py-2.5 bg-gray-200 dark:bg-dark-section text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-700 transition">
+
+          <button
+            onClick={fetchBatches}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ background: '#1E2128', color: '#C8CBD4', border: '1px solid #2D3139' }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#252830')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1E2128')}
+          >
             <RefreshCw className="w-4 h-4" /> Refresh
+          </button>
+
+          <button
+            onClick={emergencyStop}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ml-auto"
+            style={{ background: 'transparent', color: '#EF4444', border: '1px solid #3D1A1A' }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#1A0D0D'; e.currentTarget.style.borderColor = '#7F1D1D'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = '#3D1A1A'; }}
+          >
+            <Square className="w-4 h-4" /> Emergency Stop
           </button>
         </div>
 
-        {/* Batch History */}
-        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm">
-          <div className="p-5 border-b border-gray-100 dark:border-gray-700/50">
-            <div className="flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-              <h2 className="font-semibold text-gray-900 dark:text-white">Upload History</h2>
-            </div>
+        {/* Upload History */}
+        <div className="rounded-xl overflow-hidden" style={{ background: '#13161C', border: '1px solid #1E2128' }}>
+          <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: '1px solid #1E2128' }}>
+            <FileSpreadsheet className="w-4 h-4" style={{ color: '#565D6E' }} />
+            <h2 className="text-sm font-medium" style={{ color: '#8B92A5' }}>Upload History</h2>
+            <span className="ml-auto text-xs" style={{ color: '#3D4452' }}>Click a row to see calls</span>
           </div>
+
           {loading ? (
-            <div className="p-8 text-center"><Loader2 className="w-6 h-6 text-blue-600 animate-spin mx-auto" /></div>
+            <div className="p-10 flex justify-center">
+              <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#3D4452' }} />
+            </div>
           ) : batches.length === 0 ? (
-            <div className="p-8 text-center">
-              <FileSpreadsheet className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-              <p className="text-sm text-gray-500 dark:text-gray-400">No batches uploaded yet</p>
+            <div className="p-10 text-center">
+              <FileSpreadsheet className="w-8 h-8 mx-auto mb-2" style={{ color: '#2D3139' }} />
+              <p className="text-sm" style={{ color: '#3D4452' }}>No batches uploaded yet</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
-              {batches.map((batch: any) => (
-                <div key={batch._id || batch.id} className="p-4 flex items-center justify-between">
+            <div>
+              {batches.map((batch: any, i: number) => (
+                <div
+                  key={batch._id || batch.id}
+                  className="px-5 py-3.5 flex items-center justify-between transition-colors"
+                  style={{ borderBottom: i < batches.length - 1 ? '1px solid #1A1D23' : 'none' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#0F1117')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
                   <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{batch.filename || batch.file_name}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                    <p className="text-sm font-medium" style={{ color: '#C8CBD4' }}>{batch.filename || batch.file_name}</p>
+                    <p className="text-xs mt-0.5" style={{ color: '#3D4452' }}>
                       {batch.total_records || batch.count || 0} records · {formatDateTime(batch.uploaded_at || batch.created_at || '')}
                     </p>
                   </div>
-                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                    batch.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
-                    batch.status === 'in_progress' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
-                    'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                  }`}>
+                  <span
+                    className="px-2 py-0.5 text-xs font-medium rounded"
+                    style={
+                      batch.status === 'completed'   ? { background: '#0D1F18', color: '#4ADE80', border: '1px solid #14532D' } :
+                      batch.status === 'in_progress' ? { background: '#0F1825', color: '#60A5FA', border: '1px solid #1E3A5F' } :
+                                                       { background: '#1A1D23', color: '#565D6E', border: '1px solid #2D3139' }
+                    }
+                  >
                     {batch.status || 'uploaded'}
                   </span>
                 </div>

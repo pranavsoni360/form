@@ -85,18 +85,18 @@ export default function BankLoginPage() {
 
       {/* ── RIGHT PANEL ── */}
       <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative"
-        style={{ background: '#fff' }}>
+        style={{ background: '#f8fafc' }}>
         {/* Dot grid */}
         <div className="absolute inset-0 pointer-events-none"
-          style={{ backgroundImage: 'radial-gradient(circle, #CBD5E1 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.4 }} />
+          style={{ backgroundImage: 'radial-gradient(circle, #bcccdc 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.5 }} />
 
         <div className="w-full max-w-sm relative z-10">
 
           {/* Portal icon */}
           <div className="mb-6">
             <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
-              style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-              <FileText className="w-6 h-6" style={{ color: '#2563EB' }} />
+              style={{ background: '#d9eafd', border: '1px solid #bcccdc' }}>
+              <FileText className="w-6 h-6" style={{ color: '#1e3a5f' }} />
             </div>
             <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Bank Portal</h1>
             <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Sign in with your bank credentials</p>
@@ -111,9 +111,9 @@ export default function BankLoginPage() {
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={username} onChange={e => setUsername(e.target.value)} required autoFocus
                   className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
-                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
-                  onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
-                  onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                  style={{ border: '1px solid #bcccdc', background: '#fff', fontFamily: 'var(--font-body)', color: '#1e293b' }}
+                  onFocus={e => { e.target.style.borderColor = '#9aa6b2'; e.target.style.boxShadow = '0 0 0 3px rgba(217,234,253,0.6)'; }}
+                  onBlur={e => { e.target.style.borderColor = '#bcccdc'; e.target.style.boxShadow = 'none'; }}
                   placeholder="Enter your username" />
               </div>
             </div>
@@ -126,9 +126,9 @@ export default function BankLoginPage() {
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
                   className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
-                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
-                  onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
-                  onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
+                  style={{ border: '1px solid #bcccdc', background: '#fff', fontFamily: 'var(--font-body)', color: '#1e293b' }}
+                  onFocus={e => { e.target.style.borderColor = '#9aa6b2'; e.target.style.boxShadow = '0 0 0 3px rgba(217,234,253,0.6)'; }}
+                  onBlur={e => { e.target.style.borderColor = '#bcccdc'; e.target.style.boxShadow = 'none'; }}
                   placeholder="••••••••" />
               </div>
             </div>

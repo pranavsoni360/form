@@ -13,17 +13,35 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { useEventStream } from '@/lib/realtime/useEventStream';
 import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
 
+// palette: #f8fafc bg · #d9eafd accent · #bcccdc border · #9aa6b2 muted
+const P = {
+  bg:      '#f8fafc',
+  card:    '#ffffff',
+  accent:  '#d9eafd',
+  border:  '#bcccdc',
+  muted:   '#9aa6b2',
+  text:    '#1e293b',
+  sub:     '#475569',
+  hov:    '#f0f6ff',
+};
+
 function StatusBadge({ status }: { status: string }) {
   const s = (status || '').toLowerCase();
-  let cls = 'px-2 py-0.5 rounded text-xs font-medium ';
-  if (s === 'completed')       cls += 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400';
+  let bg = '#f1f5f9', color = '#64748b', border = '#cbd5e1';
+  if (s === 'completed')
+    { bg = '#ecfdf5'; color = '#065f46'; border = '#a7f3d0'; }
   else if (s === 'running' || s === 'in_progress' || s === 'calling')
-                               cls += 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-400';
-  else if (s === 'failed')     cls += 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400';
+    { bg = P.accent; color = '#1e3a5f'; border = P.border; }
+  else if (s === 'failed')
+    { bg = '#fef2f2'; color = '#991b1b'; border = '#fecaca'; }
   else if (s === 'paused' || s === 'scheduled')
-                               cls += 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-400';
-  else                         cls += 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400';
-  return <span className={cls}>{status || 'pending'}</span>;
+    { bg = '#fffbeb'; color = '#92400e'; border = '#fde68a'; }
+  return (
+    <span className="px-2 py-0.5 rounded text-xs font-medium"
+      style={{ background: bg, color, border: `1px solid ${border}` }}>
+      {status || 'pending'}
+    </span>
+  );
 }
 
 export default function BatchPage() {
@@ -70,10 +88,8 @@ export default function BatchPage() {
         for (const pool of data.pools ?? []) {
           for (const n of pool.numbers ?? []) {
             if (!n.phone_number || n.status !== 'active') continue;
-            opts.push({
-              id: n.id, phone: n.phone_number,
-              provider: n.phone_number.startsWith('+1') ? 'Twilio US' : n.phone_number.startsWith('+91') ? 'Viva India' : 'Other',
-            });
+            opts.push({ id: n.id, phone: n.phone_number,
+              provider: n.phone_number.startsWith('+1') ? 'Twilio US' : n.phone_number.startsWith('+91') ? 'Viva India' : 'Other' });
           }
         }
         setPhoneOptions(opts.sort((a, b) => a.phone.localeCompare(b.phone)));
@@ -93,7 +109,7 @@ export default function BatchPage() {
   const fetchStatus = useCallback(async (tok = token) => {
     if (!tok) return;
     try {
-      const res  = await fetch(`${API_URL}/api/agent/batch-status`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
+      const res = await fetch(`${API_URL}/api/agent/batch-status`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
       setBatchStatus(await res.json());
     } catch { }
   }, [token]);
@@ -204,113 +220,114 @@ export default function BatchPage() {
   };
 
   const statItems = [
-    { label: 'Active Calls', value: batchStatus?.active_calls ?? 0, color: 'text-blue-600 dark:text-blue-400' },
-    { label: 'Completed',    value: batchStatus?.completed    ?? 0, color: 'text-emerald-600 dark:text-emerald-400' },
-    { label: 'Pending',      value: batchStatus?.pending      ?? 0, color: 'text-gray-700 dark:text-gray-300' },
-    { label: 'Failed',       value: batchStatus?.failed       ?? 0, color: 'text-red-600 dark:text-red-400' },
+    { label: 'Active Calls', value: batchStatus?.active_calls ?? 0, accent: P.accent },
+    { label: 'Completed',    value: batchStatus?.completed    ?? 0, accent: '#ecfdf5' },
+    { label: 'Pending',      value: batchStatus?.pending      ?? 0, accent: P.bg },
+    { label: 'Failed',       value: batchStatus?.failed       ?? 0, accent: '#fef2f2' },
   ];
 
-  const selectCls = "w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:focus:ring-slate-500 transition";
+  const selStyle: React.CSSProperties = {
+    border: `1px solid ${P.border}`, background: P.card, color: P.text,
+    borderRadius: '0.5rem', padding: '0.5rem 0.75rem', fontSize: '0.875rem',
+    width: '100%', outline: 'none',
+  };
 
-  const btnCls = "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition disabled:opacity-50 disabled:cursor-not-allowed";
+  const btnStyle: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+    padding: '0.5rem 1rem', borderRadius: '0.5rem', fontSize: '0.875rem', fontWeight: 500,
+    border: `1px solid ${P.border}`, background: P.card, color: P.sub,
+    cursor: 'pointer', transition: 'background 0.15s',
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen" style={{ background: P.bg }}>
 
       {/* Header */}
-      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+      <div style={{ background: P.card, borderBottom: `1px solid ${P.border}` }}>
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push('/bank/dashboard')}
-              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition">
+            <button onClick={() => router.push('/bank/dashboard')}
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: P.muted }}
+              onMouseEnter={e => (e.currentTarget.style.background = P.accent)}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">Batch Calling</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Upload Excel, trigger calls, monitor progress</p>
+              <h1 className="text-base font-semibold" style={{ color: P.text }}>Batch Calling</h1>
+              <p className="text-xs" style={{ color: P.muted }}>Upload Excel, trigger calls, monitor progress</p>
             </div>
           </div>
           <ThemeToggle />
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-6 space-y-5">
+      <div className="max-w-5xl mx-auto px-6 py-6 space-y-4">
 
-        {/* Inline notification */}
+        {/* Notification */}
         {notice && (
-          <div className={`flex items-center gap-2.5 rounded-lg px-4 py-3 text-sm border ${
-            notice.ok
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400'
-              : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400'
-          }`}>
-            {notice.ok
-              ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-              : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
+          <div className="flex items-center gap-2.5 rounded-lg px-4 py-3 text-sm"
+            style={notice.ok
+              ? { background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }
+              : { background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca' }}>
+            {notice.ok ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
             {notice.msg}
           </div>
         )}
 
         {/* Live Status */}
         {batchStatus && (
-          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-            <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Live Status</p>
+          <div className="rounded-xl p-5" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+            <p className="text-xs font-semibold mb-4 uppercase tracking-wider" style={{ color: P.muted }}>Live Status</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {statItems.map(({ label, value, color }) => (
-                <div key={label} className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
-                  <p className={`text-2xl font-bold ${color}`}>{value}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{label}</p>
+              {statItems.map(({ label, value, accent }) => (
+                <div key={label} className="rounded-lg px-4 py-3" style={{ background: accent, border: `1px solid ${P.border}` }}>
+                  <p className="text-2xl font-bold" style={{ color: P.text }}>{value}</p>
+                  <p className="text-xs mt-0.5" style={{ color: P.sub }}>{label}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Voice Config & Upload */}
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-          <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Voice Config & Upload</p>
+        {/* Voice Config */}
+        <div className="rounded-xl p-5" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+          <p className="text-xs font-semibold mb-4 uppercase tracking-wider" style={{ color: P.muted }}>Voice Config & Upload</p>
           <div className="flex flex-wrap gap-4 items-end">
-            <div className="flex-1 min-w-[140px]">
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Language</label>
-              <select value={language} onChange={e => setLanguage(e.target.value)} className={selectCls}>
-                <option value="hindi">Hindi</option>
-                <option value="marathi">Marathi</option>
-                <option value="english">English</option>
-              </select>
-            </div>
-            <div className="flex-1 min-w-[140px]">
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Voice</label>
-              <select value={gender} onChange={e => setGender(e.target.value)} className={selectCls}>
-                <option value="male">Male (Rajesh)</option>
-                <option value="female">Female (Diya)</option>
-              </select>
-            </div>
-            <div className="flex-1 min-w-[180px]">
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Agent Type</label>
-              <select value={agentType} onChange={e => setAgentType(e.target.value)} className={selectCls}>
-                <option value="loan_enquiry">Loan Enquiry — Pusad Urban</option>
-                <option value="account_opening">Account Opening — Union Bank</option>
-              </select>
-            </div>
+            {[
+              { label: 'Language', val: language, set: setLanguage,
+                opts: [['hindi','Hindi'],['marathi','Marathi'],['english','English']] },
+              { label: 'Voice', val: gender, set: setGender,
+                opts: [['male','Male (Rajesh)'],['female','Female (Diya)']] },
+              { label: 'Agent Type', val: agentType, set: setAgentType,
+                opts: [['loan_enquiry','Loan Enquiry — Pusad Urban'],['account_opening','Account Opening — Union Bank']] },
+            ].map(({ label, val, set, opts }) => (
+              <div key={label} className="flex-1 min-w-[140px]">
+                <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>{label}</label>
+                <select value={val} onChange={e => set(e.target.value)} style={selStyle}>
+                  {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+            ))}
             <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">From Number (Caller ID)</label>
-              <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)} className={selectCls}>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>From Number (Caller ID)</label>
+              <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)} style={selStyle}>
                 <option value="">Auto — pool picks least-loaded</option>
-                {phoneOptions.map(p => (
-                  <option key={p.id} value={p.id}>{p.phone} · {p.provider}</option>
-                ))}
+                {phoneOptions.map(p => <option key={p.id} value={p.id}>{p.phone} · {p.provider}</option>)}
               </select>
             </div>
           </div>
-          <p className="text-xs text-gray-400 dark:text-gray-600 mt-3">
+          <p className="text-xs mt-3" style={{ color: P.border }}>
             Voice + language are baked into every row at upload time. Existing batches keep their original config.
           </p>
         </div>
 
         {/* Actions */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Upload */}
-          <label className={`${btnCls} cursor-pointer`}>
+          <label style={btnStyle}
+            className="cursor-pointer"
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = P.hov)}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = P.card)}>
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             {uploading ? 'Uploading…' : 'Upload Excel'}
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleUpload} disabled={uploading} />
@@ -323,37 +340,40 @@ export default function BatchPage() {
             { label: 'Cleanup Stuck', icon: <Wrench className="w-4 h-4" />,    busy: cleaning, onClick: cleanupStuck  },
             { label: 'Refresh',       icon: <RefreshCw className="w-4 h-4" />, busy: false,    onClick: refresh       },
           ].map(({ label, icon, busy, onClick }) => (
-            <button key={label} onClick={onClick} disabled={busy} className={btnCls}>
+            <button key={label} onClick={onClick} disabled={busy}
+              style={{ ...btnStyle, opacity: busy ? 0.6 : 1 }}
+              onMouseEnter={e => { if (!busy) (e.currentTarget as HTMLElement).style.background = P.hov; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = P.card; }}>
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
               {label}
             </button>
           ))}
 
-          <button
-            onClick={emergencyStop}
-            disabled={stopping}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition disabled:opacity-50 ml-auto">
+          <button onClick={emergencyStop} disabled={stopping}
+            style={{ ...btnStyle, marginLeft: 'auto', color: '#dc2626', borderColor: '#fca5a5', background: 'transparent' }}
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = '#fef2f2')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'transparent')}>
             {stopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
             Emergency Stop
           </button>
         </div>
 
         {/* Upload History */}
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2">
-            <FileSpreadsheet className="w-4 h-4 text-gray-400" />
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Upload History</h2>
-            <span className="ml-auto text-xs text-gray-400 dark:text-gray-600">Click a row to view calls</span>
+        <div className="rounded-xl overflow-hidden" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+          <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: `1px solid ${P.border}` }}>
+            <FileSpreadsheet className="w-4 h-4" style={{ color: P.muted }} />
+            <h2 className="text-sm font-semibold" style={{ color: P.sub }}>Upload History</h2>
+            <span className="ml-auto text-xs" style={{ color: P.muted }}>Click a row to view calls</span>
           </div>
 
           {loading ? (
             <div className="py-12 flex justify-center">
-              <Loader2 className="w-5 h-5 animate-spin text-gray-300 dark:text-gray-600" />
+              <Loader2 className="w-5 h-5 animate-spin" style={{ color: P.border }} />
             </div>
           ) : batches.length === 0 ? (
             <div className="py-12 text-center">
-              <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 text-gray-300 dark:text-gray-700" />
-              <p className="text-sm text-gray-400">No batches uploaded yet</p>
+              <FileSpreadsheet className="w-8 h-8 mx-auto mb-2" style={{ color: P.border }} />
+              <p className="text-sm" style={{ color: P.muted }}>No batches uploaded yet</p>
             </div>
           ) : (
             <div>
@@ -364,63 +384,64 @@ export default function BatchPage() {
                 const isBusy = loadingCalls === bId;
 
                 return (
-                  <div key={batch.id || bId} className={i < batches.length - 1 ? 'border-b border-gray-100 dark:border-gray-800' : ''}>
-                    <button
-                      onClick={() => toggleBatch(bId)}
-                      className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition">
+                  <div key={batch.id || bId} style={{ borderBottom: i < batches.length - 1 ? `1px solid ${P.bg}` : 'none' }}>
+                    <button onClick={() => toggleBatch(bId)} className="w-full px-5 py-3.5 flex items-center justify-between text-left transition-colors"
+                      onMouseEnter={e => (e.currentTarget.style.background = P.hov)}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                        <p className="text-sm font-medium truncate" style={{ color: P.text }}>
                           {batch.filename || batch.file_name || 'Unknown file'}
                         </p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                        <p className="text-xs mt-0.5" style={{ color: P.muted }}>
                           {batch.total_records ?? batch.count ?? 0} records · {formatDateTime(batch.uploaded_at || batch.created_at || '')}
                         </p>
                       </div>
                       <div className="flex items-center gap-3 ml-4 flex-shrink-0">
                         <StatusBadge status={batch.status || 'pending'} />
                         {isOpen
-                          ? <ChevronUp className="w-4 h-4 text-gray-400" />
-                          : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                          ? <ChevronUp className="w-4 h-4" style={{ color: P.muted }} />
+                          : <ChevronDown className="w-4 h-4" style={{ color: P.muted }} />}
                       </div>
                     </button>
 
                     {isOpen && (
-                      <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/30">
+                      <div style={{ borderTop: `1px solid ${P.border}`, background: P.bg }}>
                         {isBusy ? (
                           <div className="py-8 flex justify-center">
-                            <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                            <Loader2 className="w-5 h-5 animate-spin" style={{ color: P.border }} />
                           </div>
                         ) : calls.length === 0 ? (
-                          <p className="py-6 text-center text-sm text-gray-400">No calls in this batch</p>
+                          <p className="py-6 text-center text-sm" style={{ color: P.muted }}>No calls in this batch</p>
                         ) : (
                           <div>
-                            <div className="grid grid-cols-[2fr_1.5fr_1fr_0.5fr_0.5fr_0.5fr] gap-2 px-5 py-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 border-b border-gray-100 dark:border-gray-800">
+                            <div className="grid grid-cols-[2fr_1.5fr_1fr_0.5fr_0.5fr_0.5fr] gap-2 px-5 py-2 text-[10px] font-semibold uppercase tracking-wider"
+                              style={{ color: P.muted, borderBottom: `1px solid ${P.border}` }}>
                               <span>Name</span><span>Phone</span><span>Status</span>
                               <span>Duration</span><span>Interested</span><span>Form</span>
                             </div>
-                            <div className="max-h-72 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+                            <div className="max-h-72 overflow-y-auto">
                               {calls.map((call: any) => (
-                                <div key={call.id} className="grid grid-cols-[2fr_1.5fr_1fr_0.5fr_0.5fr_0.5fr] gap-2 px-5 py-2.5 items-center">
-                                  <span className="flex items-center gap-1.5 text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
-                                    <User className="w-3 h-3 flex-shrink-0 text-gray-400" />
+                                <div key={call.id} className="grid grid-cols-[2fr_1.5fr_1fr_0.5fr_0.5fr_0.5fr] gap-2 px-5 py-2.5 items-center"
+                                  style={{ borderBottom: `1px solid ${P.border}20` }}>
+                                  <span className="flex items-center gap-1.5 text-sm font-medium truncate" style={{ color: P.text }}>
+                                    <User className="w-3 h-3 flex-shrink-0" style={{ color: P.muted }} />
                                     {call.customer_name || '—'}
                                   </span>
-                                  <span className="flex items-center gap-1.5 font-mono text-xs text-gray-500 truncate">
-                                    <Phone className="w-3 h-3 flex-shrink-0 text-gray-400" />
+                                  <span className="flex items-center gap-1.5 font-mono text-xs truncate" style={{ color: P.sub }}>
+                                    <Phone className="w-3 h-3 flex-shrink-0" style={{ color: P.muted }} />
                                     {call.phone || '—'}
                                   </span>
                                   <span><StatusBadge status={call.status || ''} /></span>
-                                  <span className="flex items-center gap-1 text-xs text-gray-500">
+                                  <span className="flex items-center gap-1 text-xs" style={{ color: P.sub }}>
                                     <Clock className="w-3 h-3" />
                                     {call.call_duration ? `${call.call_duration}s` : '—'}
                                   </span>
-                                  <span className={`text-xs font-medium ${
-                                    call.interested === true  ? 'text-emerald-600 dark:text-emerald-400' :
-                                    call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-gray-400'
-                                  }`}>
+                                  <span className="text-xs font-medium" style={{
+                                    color: call.interested === true ? '#059669' : call.interested === false ? '#dc2626' : P.muted
+                                  }}>
                                     {call.interested === true ? 'Yes' : call.interested === false ? 'No' : '—'}
                                   </span>
-                                  <span className={`text-xs font-medium ${call.form_sent ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
+                                  <span className="text-xs font-medium" style={{ color: call.form_sent ? '#059669' : P.muted }}>
                                     {call.form_sent ? 'Sent' : '—'}
                                   </span>
                                 </div>

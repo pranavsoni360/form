@@ -26,6 +26,12 @@ interface Application {
   form_status?: string | null;
 }
 
+// palette
+const P = {
+  bg: '#f8fafc', card: '#ffffff', accent: '#d9eafd',
+  border: '#bcccdc', muted: '#9aa6b2', text: '#1e293b', sub: '#475569', hov: '#f0f6ff',
+};
+
 const OFFICER_FILTERS = ['all', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
 const SUPERVISOR_FILTERS = ['all', 'officer_approved', 'documents_submitted', 'approved', 'supervisor_rejected'];
 
@@ -77,40 +83,59 @@ export default function BankDashboardPage() {
   const filters = user?.role === 'bank_supervisor' ? SUPERVISOR_FILTERS : OFFICER_FILTERS;
 
   const stats = {
-    total: applications.length,
-    pending: applications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
+    total:    applications.length,
+    pending:  applications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
     approved: applications.filter(a => ['officer_approved', 'approved'].includes(a.status)).length,
     rejected: applications.filter(a => a.status.includes('rejected')).length,
   };
 
+  const statItems = [
+    { label: 'Total',    value: stats.total,    icon: FileText,      tint: P.accent },
+    { label: 'Pending',  value: stats.pending,  icon: Clock,         tint: '#fffbeb' },
+    { label: 'Approved', value: stats.approved, icon: CheckCircle2,  tint: '#ecfdf5' },
+    { label: 'Rejected', value: stats.rejected, icon: XCircle,       tint: '#fef2f2' },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
+    <div className="min-h-screen" style={{ background: P.bg }}>
+
       {/* Header */}
-      <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50 transition-colors">
+      <div style={{ background: P.card, borderBottom: `1px solid ${P.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-blue-600" />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: P.accent, border: `1px solid ${P.border}` }}>
+                <Building2 className="w-5 h-5" style={{ color: '#1e3a5f' }} />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+                <h1 className="text-xl font-bold" style={{ color: P.text }}>
                   {user?.bank_name || 'Bank'} Portal
                 </h1>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+                <p className="text-xs" style={{ color: P.muted }}>
                   {user?.full_name || user?.name} · {user?.role === 'bank_supervisor' ? 'Supervisor' : 'Officer'}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 sm:gap-3">
-              <button onClick={() => router.push('/bank/calls')} className="flex items-center gap-1 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-                <Phone className="w-4 h-4" /> <span className="hidden sm:inline">Calls</span>
-              </button>
-              <button onClick={() => router.push('/bank/batch')} className="flex items-center gap-1 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-                <Upload className="w-4 h-4" /> <span className="hidden sm:inline">Batch</span>
-              </button>
+            <div className="flex items-center gap-2">
+              {[
+                { label: 'Calls', icon: <Phone className="w-4 h-4" />, path: '/bank/calls' },
+                { label: 'Batch', icon: <Upload className="w-4 h-4" />, path: '/bank/batch' },
+              ].map(({ label, icon, path }) => (
+                <button key={label} onClick={() => router.push(path)}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm transition"
+                  style={{ color: P.sub }}
+                  onMouseEnter={e => (e.currentTarget.style.background = P.hov)}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                  {icon} <span className="hidden sm:inline">{label}</span>
+                </button>
+              ))}
               <ThemeToggle />
-              <button onClick={handleLogout} className="flex items-center gap-1 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition">
+              <button onClick={handleLogout}
+                className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm transition"
+                style={{ color: '#dc2626' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#fef2f2')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                 <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Logout</span>
               </button>
             </div>
@@ -119,102 +144,101 @@ export default function BankDashboardPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
-        {/* Stats Row */}
+
+        {/* Stats */}
         <div className="grid grid-cols-4 gap-4 mb-6">
-          {[
-            { label: 'Total', value: stats.total, icon: FileText, color: 'text-blue-500' },
-            { label: 'Pending', value: stats.pending, icon: Clock, color: 'text-yellow-500' },
-            { label: 'Approved', value: stats.approved, icon: CheckCircle2, color: 'text-green-500' },
-            { label: 'Rejected', value: stats.rejected, icon: XCircle, color: 'text-red-500' },
-          ].map(s => (
-            <div key={s.label} className="bg-white dark:bg-dark-card rounded-xl p-4 shadow-sm dark:shadow-gray-900/30">
+          {statItems.map(({ label, value, icon: Icon, tint }) => (
+            <div key={label} className="rounded-xl p-4" style={{ background: tint, border: `1px solid ${P.border}` }}>
               <div className="flex items-center gap-2 mb-1">
-                <s.icon className={`w-4 h-4 ${s.color}`} />
-                <span className="text-xs text-gray-500 dark:text-gray-400">{s.label}</span>
+                <Icon className="w-4 h-4" style={{ color: P.sub }} />
+                <span className="text-xs font-medium" style={{ color: P.sub }}>{label}</span>
               </div>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{s.value}</p>
+              <p className="text-2xl font-bold" style={{ color: P.text }}>{value}</p>
             </div>
           ))}
         </div>
 
         {/* Filters */}
-        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm dark:shadow-gray-900/30 p-3 mb-4">
+        <div className="rounded-xl p-3 mb-4" style={{ background: P.card, border: `1px solid ${P.border}` }}>
           <div className="flex items-center gap-2 overflow-x-auto">
-            <Filter className="w-4 h-4 text-gray-400 flex-shrink-0" />
-            {filters.map((status) => (
+            <Filter className="w-4 h-4 flex-shrink-0" style={{ color: P.muted }} />
+            {filters.map(status => (
               <button key={status} onClick={() => setFilter(status)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                  filter === status
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 dark:bg-dark-section text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                }`}>
+                className="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition"
+                style={filter === status
+                  ? { background: P.accent, color: '#1e3a5f', border: `1px solid ${P.border}` }
+                  : { background: P.bg, color: P.sub, border: `1px solid ${P.border}` }}
+                onMouseEnter={e => { if (filter !== status) (e.currentTarget.style.background = P.hov); }}
+                onMouseLeave={e => { if (filter !== status) (e.currentTarget.style.background = P.bg); }}>
                 {STATUS_LABELS[status] || 'All'}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Quick link to the full applications index — added for multi-bank
-            rollout so bank users can paginate / search the whole queue
-            instead of only seeing what fits in this inline table. */}
+        {/* View all link */}
         <div className="flex justify-end -mt-2 mb-2">
-          <button
-            onClick={() => router.push('/bank/applications')}
-            className="text-xs font-medium text-blue-600 hover:underline"
-          >
+          <button onClick={() => router.push('/bank/applications')}
+            className="text-xs font-medium transition"
+            style={{ color: '#1e3a5f' }}
+            onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+            onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}>
             View all applications →
           </button>
         </div>
 
-        {/* Applications Table */}
+        {/* Table */}
         {loading ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">Loading...</p>
+          <div className="rounded-xl p-12 text-center" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+            <div className="animate-spin rounded-full h-8 w-8 mx-auto mb-3"
+              style={{ border: `2px solid ${P.border}`, borderTopColor: '#1e3a5f' }} />
+            <p className="text-sm" style={{ color: P.muted }}>Loading...</p>
           </div>
         ) : fetchError ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
-            <AlertTriangle className="w-10 h-10 text-red-400 mx-auto mb-2" />
-            <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">Failed to load applications</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{fetchError}</p>
-            <button onClick={fetchApplications} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">Retry</button>
+          <div className="rounded-xl p-12 text-center" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+            <AlertTriangle className="w-10 h-10 mx-auto mb-2" style={{ color: '#f87171' }} />
+            <p className="text-sm font-medium mb-1" style={{ color: '#dc2626' }}>Failed to load applications</p>
+            <p className="text-xs mb-4" style={{ color: P.muted }}>{fetchError}</p>
+            <button onClick={fetchApplications}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-white transition"
+              style={{ background: '#1e3a5f' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#1e4a7a')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#1e3a5f')}>
+              Retry
+            </button>
           </div>
         ) : applications.length === 0 ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
-            <FileText className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">No applications found</p>
+          <div className="rounded-xl p-12 text-center" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+            <FileText className="w-10 h-10 mx-auto mb-2" style={{ color: P.border }} />
+            <p className="text-sm" style={{ color: P.muted }}>No applications found</p>
           </div>
         ) : (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm dark:shadow-gray-900/30 overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700/50">
-              <thead className="bg-gray-50 dark:bg-dark-section">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Customer</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Loan ID</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Amount</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Interested</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Form</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Suggestion</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">KYC</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
-                  <th className="px-4 py-3"></th>
+          <div className="rounded-xl overflow-hidden" style={{ background: P.card, border: `1px solid ${P.border}` }}>
+            <table className="min-w-full">
+              <thead>
+                <tr style={{ background: P.bg, borderBottom: `1px solid ${P.border}` }}>
+                  {['Customer','Loan ID','Type','Amount','Status','Interested','Form','Suggestion','KYC','Date',''].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide"
+                      style={{ color: P.muted }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {applications.map((app) => (
+              <tbody>
+                {applications.map((app, i) => (
                   <tr key={app.id} onClick={() => router.push(`/bank/applications/${app.id}`)}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition">
+                    className="cursor-pointer transition"
+                    style={{ borderBottom: i < applications.length - 1 ? `1px solid ${P.bg}` : 'none' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = P.hov)}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                     <td className="px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">{app.customer_name}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">{app.phone}</div>
+                      <div className="text-sm font-medium" style={{ color: P.text }}>{app.customer_name}</div>
+                      <div className="text-xs" style={{ color: P.muted }}>{app.phone}</div>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{app.loan_id}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                    <td className="px-4 py-3 text-sm" style={{ color: P.sub }}>{app.loan_id}</td>
+                    <td className="px-4 py-3 text-sm" style={{ color: P.sub }}>
                       {app.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : app.consumer_loan_type === 'personal' ? 'Personal' : '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
+                    <td className="px-4 py-3 text-sm font-medium" style={{ color: P.text }}>
                       {app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : '—'}
                     </td>
                     <td className="px-4 py-3">
@@ -223,43 +247,43 @@ export default function BankDashboardPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {app.interested === true ? (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Yes</span>
-                      ) : app.interested === false ? (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">No</span>
-                      ) : <span className="text-xs text-gray-400">—</span>}
+                      {app.interested === true
+                        ? <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">Yes</span>
+                        : app.interested === false
+                        ? <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700">No</span>
+                        : <span className="text-xs" style={{ color: P.muted }}>—</span>}
                     </td>
                     <td className="px-4 py-3">
-                      {app.form_status === 'completed' ? (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Submitted</span>
-                      ) : app.form_status === 'in_progress' ? (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">In Progress</span>
-                      ) : app.form_status === 'pending' ? (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">Pending</span>
-                      ) : <span className="text-xs text-gray-400">—</span>}
+                      {app.form_status === 'completed'
+                        ? <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">Submitted</span>
+                        : app.form_status === 'in_progress'
+                        ? <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-700">In Progress</span>
+                        : app.form_status === 'pending'
+                        ? <span className="px-2 py-0.5 text-xs font-medium rounded-full" style={{ background: P.accent, color: '#1e3a5f' }}>Pending</span>
+                        : <span className="text-xs" style={{ color: P.muted }}>—</span>}
                     </td>
                     <td className="px-4 py-3">
                       {app.system_suggestion ? (
                         <div className="flex items-center gap-1">
-                          <ClipboardCheck className="w-3.5 h-3.5 text-purple-500" />
+                          <ClipboardCheck className="w-3.5 h-3.5" style={{ color: P.muted }} />
                           <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${SUGGESTION_COLORS[app.system_suggestion] || ''}`}>
                             {app.system_suggestion.charAt(0).toUpperCase() + app.system_suggestion.slice(1)}
                           </span>
                         </div>
-                      ) : <span className="text-xs text-gray-400">—</span>}
+                      ) : <span className="text-xs" style={{ color: P.muted }}>—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        {app.pan_verified && <span title="PAN Verified"><CheckCircle2 className="w-3.5 h-3.5 text-green-500" /></span>}
-                        {app.aadhaar_verified && <span title="Aadhaar Verified"><CheckCircle2 className="w-3.5 h-3.5 text-green-500" /></span>}
-                        {!app.pan_verified && !app.aadhaar_verified && <span className="text-xs text-gray-400">—</span>}
+                        {app.pan_verified && <span title="PAN Verified"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /></span>}
+                        {app.aadhaar_verified && <span title="Aadhaar Verified"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /></span>}
+                        {!app.pan_verified && !app.aadhaar_verified && <span className="text-xs" style={{ color: P.muted }}>—</span>}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                    <td className="px-4 py-3 text-xs" style={{ color: P.muted }}>
                       {formatDate(app.submitted_at || app.created_at || '')}
                     </td>
                     <td className="px-4 py-3">
-                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                      <ChevronRight className="w-4 h-4" style={{ color: P.muted }} />
                     </td>
                   </tr>
                 ))}

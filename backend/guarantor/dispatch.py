@@ -20,7 +20,7 @@ import logging
 
 from livekit import api
 
-from services.dispatcher import _acquire_trunk_from_db, _release_trunk_to_db
+from services.dispatcher import _acquire_trunk_from_db, _release_trunk_to_db, _to_e164
 
 logger = logging.getLogger("guarantor-dispatch")
 
@@ -86,7 +86,7 @@ async def dispatch_guarantor_call(db_pool, row: dict) -> None:
 
         room_name = f"gcc_{uuid.uuid4().hex[:6]}_{int(time.time())}"
         phone = str(row["guarantor_phone"])
-        sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
+        sip_phone = _to_e164(phone)
         name = row["guarantor_name"] or "Guarantor"
 
         await lk.room.create_room(api.CreateRoomRequest(

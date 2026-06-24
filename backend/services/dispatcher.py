@@ -68,6 +68,36 @@ MAX_CALLS_PER_RUN = int(os.getenv("DISPATCHER_MAX_CALLS_PER_RUN", "50"))
 
 
 # ============================================================================
+# Phone formatting
+# ============================================================================
+
+def _to_e164(phone: str) -> str:
+    """Best-effort E.164 for outbound dialing. Keeps every Indian format
+    behaving exactly as before; the ONLY new behavior is that a bare number
+    already carrying a non-91 country code is dialed as +<digits> instead of
+    being mangled into +91<last10>.
+      • already '+'             -> as-is
+      • 10 digits               -> +91<d>            (Indian mobile)
+      • 11 digits, leading 0    -> +91<last10>       (Indian, trunk-0)
+      • 12 digits, starts '91'  -> +<d>              (Indian w/ country code)
+      • any other digits        -> +<d>              (already international)
+    """
+    p = (phone or "").strip()
+    if p.startswith("+"):
+        return p
+    d = "".join(ch for ch in p if ch.isdigit())
+    if not d:
+        return p
+    if len(d) == 10:
+        return f"+91{d}"
+    if len(d) == 11 and d.startswith("0"):
+        return f"+91{d[-10:]}"
+    if len(d) == 12 and d.startswith("91"):
+        return f"+{d}"
+    return f"+{d}"
+
+
+# ============================================================================
 # Trunk acquisition helpers
 # ============================================================================
 
@@ -590,7 +620,7 @@ class Dispatcher:
                 api.CreateAgentDispatchRequest(room=room_name, agent_name=agent_for_call),
                 timeout_s=15,
             )
-            sip_phone = phone if phone.startswith("+") else f"+91{phone[-10:]}"
+            sip_phone = _to_e164(phone)
             # Force the From / caller-ID to the operator's selected phone.
             # Without sip_number, LiveKit falls back to the trunk's `numbers`
             # field — and if multiple outbound trunks share an account or the

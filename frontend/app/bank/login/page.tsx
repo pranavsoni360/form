@@ -84,51 +84,53 @@ export default function BankLoginPage() {
       </div>
 
       {/* ── RIGHT PANEL ── */}
-      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative"
-        style={{ background: '#f8fafc' }}>
+      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative bg-slate-50 dark:bg-slate-950">
         {/* Dot grid */}
         <div className="absolute inset-0 pointer-events-none"
-          style={{ backgroundImage: 'radial-gradient(circle, #bcccdc 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.5 }} />
+          style={{ backgroundImage: 'radial-gradient(circle, #cbd5e1 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.4 }} />
+        {/* Ambient glow */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[40rem] h-[20rem] rounded-full bg-blue-400/[0.05] dark:bg-blue-400/[0.07] blur-3xl" />
+        </div>
 
         <div className="w-full max-w-sm relative z-10">
 
           {/* Portal icon */}
           <div className="mb-6">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
-              style={{ background: '#d9eafd', border: '1px solid #bcccdc' }}>
-              <FileText className="w-6 h-6" style={{ color: '#1e3a5f' }} />
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6 bg-blue-600 shadow-lg shadow-blue-600/20">
+              <FileText className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Bank Portal</h1>
-            <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Sign in with your bank credentials</p>
+            <h1 className="text-2xl font-bold mb-1 text-slate-900 dark:text-slate-100" style={{ fontFamily: 'var(--font-heading)' }}>Bank Portal</h1>
+            <p className="text-sm text-slate-400 dark:text-slate-500" style={{ fontFamily: 'var(--font-body)' }}>Sign in with your bank credentials</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+              <label className="block text-sm font-medium mb-1.5 text-slate-700 dark:text-slate-300" style={{ fontFamily: 'var(--font-body)' }}>
                 Username <span style={{ color: '#DC2626' }}>*</span>
               </label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={username} onChange={e => setUsername(e.target.value)} required autoFocus
-                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
-                  style={{ border: '1px solid #bcccdc', background: '#fff', fontFamily: 'var(--font-body)', color: '#1e293b' }}
-                  onFocus={e => { e.target.style.borderColor = '#9aa6b2'; e.target.style.boxShadow = '0 0 0 3px rgba(217,234,253,0.6)'; }}
-                  onBlur={e => { e.target.style.borderColor = '#bcccdc'; e.target.style.boxShadow = 'none'; }}
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
+                  style={{ fontFamily: 'var(--font-body)' }}
+                  onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}
+                  onBlur={e => { e.target.style.borderColor = ''; e.target.style.boxShadow = 'none'; }}
                   placeholder="Enter your username" />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
+              <label className="block text-sm font-medium mb-1.5 text-slate-700 dark:text-slate-300" style={{ fontFamily: 'var(--font-body)' }}>
                 Password <span style={{ color: '#DC2626' }}>*</span>
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
-                  style={{ border: '1px solid #bcccdc', background: '#fff', fontFamily: 'var(--font-body)', color: '#1e293b' }}
-                  onFocus={e => { e.target.style.borderColor = '#9aa6b2'; e.target.style.boxShadow = '0 0 0 3px rgba(217,234,253,0.6)'; }}
-                  onBlur={e => { e.target.style.borderColor = '#bcccdc'; e.target.style.boxShadow = 'none'; }}
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
+                  style={{ fontFamily: 'var(--font-body)' }}
+                  onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}
+                  onBlur={e => { e.target.style.borderColor = ''; e.target.style.boxShadow = 'none'; }}
                   placeholder="••••••••" />
               </div>
             </div>

@@ -1600,16 +1600,19 @@ async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCrede
 async def bank_list_applications(status: Optional[str] = None, officer: dict = Depends(get_bank_officer)):
     """List applications for THIS bank (bank_id from JWT), with optional status filter."""
     bank_id = uuid.UUID(officer["bank_id"])
+    base_query = """
+        SELECT la.*,
+               ac.interested,
+               ft.form_status
+        FROM loan_applications la
+        LEFT JOIN agent_calls ac ON la.agent_call_id = ac.id
+        LEFT JOIN form_tokens ft ON la.token_id = ft.id
+        WHERE la.bank_id = $1
+    """
     if status:
-        rows = await db_pool.fetch(
-            "SELECT * FROM loan_applications WHERE bank_id = $1 AND status = $2 ORDER BY created_at DESC",
-            bank_id, status
-        )
+        rows = await db_pool.fetch(base_query + " AND la.status = $2 ORDER BY la.created_at DESC", bank_id, status)
     else:
-        rows = await db_pool.fetch(
-            "SELECT * FROM loan_applications WHERE bank_id = $1 ORDER BY created_at DESC",
-            bank_id
-        )
+        rows = await db_pool.fetch(base_query + " ORDER BY la.created_at DESC", bank_id)
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/bank/applications/{app_id}")

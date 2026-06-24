@@ -12,8 +12,8 @@ interface Application {
   customer_name: string;
   phone: string;
   loan_id: string;
-  loan_amount?: number;
-  loan_type?: string;
+  loan_amount_requested?: number;
+  consumer_loan_type?: string;
   status: string;
   submitted_at?: string;
   created_at?: string;
@@ -22,6 +22,8 @@ interface Application {
   system_score?: number;
   pan_verified?: boolean;
   aadhaar_verified?: boolean;
+  interested?: boolean | null;
+  form_status?: string | null;
 }
 
 const OFFICER_FILTERS = ['all', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
@@ -179,6 +181,8 @@ export default function BankDashboardPage() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Amount</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Interested</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Form</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Suggestion</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">KYC</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
@@ -194,14 +198,32 @@ export default function BankDashboardPage() {
                       <div className="text-xs text-gray-500 dark:text-gray-400">{app.phone}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{app.loan_id}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{app.loan_type || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                      {app.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : app.consumer_loan_type === 'personal' ? 'Personal' : '—'}
+                    </td>
                     <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
-                      {app.loan_amount ? formatCurrency(app.loan_amount) : '—'}
+                      {app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_COLORS[app.status] || ''}`}>
                         {STATUS_LABELS[app.status] || app.status}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {app.interested === true ? (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Yes</span>
+                      ) : app.interested === false ? (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">No</span>
+                      ) : <span className="text-xs text-gray-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {app.form_status === 'completed' ? (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Submitted</span>
+                      ) : app.form_status === 'in_progress' ? (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">In Progress</span>
+                      ) : app.form_status === 'pending' ? (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">Pending</span>
+                      ) : <span className="text-xs text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       {app.system_suggestion ? (

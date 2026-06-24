@@ -29,11 +29,14 @@ interface AppRow {
   loan_id?: string;
   requested_loan_amount?: number | null;
   loan_amount_requested?: number | null;
+  consumer_loan_type?: string | null;
   status: string;
   created_at?: string;
   submitted_at?: string;
   system_score?: number | null;
   system_suggestion?: string | null;
+  interested?: boolean | null;
+  form_status?: string | null;
 }
 
 // Filters are scoped to what a bank user typically wants to see. Officers
@@ -183,9 +186,12 @@ export default function BankApplicationsListPage() {
                 <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
                   <th className="px-5 py-3 font-medium">Applicant</th>
                   <th className="px-5 py-3 font-medium">Loan ID</th>
+                  <th className="px-5 py-3 font-medium">Type</th>
                   <th className="px-5 py-3 font-medium text-right">Amount</th>
-                  <th className="px-5 py-3 font-medium text-right">AI Score</th>
                   <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Interested</th>
+                  <th className="px-5 py-3 font-medium">Form</th>
+                  <th className="px-5 py-3 font-medium text-right">AI Score</th>
                   <th className="px-5 py-3 font-medium">Submitted</th>
                 </tr>
               </thead>
@@ -207,8 +213,32 @@ export default function BankApplicationsListPage() {
                       <div className="text-xs text-slate-500">{a.phone || ""}</div>
                     </td>
                     <td className="px-5 py-3 font-mono text-xs text-slate-500">{a.loan_id || "—"}</td>
+                    <td className="px-5 py-3 text-xs text-slate-600 dark:text-gray-300">
+                      {a.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : a.consumer_loan_type === 'personal' ? 'Personal' : '—'}
+                    </td>
                     <td className="px-5 py-3 text-right font-medium">
                       {fmtINR(a.requested_loan_amount ?? a.loan_amount_requested)}
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${STATUS_COLORS[a.status] || "bg-slate-100 text-slate-700"}`}>
+                        {a.status.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      {a.interested === true ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-green-100 text-green-700">Yes</span>
+                      ) : a.interested === false ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-rose-100 text-rose-700">No</span>
+                      ) : <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-5 py-3">
+                      {a.form_status === 'completed' ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-emerald-100 text-emerald-700">Submitted</span>
+                      ) : a.form_status === 'in_progress' ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-yellow-100 text-yellow-700">In Progress</span>
+                      ) : a.form_status === 'pending' ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-gray-100 text-gray-600">Pending</span>
+                      ) : <span className="text-slate-400">—</span>}
                     </td>
                     <td className="px-5 py-3 text-right">
                       {a.system_score != null ? (
@@ -218,11 +248,6 @@ export default function BankApplicationsListPage() {
                             : "bg-rose-100 text-rose-700"
                         }`}>{a.system_score}</span>
                       ) : <span className="text-slate-400">—</span>}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${STATUS_COLORS[a.status] || "bg-slate-100 text-slate-700"}`}>
-                        {a.status.replace(/_/g, " ")}
-                      </span>
                     </td>
                     <td className="px-5 py-3 text-xs text-slate-500">{fmtDate(a.submitted_at || a.created_at)}</td>
                   </tr>

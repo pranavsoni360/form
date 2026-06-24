@@ -81,6 +81,7 @@ export default function BatchPage() {
     if (!t || !u) { router.push('/bank/login'); return; }
     setToken(t);
     setBankId(u.bank_id || '');
+    const savedDefault = localStorage.getItem(`bank_default_phone_${u.bank_id || 'default'}`);
     fetch(`${API_URL}/api/ops/phone-pools`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
@@ -88,11 +89,17 @@ export default function BatchPage() {
         for (const pool of data.pools ?? []) {
           for (const n of pool.numbers ?? []) {
             if (!n.phone_number || n.status !== 'active') continue;
-            opts.push({ id: n.id, phone: n.phone_number,
-              provider: n.phone_number.startsWith('+1') ? 'Twilio US' : n.phone_number.startsWith('+91') ? 'Viva India' : 'Other' });
+            opts.push({ id: n.id, phone: n.phone_number, provider: pool.name || 'Unknown' });
           }
         }
-        setPhoneOptions(opts.sort((a, b) => a.phone.localeCompare(b.phone)));
+        const sorted = opts.sort((a, b) => a.phone.localeCompare(b.phone));
+        setPhoneOptions(sorted);
+        if (savedDefault && sorted.some(o => o.id === savedDefault)) {
+          setPhoneNumberId(savedDefault);
+        } else if (sorted.length > 0) {
+          setPhoneNumberId(sorted[0].id);
+          localStorage.setItem(`bank_default_phone_${u.bank_id || 'default'}`, sorted[0].id);
+        }
       }).catch(() => {});
   }, []);
 
@@ -310,7 +317,18 @@ export default function BatchPage() {
               </div>
             ))}
             <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>From Number (Caller ID)</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium" style={{ color: P.sub }}>From Number (Caller ID)</label>
+                {phoneNumberId && (
+                  <button
+                    title="Save as default"
+                    onClick={() => { localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, phoneNumberId); notify('Default number saved'); }}
+                    className="text-xs flex items-center gap-1 px-2 py-0.5 rounded"
+                    style={{ color: '#1e3a5f', background: P.accent, border: `1px solid ${P.border}` }}>
+                    ★ Set Default
+                  </button>
+                )}
+              </div>
               <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)} style={selStyle}>
                 <option value="">Auto — pool picks least-loaded</option>
                 {phoneOptions.map(p => <option key={p.id} value={p.id}>{p.phone} · {p.provider}</option>)}

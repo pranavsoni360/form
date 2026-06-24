@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getBankApplications, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate } from '@/lib/api';
-import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle } from 'lucide-react';
+import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle, Search } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 
@@ -41,6 +41,7 @@ export default function BankDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState('');
 
@@ -81,6 +82,15 @@ export default function BankDashboardPage() {
   };
 
   const filters = user?.role === 'bank_supervisor' ? SUPERVISOR_FILTERS : OFFICER_FILTERS;
+
+  const visibleApps = search.trim()
+    ? applications.filter(a => {
+        const q = search.trim().toLowerCase();
+        return (a.customer_name || '').toLowerCase().includes(q)
+          || (a.phone || '').includes(q)
+          || (a.loan_id || '').toLowerCase().includes(q);
+      })
+    : applications;
 
   const stats = {
     total:    applications.length,
@@ -176,6 +186,19 @@ export default function BankDashboardPage() {
           </div>
         </div>
 
+        {/* Search */}
+        <div className="relative mb-3">
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: P.muted }} />
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name, phone, or loan ID…"
+            className="w-full rounded-lg py-2 pl-10 pr-3 text-sm outline-none"
+            style={{ border: `1px solid ${P.border}`, background: P.card, color: P.text }}
+          />
+        </div>
+
         {/* View all link */}
         <div className="flex justify-end -mt-2 mb-2">
           <button onClick={() => router.push('/bank/applications')}
@@ -207,10 +230,12 @@ export default function BankDashboardPage() {
               Retry
             </button>
           </div>
-        ) : applications.length === 0 ? (
+        ) : visibleApps.length === 0 ? (
           <div className="rounded-xl p-12 text-center" style={{ background: P.card, border: `1px solid ${P.border}` }}>
             <FileText className="w-10 h-10 mx-auto mb-2" style={{ color: P.border }} />
-            <p className="text-sm" style={{ color: P.muted }}>No applications found</p>
+            <p className="text-sm" style={{ color: P.muted }}>
+              {search ? `No results for "${search}"` : 'No applications found'}
+            </p>
           </div>
         ) : (
           <div className="rounded-xl overflow-hidden" style={{ background: P.card, border: `1px solid ${P.border}` }}>
@@ -224,10 +249,10 @@ export default function BankDashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {applications.map((app, i) => (
+                {visibleApps.map((app, i) => (
                   <tr key={app.id} onClick={() => router.push(`/bank/applications/${app.id}`)}
                     className="cursor-pointer transition"
-                    style={{ borderBottom: i < applications.length - 1 ? `1px solid ${P.bg}` : 'none' }}
+                    style={{ borderBottom: i < visibleApps.length - 1 ? `1px solid ${P.bg}` : 'none' }}
                     onMouseEnter={e => (e.currentTarget.style.background = P.hov)}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                     <td className="px-4 py-3">

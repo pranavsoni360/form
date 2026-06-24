@@ -330,20 +330,36 @@ export default function BatchPage() {
                 </select>
               </div>
             ))}
-            <div className="flex-1 min-w-[200px]">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium" style={{ color: P.sub }}>From Number (Caller ID)</label>
-                {phoneNumberId && (
-                  <button onClick={() => { localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, phoneNumberId); notify('Default number saved'); }}
-                    className="text-xs" style={{ color: P.muted }}>★ save</button>
-                )}
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>From Number (Caller ID)</label>
+              <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${P.border}` }}>
+                {[{ id: '', phone: 'Auto', provider: 'pool picks least-loaded' }, ...phoneOptions].map((p, i) => {
+                  const isSelected = phoneNumberId === p.id;
+                  const isDefault = p.id !== '' && localStorage.getItem(`bank_default_phone_${bankId || 'default'}`) === p.id;
+                  return (
+                    <button key={p.id} onClick={() => {
+                      setPhoneNumberId(p.id);
+                      if (p.id) localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, p.id);
+                    }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition"
+                      style={{
+                        background: isSelected ? P.accent : i % 2 === 0 ? P.card : P.bg,
+                        borderTop: i > 0 ? `1px solid ${P.border}` : 'none',
+                      }}>
+                      <span className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
+                        style={{ border: `1.5px solid ${isSelected ? '#1e3a5f' : P.muted}`, background: isSelected ? '#1e3a5f' : 'transparent' }}>
+                        {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="text-xs font-medium block truncate" style={{ color: P.text }}>{p.phone}</span>
+                        {p.provider && <span className="text-[11px]" style={{ color: P.muted }}>{p.provider}</span>}
+                      </span>
+                      {isDefault && <span className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+                        style={{ background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }}>default</span>}
+                    </button>
+                  );
+                })}
               </div>
-              <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)} style={selStyle}>
-                <option value="">Auto — pool picks least-loaded</option>
-                {phoneOptions.map(p => (
-                  <option key={p.id} value={p.id}>{p.phone}{p.provider ? ` · ${p.provider}` : ''}</option>
-                ))}
-              </select>
             </div>
           </div>
           <p className="text-xs mt-3" style={{ color: P.border }}>

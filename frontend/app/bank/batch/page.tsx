@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_URL, formatDateTime } from '@/lib/api';
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
@@ -58,6 +58,8 @@ export default function BatchPage() {
   const [agentType, setAgentType]     = useState('loan_enquiry');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [phoneOptions, setPhoneOptions]   = useState<{ id: string; phone: string; provider: string; trunkId: string }[]>([]);
+  const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
+  const phoneDropdownRef = useRef<HTMLDivElement>(null);
   const [starting, setStarting]   = useState(false);
   const [stopping, setStopping]   = useState(false);
   const [retrying, setRetrying]   = useState(false);
@@ -234,6 +236,15 @@ export default function BatchPage() {
     finally { setResuming(false); }
   };
 
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (phoneDropdownRef.current && !phoneDropdownRef.current.contains(e.target as Node))
+        setPhoneDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   const toggleBatch = (batchId: string) => {
     if (expandedBatch === batchId) { setExpandedBatch(null); return; }
     setExpandedBatch(batchId);
@@ -330,36 +341,51 @@ export default function BatchPage() {
                 </select>
               </div>
             ))}
-            <div className="flex-1 min-w-[220px]">
+            <div className="flex-1 min-w-[200px] relative" ref={phoneDropdownRef}>
               <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>From Number (Caller ID)</label>
-              <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${P.border}` }}>
-                {[{ id: '', phone: 'Auto', provider: 'pool picks least-loaded' }, ...phoneOptions].map((p, i) => {
-                  const isSelected = phoneNumberId === p.id;
-                  const isDefault = p.id !== '' && localStorage.getItem(`bank_default_phone_${bankId || 'default'}`) === p.id;
-                  return (
-                    <button key={p.id} onClick={() => {
-                      setPhoneNumberId(p.id);
-                      if (p.id) localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, p.id);
-                    }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition"
-                      style={{
-                        background: isSelected ? P.accent : i % 2 === 0 ? P.card : P.bg,
-                        borderTop: i > 0 ? `1px solid ${P.border}` : 'none',
-                      }}>
-                      <span className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
-                        style={{ border: `1.5px solid ${isSelected ? '#1e3a5f' : P.muted}`, background: isSelected ? '#1e3a5f' : 'transparent' }}>
-                        {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span className="text-xs font-medium block truncate" style={{ color: P.text }}>{p.phone}</span>
-                        {p.provider && <span className="text-[11px]" style={{ color: P.muted }}>{p.provider}</span>}
-                      </span>
-                      {isDefault && <span className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
-                        style={{ background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }}>default</span>}
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Trigger — same height/style as the other selects */}
+              <button onClick={() => setPhoneDropdownOpen(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm text-left"
+                style={{ ...selStyle, cursor: 'pointer' }}>
+                <span className="truncate" style={{ color: P.text }}>
+                  {phoneNumberId
+                    ? (() => { const o = phoneOptions.find(p => p.id === phoneNumberId); return o ? `${o.phone}${o.provider ? ` · ${o.provider}` : ''}` : phoneNumberId; })()
+                    : 'Auto — pool picks least-loaded'}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 ml-1" style={{ color: P.muted, transform: phoneDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+              </button>
+              {/* Panel */}
+              {phoneDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 mt-1 rounded-lg overflow-hidden shadow-lg"
+                  style={{ border: `1px solid ${P.border}`, background: P.card, top: '100%' }}>
+                  {[{ id: '', phone: 'Auto', provider: 'pool picks least-loaded', trunkId: '' }, ...phoneOptions].map((p, i) => {
+                    const isSelected = phoneNumberId === p.id;
+                    const isDefault = p.id !== '' && localStorage.getItem(`bank_default_phone_${bankId || 'default'}`) === p.id;
+                    return (
+                      <button key={p.id} onClick={() => {
+                        setPhoneNumberId(p.id);
+                        if (p.id) localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, p.id);
+                        setPhoneDropdownOpen(false);
+                      }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition"
+                        style={{ background: isSelected ? P.accent : P.card, borderTop: i > 0 ? `1px solid ${P.bg}` : 'none' }}
+                        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = P.hov; }}
+                        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = P.card; }}>
+                        <span className="flex-shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center"
+                          style={{ border: `1.5px solid ${isSelected ? '#1e3a5f' : P.muted}`, background: isSelected ? '#1e3a5f' : 'transparent' }}>
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="text-xs font-medium block" style={{ color: P.text }}>{p.phone}</span>
+                          {p.provider && <span className="text-[11px]" style={{ color: P.muted }}>{p.provider}</span>}
+                        </span>
+                        {isDefault && <span className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+                          style={{ background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }}>default</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <p className="text-xs mt-3" style={{ color: P.border }}>

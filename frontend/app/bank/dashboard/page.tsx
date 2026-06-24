@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getBankApplications, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate } from '@/lib/api';
-import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload } from 'lucide-react';
+import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 
@@ -33,6 +33,7 @@ export default function BankDashboardPage() {
   const router = useRouter();
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
   const [filter, setFilter] = useState('all');
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState('');
@@ -52,6 +53,7 @@ export default function BankDashboardPage() {
 
   const fetchApplications = async () => {
     setLoading(true);
+    setFetchError('');
     try {
       const statusFilter = filter === 'all' ? undefined : filter;
       const data = await getBankApplications(token, statusFilter);
@@ -59,6 +61,8 @@ export default function BankDashboardPage() {
     } catch (error: any) {
       if (error.message?.includes('401') || error.message?.includes('Invalid')) {
         router.push('/bank/login');
+      } else {
+        setFetchError(error.message || 'Failed to load applications');
       }
     } finally { setLoading(false); }
   };
@@ -165,6 +169,13 @@ export default function BankDashboardPage() {
           <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3" />
             <p className="text-sm text-gray-500 dark:text-gray-400">Loading...</p>
+          </div>
+        ) : fetchError ? (
+          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">
+            <AlertTriangle className="w-10 h-10 text-red-400 mx-auto mb-2" />
+            <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">Failed to load applications</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{fetchError}</p>
+            <button onClick={fetchApplications} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">Retry</button>
           </div>
         ) : applications.length === 0 ? (
           <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-12 text-center">

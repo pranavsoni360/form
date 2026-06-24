@@ -88,7 +88,7 @@ export default function BatchPage() {
     const providerFromTrunk = (trunkId: string, phone: string) => {
       if (trunkId && TRUNK_PROVIDERS[trunkId]) return TRUNK_PROVIDERS[trunkId];
       if (phone.startsWith('+1')) return 'Twilio US';
-      return trunkId || 'Unknown';
+      return ''; // unknown — show number only, no suffix
     };
 
     const savedDefault = localStorage.getItem(`bank_default_phone_${u.bank_id || 'default'}`);
@@ -331,22 +331,23 @@ export default function BatchPage() {
               </div>
             ))}
             <div className="flex-1 min-w-[200px]">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium" style={{ color: P.sub }}>From Number (Caller ID)</label>
-                {phoneNumberId && (
-                  <button
-                    title="Save as default"
-                    onClick={() => { localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, phoneNumberId); notify('Default number saved'); }}
-                    className="text-xs flex items-center gap-1 px-2 py-0.5 rounded"
-                    style={{ color: '#1e3a5f', background: P.accent, border: `1px solid ${P.border}` }}>
-                    ★ Set Default
-                  </button>
-                )}
-              </div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: P.sub }}>From Number (Caller ID)</label>
               <select value={phoneNumberId} onChange={e => setPhoneNumberId(e.target.value)} style={selStyle}>
                 <option value="">Auto — pool picks least-loaded</option>
-                {phoneOptions.map(p => <option key={p.id} value={p.id}>{p.phone} · {p.provider}</option>)}
+                {phoneOptions.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.phone}{p.provider ? ` · ${p.provider}` : ''}
+                  </option>
+                ))}
               </select>
+              {phoneNumberId && (
+                <button
+                  onClick={() => { localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, phoneNumberId); notify('Default number saved'); }}
+                  className="mt-1.5 text-xs"
+                  style={{ color: P.muted }}>
+                  ★ Save as default
+                </button>
+              )}
             </div>
           </div>
           <p className="text-xs mt-3" style={{ color: P.border }}>

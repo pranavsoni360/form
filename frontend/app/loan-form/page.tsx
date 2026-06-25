@@ -187,7 +187,7 @@ export default function CustomerDashboard() {
                 Welcome back,
               </p>
               <h1 className="text-2xl font-bold text-white mb-5" style={{ fontFamily: 'var(--font-heading)' }}>
-                {app.customer_name?.split(' ')[0] || 'there'} 👋
+                {app.customer_name?.split(' ')[0] || 'there'}
               </h1>
 
               {/* Loan card */}

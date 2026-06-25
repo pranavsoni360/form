@@ -94,21 +94,16 @@ function OTPPage() {
 
       {/* ── LEFT PANEL ── */}
       <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
-        style={{ background: 'linear-gradient(160deg, #0A0F1C 0%, #1A1A2E 50%, #0F0A1E 100%)' }}>
-
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
-        <div className="absolute top-0 right-0 w-96 h-96 pointer-events-none"
-          style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)', transform: 'translate(20%, -20%)' }} />
+        style={{ background: '#0D2650' }}>
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
-            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', fontFamily: 'var(--font-heading)' }}>
-            vv
+          <div className="w-9 h-9 rounded flex items-center justify-center font-bold text-sm flex-shrink-0"
+            style={{ background: '#fff', color: '#0D2650', fontFamily: 'var(--font-heading)' }}>
+            F
           </div>
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>VirtualVaani</div>
+            <div className="text-sm font-bold text-white" style={{ fontFamily: 'var(--font-heading)' }}>Finix</div>
             <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Loan Application Portal</div>
           </div>
         </div>
@@ -117,7 +112,7 @@ function OTPPage() {
         <div className="relative z-10">
           <h1 className="text-[2.75rem] font-bold leading-[1.1] text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
             Apply for a loan<br />from the comfort<br />
-            <span style={{ color: '#F87171' }}>of your home.</span>
+            <span style={{ color: '#93C5FD' }}>of your home.</span>
           </h1>
           <p className="text-base leading-relaxed mb-10" style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-body)' }}>
             Quick digital application with Aadhaar and PAN verification. Get a decision in 24–48 hours.
@@ -136,22 +131,20 @@ function OTPPage() {
         </div>
 
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
-          © 2026 VirtualVaani · Powered by Virtual Galaxy Infotech
+          © 2026 Finix · Powered by Virtual Galaxy Infotech
         </p>
       </div>
 
       {/* ── RIGHT PANEL ── */}
       <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative" style={{ background: '#fff' }}>
-        <div className="absolute inset-0 pointer-events-none"
-          style={{ backgroundImage: 'radial-gradient(circle, #CBD5E1 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.4 }} />
 
         <div className="w-full max-w-sm relative z-10">
 
           {/* Mobile logo */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-xs"
-              style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>vv</div>
-            <span className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>VirtualVaani</span>
+            <div className="w-8 h-8 rounded flex items-center justify-center font-bold text-xs"
+              style={{ background: '#0D2650', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
+            <span className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Finix</span>
           </div>
 
           {/* Portal icon */}

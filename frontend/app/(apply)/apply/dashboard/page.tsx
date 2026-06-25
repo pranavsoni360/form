@@ -167,14 +167,14 @@ export default function CustomerDashboard() {
 
         {/* ── TOP SECTION ── */}
         <div className="px-5 pt-6 pb-8 relative overflow-hidden"
-          style={{ background: '#1C3C7A' }}>
+          style={{ background: '#0D2650' }}>
 
           {/* Nav */}
           <div className="flex items-center justify-between mb-8 relative z-10">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-white text-xs"
-                style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.12)', fontFamily: 'var(--font-heading)' }}>VV</div>
-              <span className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-body)' }}>VirtualVaani</span>
+              <div className="w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
+                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#0D2650' }}>F</div>
+              <span className="text-sm font-semibold" style={{ color: '#fff', fontFamily: 'var(--font-heading)' }}>Finix</span>
             </div>
             <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-full transition hover:opacity-80"
               style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)', border: '1px solid rgba(255,255,255,0.08)', fontFamily: 'var(--font-body)' }}>
@@ -193,16 +193,15 @@ export default function CustomerDashboard() {
               </h1>
 
               {/* Loan card */}
-              <div className="rounded-2xl p-4" style={{ background: '#153570', border: '1px solid rgba(255,255,255,0.18)' }}>
+              <div className="rounded-2xl p-4" style={{ background: '#0A1F45', border: '1px solid rgba(255,255,255,0.15)' }}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>Loan Application</p>
                     <p className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)', fontFamily: 'var(--font-mono-loan)' }}>{app.loan_id}</p>
                   </div>
                   {/* Status badge */}
-                  <div className="px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5"
-                    style={{ background: s?.color + '30', color: '#fff', border: `1px solid ${s?.color}50`, fontFamily: 'var(--font-body)' }}>
-                    <div className="w-1.5 h-1.5 rounded-full" style={{ background: s?.dot }} />
+                  <div className="px-2.5 py-1 rounded text-xs font-semibold"
+                    style={{ background: '#fff', color: s?.color, border: `1.5px solid ${s?.color}`, fontFamily: 'var(--font-body)' }}>
                     {s?.label}
                   </div>
                 </div>
@@ -262,7 +261,7 @@ export default function CustomerDashboard() {
                   onClick={() => !isRejected && router.push('/apply')}
                   className="w-full rounded-2xl p-4 text-left group transition-all hover:shadow-xl active:scale-[0.99]"
                   style={{
-                    background: isRejected ? '#F8F9FC' : '#1C3C7A',
+                    background: isRejected ? '#F8F9FC' : '#0D2650',
                     boxShadow: isRejected ? 'none' : '0 2px 8px rgba(0,0,0,0.2)',
                     border: isRejected ? '1px solid #E2E8F0' : '1px solid rgba(255,255,255,0.12)',
                     cursor: isRejected ? 'not-allowed' : 'pointer',

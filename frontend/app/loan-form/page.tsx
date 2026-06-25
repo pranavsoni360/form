@@ -53,7 +53,7 @@ export default function CustomerDashboard() {
     <div className="min-h-screen flex items-center justify-center" style={{ background: '#EEF2F9' }}>
       <div className="flex flex-col items-center gap-3">
         <div className="w-12 h-12 rounded flex items-center justify-center font-bold text-lg"
-          style={{ background: '#0D2650', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
+          style={{ background: '#071A38', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
         <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#2563EB' }} />
       </div>
     </div>
@@ -165,13 +165,13 @@ export default function CustomerDashboard() {
 
         {/* ── TOP SECTION ── */}
         <div className="px-5 pt-6 pb-8 relative overflow-hidden"
-          style={{ background: '#0D2650' }}>
+          style={{ background: '#071A38' }}>
 
           {/* Nav */}
           <div className="flex items-center justify-between mb-8 relative z-10">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
-                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#0D2650' }}>F</div>
+                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#071A38' }}>F</div>
               <span className="text-sm font-semibold" style={{ color: '#fff', fontFamily: 'var(--font-heading)' }}>Finix</span>
             </div>
             <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-full transition hover:opacity-80"
@@ -191,7 +191,7 @@ export default function CustomerDashboard() {
               </h1>
 
               {/* Loan card */}
-              <div className="rounded-2xl p-4" style={{ background: '#0A1F45', border: '1px solid rgba(255,255,255,0.15)' }}>
+              <div className="rounded-2xl p-4" style={{ background: '#061530', border: '1px solid rgba(255,255,255,0.15)' }}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>Loan Application</p>
@@ -259,7 +259,7 @@ export default function CustomerDashboard() {
                   onClick={() => !isRejected && router.push('/loan-form/application')}
                   className="w-full rounded-2xl p-4 text-left group transition-all hover:shadow-xl active:scale-[0.99]"
                   style={{
-                    background: isRejected ? '#F8F9FC' : '#0D2650',
+                    background: isRejected ? '#F8F9FC' : '#071A38',
                     boxShadow: isRejected ? 'none' : '0 2px 8px rgba(0,0,0,0.2)',
                     border: isRejected ? '1px solid #E2E8F0' : '1px solid rgba(255,255,255,0.12)',
                     cursor: isRejected ? 'not-allowed' : 'pointer',

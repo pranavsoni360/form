@@ -94,12 +94,12 @@ function OTPPage() {
 
       {/* ── LEFT PANEL ── */}
       <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
-        style={{ background: '#0D2650' }}>
+        style={{ background: '#071A38' }}>
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
           <div className="w-9 h-9 rounded flex items-center justify-center font-bold text-sm flex-shrink-0"
-            style={{ background: '#fff', color: '#0D2650', fontFamily: 'var(--font-heading)' }}>
+            style={{ background: '#fff', color: '#071A38', fontFamily: 'var(--font-heading)' }}>
             F
           </div>
           <div>
@@ -143,7 +143,7 @@ function OTPPage() {
           {/* Mobile logo */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
             <div className="w-8 h-8 rounded flex items-center justify-center font-bold text-xs"
-              style={{ background: '#0D2650', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
+              style={{ background: '#071A38', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
             <span className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Finix</span>
           </div>
 

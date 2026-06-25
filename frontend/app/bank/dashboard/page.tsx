@@ -258,8 +258,8 @@ export default function BankDashboardPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        {app.pan_verified     && <CheckCircle2 title="PAN Verified"    className="w-3.5 h-3.5 text-emerald-500" />}
-                        {app.aadhaar_verified && <CheckCircle2 title="Aadhaar Verified" className="w-3.5 h-3.5 text-emerald-500" />}
+                        {app.pan_verified     && <span title="PAN Verified"><CheckCircle2    className="w-3.5 h-3.5 text-emerald-500" /></span>}
+                        {app.aadhaar_verified && <span title="Aadhaar Verified"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /></span>}
                         {!app.pan_verified && !app.aadhaar_verified && <span className="text-xs text-slate-400">—</span>}
                       </div>
                     </td>

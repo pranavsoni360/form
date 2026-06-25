@@ -50,10 +50,10 @@ export default function CustomerDashboard() {
 
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F0F4FF' }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#EEF2F9' }}>
       <div className="flex flex-col items-center gap-3">
-        <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg"
-          style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>VV</div>
+        <div className="w-12 h-12 rounded flex items-center justify-center font-bold text-lg"
+          style={{ background: '#0D2650', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
         <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#2563EB' }} />
       </div>
     </div>
@@ -161,21 +161,18 @@ export default function CustomerDashboard() {
   return (
     <>
       <StatusDrawer />
-      <div className="min-h-screen" style={{ background: '#F0F4FF' }}>
+      <div className="min-h-screen" style={{ background: '#EEF2F9' }}>
 
         {/* ── TOP SECTION ── */}
         <div className="px-5 pt-6 pb-8 relative overflow-hidden"
-          style={{ background: 'linear-gradient(150deg, #0F172A 0%, #1E3A5F 60%, #1A1A2E 100%)' }}>
-          {/* Ambient glow */}
-          <div className="absolute inset-0 pointer-events-none"
-            style={{ background: 'radial-gradient(ellipse 60% 50% at 80% 0%, rgba(37,99,235,0.2) 0%, transparent 70%)' }} />
+          style={{ background: '#0D2650' }}>
 
           {/* Nav */}
           <div className="flex items-center justify-between mb-8 relative z-10">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-white text-xs"
-                style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.12)', fontFamily: 'var(--font-heading)' }}>VV</div>
-              <span className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-body)' }}>VirtualVaani</span>
+              <div className="w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
+                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#0D2650' }}>F</div>
+              <span className="text-sm font-semibold" style={{ color: '#fff', fontFamily: 'var(--font-heading)' }}>Finix</span>
             </div>
             <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-full transition hover:opacity-80"
               style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)', border: '1px solid rgba(255,255,255,0.08)', fontFamily: 'var(--font-body)' }}>
@@ -194,16 +191,15 @@ export default function CustomerDashboard() {
               </h1>
 
               {/* Loan card */}
-              <div className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)' }}>
+              <div className="rounded-2xl p-4" style={{ background: '#0A1F45', border: '1px solid rgba(255,255,255,0.15)' }}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>Loan Application</p>
                     <p className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)', fontFamily: 'var(--font-mono-loan)' }}>{app.loan_id}</p>
                   </div>
                   {/* Status badge */}
-                  <div className="px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5"
-                    style={{ background: s?.color + '30', color: '#fff', border: `1px solid ${s?.color}50`, fontFamily: 'var(--font-body)' }}>
-                    <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: s?.dot }} />
+                  <div className="px-2.5 py-1 rounded text-xs font-semibold"
+                    style={{ background: '#fff', color: s?.color, border: `1.5px solid ${s?.color}`, fontFamily: 'var(--font-body)' }}>
                     {s?.label}
                   </div>
                 </div>
@@ -211,7 +207,7 @@ export default function CustomerDashboard() {
                 {/* Progress bar */}
                 <div className="h-1.5 rounded-full overflow-hidden mb-1.5" style={{ background: 'rgba(255,255,255,0.1)' }}>
                   <div className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${isRejected ? 100 : pct}%`, background: isRejected ? '#DC2626' : 'linear-gradient(90deg, #60A5FA, #34D399)' }} />
+                    style={{ width: `${isRejected ? 100 : pct}%`, background: isRejected ? '#DC2626' : '#60A5FA' }} />
                 </div>
                 <div className="flex justify-between">
                   <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-body)' }}>Applied</p>
@@ -263,9 +259,9 @@ export default function CustomerDashboard() {
                   onClick={() => !isRejected && router.push('/loan-form/application')}
                   className="w-full rounded-2xl p-4 text-left group transition-all hover:shadow-xl active:scale-[0.99]"
                   style={{
-                    background: isRejected ? '#F8F9FC' : 'linear-gradient(135deg, #1E3A5F 0%, #2563EB 100%)',
-                    boxShadow: isRejected ? 'none' : '0 8px 24px rgba(37,99,235,0.3)',
-                    border: isRejected ? '1px solid #E2E8F0' : 'none',
+                    background: isRejected ? '#F8F9FC' : '#0D2650',
+                    boxShadow: isRejected ? 'none' : '0 2px 8px rgba(0,0,0,0.2)',
+                    border: isRejected ? '1px solid #E2E8F0' : '1px solid rgba(255,255,255,0.12)',
                     cursor: isRejected ? 'not-allowed' : 'pointer',
                     opacity: isRejected ? 0.6 : 1,
                   }}>

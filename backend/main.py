@@ -847,6 +847,13 @@ async def shutdown():
 # Mount uploads directory
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
+# Mount recordings directory (LiveKit egress writes call audio .ogg files here).
+# Served under /api so nginx's existing /api -> backend route reaches it; the
+# backend runs as root so it can read the egress dir under /root (nginx cannot).
+# check_dir=False so non-server environments (no such dir) still start cleanly.
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "/root/livekit-sip-server/recordings")
+app.mount("/api/recordings", StaticFiles(directory=RECORDINGS_DIR, check_dir=False), name="recordings")
+
 # ============================================
 # PYDANTIC MODELS
 # ============================================

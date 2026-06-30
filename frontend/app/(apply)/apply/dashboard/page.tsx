@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_URL } from '@/lib/api';
+import { API_URL } from '@/lib/api/index'
+import { SESSION_KEYS } from '@/lib/utils/constants';
 import { Loader2, X, ChevronRight, FileText, Edit3, CheckCircle, Clock, AlertCircle, TrendingUp, Phone } from 'lucide-react';
 
 // ── Status configuration ────────────────────────────────────────────────────
@@ -30,7 +31,7 @@ export default function CustomerDashboard() {
   const [drawer, setDrawer] = useState(false);
 
   useEffect(() => {
-    const s = sessionStorage.getItem('loan_session');
+    const s = sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
     if (!s) { router.push('/'); return; }
     fetch(`${API_URL}/api/get-application?session_token=${s}`)
       .then(r => { if (r.status === 401) { router.push('/'); return null; } return r.json(); })
@@ -45,15 +46,16 @@ export default function CustomerDashboard() {
   const isDisbursed = app?.status === 'disbursed';
   const stepIdx = s ? Math.max(0, STEP_MAP.indexOf(s.step)) : 0;
   const pct = isRejected ? 100 : Math.round((stepIdx / (STEPS.length - 1)) * 100);
+  const formProgress = Math.round(((app?.highest_step || 1) / 6) * 100);
 
-  const signOut = () => { sessionStorage.removeItem('loan_session'); router.push('/'); };
+  const signOut = () => { sessionStorage.removeItem(SESSION_KEYS.LOAN_SESSION); router.push('/'); };
 
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: '#EEF2F9' }}>
       <div className="flex flex-col items-center gap-3">
-        <div className="w-12 h-12 rounded flex items-center justify-center font-bold text-lg"
-          style={{ background: '#071A38', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
+        <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg"
+          style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>VV</div>
         <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#2563EB' }} />
       </div>
     </div>
@@ -96,11 +98,11 @@ export default function CustomerDashboard() {
             {/* Progress bar */}
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: s?.color + '25' }}>
               <div className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${isRejected ? 100 : pct}%`, background: isRejected ? '#DC2626' : s?.color }} />
+                style={{ width: `${formProgress}%`, background: isRejected ? '#DC2626' : s?.color }} />
             </div>
             <div className="flex justify-between mt-1.5">
               <span className="text-[10px]" style={{ color: s?.color + '99', fontFamily: 'var(--font-body)' }}>Applied</span>
-              <span className="text-[10px] font-semibold" style={{ color: s?.color, fontFamily: 'var(--font-body)' }}>{pct}% complete</span>
+              <span className="text-[10px] font-semibold" style={{ color: s?.color, fontFamily: 'var(--font-body)' }}>{formProgress}% complete</span>
             </div>
           </div>
 
@@ -165,13 +167,13 @@ export default function CustomerDashboard() {
 
         {/* ── TOP SECTION ── */}
         <div className="px-5 pt-6 pb-8 relative overflow-hidden"
-          style={{ background: '#071A38' }}>
+          style={{ background: '#0D2650' }}>
 
           {/* Nav */}
           <div className="flex items-center justify-between mb-8 relative z-10">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
-                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#071A38' }}>F</div>
+                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#0D2650' }}>F</div>
               <span className="text-sm font-semibold" style={{ color: '#fff', fontFamily: 'var(--font-heading)' }}>Finix</span>
             </div>
             <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-full transition hover:opacity-80"
@@ -187,11 +189,11 @@ export default function CustomerDashboard() {
                 Welcome back,
               </p>
               <h1 className="text-2xl font-bold text-white mb-5" style={{ fontFamily: 'var(--font-heading)' }}>
-                {app.customer_name?.split(' ')[0] || 'there'}
+                {app.customer_name?.split(' ')[0] || 'there'} 👋
               </h1>
 
               {/* Loan card */}
-              <div className="rounded-2xl p-4" style={{ background: '#061530', border: '1px solid rgba(255,255,255,0.15)' }}>
+              <div className="rounded-2xl p-4" style={{ background: '#0A1F45', border: '1px solid rgba(255,255,255,0.15)' }}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>Loan Application</p>
@@ -207,7 +209,7 @@ export default function CustomerDashboard() {
                 {/* Progress bar */}
                 <div className="h-1.5 rounded-full overflow-hidden mb-1.5" style={{ background: 'rgba(255,255,255,0.1)' }}>
                   <div className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${isRejected ? 100 : pct}%`, background: isRejected ? '#DC2626' : '#60A5FA' }} />
+                    style={{ width: `${formProgress}%`, background: isRejected ? '#DC2626' : '#60A5FA' }} />
                 </div>
                 <div className="flex justify-between">
                   <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-body)' }}>Applied</p>
@@ -256,10 +258,10 @@ export default function CustomerDashboard() {
 
                 {/* ── Action 2: Form ── */}
                 <button
-                  onClick={() => !isRejected && router.push('/loan-form/application')}
+                  onClick={() => !isRejected && router.push('/apply')}
                   className="w-full rounded-2xl p-4 text-left group transition-all hover:shadow-xl active:scale-[0.99]"
                   style={{
-                    background: isRejected ? '#F8F9FC' : '#071A38',
+                    background: isRejected ? '#F8F9FC' : '#0D2650',
                     boxShadow: isRejected ? 'none' : '0 2px 8px rgba(0,0,0,0.2)',
                     border: isRejected ? '1px solid #E2E8F0' : '1px solid rgba(255,255,255,0.12)',
                     cursor: isRejected ? 'not-allowed' : 'pointer',

@@ -171,7 +171,8 @@ async def phone_pools():
             """SELECT
                  pp.id AS pool_id, pp.name AS pool_name, pp.bank_id, pp.capacity,
                  pp.cooldown_seconds_min, pp.cooldown_seconds_max,
-                 pn.id AS pn_id, pn.phone_number, pn.active_calls, pn.total_calls,
+                 pn.id AS pn_id, pn.phone_number, pn.livekit_trunk_id,
+                 pn.active_calls, pn.total_calls,
                  pn.cooldown_until, pn.status, pn.updated_at
                FROM phone_pools pp
                LEFT JOIN phone_numbers pn ON pn.pool_id = pp.id
@@ -200,6 +201,7 @@ async def phone_pools():
             by_pool[pid]["numbers"].append({
                 "id": str(r["pn_id"]),
                 "phone_number": r["phone_number"],
+                "livekit_trunk_id": r["livekit_trunk_id"],
                 "active_calls": int(r["active_calls"] or 0),
                 "total_calls": int(r["total_calls"] or 0),
                 "cooldown_until": r["cooldown_until"].isoformat() if r["cooldown_until"] else None,

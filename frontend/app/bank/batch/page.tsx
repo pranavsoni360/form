@@ -1,247 +1,498 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_URL, formatDateTime } from '@/lib/api';
-import { getAccessToken } from '@/lib/auth';
-import { ArrowLeft, Upload, Play, Square, RefreshCw, FileSpreadsheet, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { getAccessToken, getCurrentUser } from '@/lib/auth';
+import {
+  ArrowLeft, Upload, Play, Square, RefreshCw, FileSpreadsheet,
+  Loader2, AlertTriangle, CheckCircle2, RotateCcw, Wrench,
+  ChevronDown, ChevronUp, Phone, User, Clock,
+} from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useEventStream } from '@/lib/realtime/useEventStream';
 import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
 
+function StatusBadge({ status }: { status: string }) {
+  const s = (status || '').toLowerCase();
+  let cls = 'px-2 py-0.5 rounded text-xs font-medium ';
+  if      (s === 'completed')                                      cls += 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300';
+  else if (s === 'running' || s === 'in_progress' || s === 'calling') cls += 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
+  else if (s === 'failed')                                         cls += 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300';
+  else if (s === 'paused' || s === 'scheduled')                    cls += 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
+  else                                                             cls += 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+  return <span className={cls}>{status || 'pending'}</span>;
+}
+
+const selectCls = "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition";
+
+const btnSecondary = "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-slate-700 bg-gradient-to-b from-white to-slate-50 dark:from-slate-700 dark:to-slate-800 text-slate-700 dark:text-slate-200 hover:from-slate-50 hover:to-slate-100 dark:hover:from-slate-600 dark:hover:to-slate-700 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed";
+
 export default function BatchPage() {
   const router = useRouter();
-  const [batches, setBatches] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [batchStatus, setBatchStatus] = useState<any>(null);
-  const [token, setToken] = useState('');
-  const [language, setLanguage] = useState('hindi');
-  const [gender, setGender] = useState('male');
-  const [agentType, setAgentType] = useState<string>('loan_enquiry');
 
-  // SSE subscription: every batch_progress event triggers a debounced refetch
-  // of /api/agent/batch-status. Replaces the previous 5s polling loop
-  // (~17K useless requests/day per open tab → ~0 idle requests).
+  const [token, setToken]   = useState('');
+  const [bankId, setBankId] = useState('');
+  const [batches, setBatches]         = useState<any[]>([]);
+  const [batchStatus, setBatchStatus] = useState<any>(null);
+  const [loading, setLoading]         = useState(true);
+  const [uploading, setUploading]     = useState(false);
+  const [language, setLanguage]       = useState('hindi');
+  const [gender, setGender]           = useState('male');
+  const [agentType, setAgentType]     = useState('loan_enquiry');
+  const [phoneNumberId, setPhoneNumberId] = useState('');
+  const [phoneOptions, setPhoneOptions]   = useState<{ id: string; phone: string; provider: string; trunkId: string }[]>([]);
+  const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
+  const phoneDropdownRef = useRef<HTMLDivElement>(null);
+  const [starting, setStarting]   = useState(false);
+  const [stopping, setStopping]   = useState(false);
+  const [retrying, setRetrying]   = useState(false);
+  const [cleaning, setCleaning]   = useState(false);
+  const [resuming, setResuming]   = useState(false);
+  const [notice, setNotice] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsAgo, setSecondsAgo]   = useState(0);
+  const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
+  const [batchCalls, setBatchCalls]       = useState<Record<string, any[]>>({});
+  const [loadingCalls, setLoadingCalls]   = useState<string | null>(null);
+
   const liveBatches = useEventStream<BatchesState>('batches', batchesReducer, initialBatchesState);
+
+  const notify = useCallback((msg: string, ok = true) => {
+    setNotice({ msg, ok });
+    setTimeout(() => setNotice(null), 4000);
+  }, []);
 
   useEffect(() => {
     const t = getAccessToken('bank');
-    if (!t) { router.push('/bank/login'); return; }
+    const u = getCurrentUser('bank') as any;
+    if (!t || !u) { router.push('/bank/login'); return; }
     setToken(t);
+    setBankId(u.bank_id || '');
+
+    const TRUNK_PROVIDERS: Record<string, string> = {
+      'ST_pTYcg7Az9q8R': 'Vobiz',
+      'ST_7AXVHfHRbCwP': 'Viva India',
+    };
+    const providerFromTrunk = (trunkId: string, phone: string) => {
+      if (trunkId && TRUNK_PROVIDERS[trunkId]) return TRUNK_PROVIDERS[trunkId];
+      if (phone.startsWith('+1')) return 'Twilio US';
+      return '';
+    };
+
+    const savedDefault = localStorage.getItem(`bank_default_phone_${u.bank_id || 'default'}`);
+    fetch(`${API_URL}/api/ops/phone-pools`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        const opts: { id: string; phone: string; provider: string; trunkId: string }[] = [];
+        for (const pool of data.pools ?? []) {
+          for (const n of pool.numbers ?? []) {
+            if (!n.phone_number || n.status !== 'active') continue;
+            opts.push({ id: n.id, phone: n.phone_number, trunkId: n.livekit_trunk_id || '',
+              provider: providerFromTrunk(n.livekit_trunk_id || '', n.phone_number) });
+          }
+        }
+        const sorted = opts.sort((a, b) => a.phone.localeCompare(b.phone));
+        setPhoneOptions(sorted);
+        if (savedDefault && sorted.some(o => o.id === savedDefault)) setPhoneNumberId(savedDefault);
+        else if (sorted.length > 0) {
+          setPhoneNumberId(sorted[0].id);
+          localStorage.setItem(`bank_default_phone_${u.bank_id || 'default'}`, sorted[0].id);
+        }
+      }).catch(() => {});
   }, []);
 
-  useEffect(() => { if (token) fetchBatches(); }, [token]);
-
-  const fetchBatches = async () => {
+  const fetchBatches = useCallback(async (tok = token) => {
+    if (!tok) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/agent/uploads`, { headers: { Authorization: `Bearer ${token}` }, credentials: 'include' });
+      const res  = await fetch(`${API_URL}/api/agent/uploads`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
       const data = await res.json();
       setBatches(data.uploads || []);
     } catch { } finally { setLoading(false); }
-  };
-
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/agent/batch-status`, { headers: { Authorization: `Bearer ${token}` }, credentials: 'include' });
-      setBatchStatus(await res.json());
-    } catch { }
-  };
-
-  // Initial fetch on login.
-  useEffect(() => {
-    if (!token) return;
-    fetchStatus();
   }, [token]);
 
-  // Live refresh: any batch_progress event over SSE → debounced refetch.
-  // The reducer's `byId` reference changes on each event, so the effect
-  // re-runs only when something genuinely moved.
-  useEffect(() => {
-    if (!token) return;
-    // Skip the very first run while reducer state is still empty.
-    if (Object.keys(liveBatches.byId).length === 0) return;
-    const timer = setTimeout(fetchStatus, 500);
-    return () => clearTimeout(timer);
-  }, [token, liveBatches.byId]);
+  const fetchStatus = useCallback(async (tok = token) => {
+    if (!tok) return;
+    try {
+      const res = await fetch(`${API_URL}/api/agent/batch-status`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
+      setBatchStatus(await res.json());
+      setLastUpdated(new Date());
+    } catch { }
+  }, [token]);
 
-  // Window focus → refetch (user came back to tab after time away).
+  const fetchBatchCalls = async (batchId: string) => {
+    setLoadingCalls(batchId);
+    try {
+      const res  = await fetch(`${API_URL}/api/agent/upload/${batchId}`, { headers: { Authorization: `Bearer ${token}` }, credentials: 'include' });
+      const data = await res.json();
+      setBatchCalls(prev => ({ ...prev, [batchId]: data.calls || [] }));
+    } catch { notify('Failed to load call details', false); }
+    finally { setLoadingCalls(null); }
+  };
+
+  const refresh = useCallback(() => { fetchBatches(); fetchStatus(); }, [fetchBatches, fetchStatus]);
+
+  useEffect(() => { if (token) { fetchBatches(token); fetchStatus(token); } }, [token]);
+  useEffect(() => {
+    if (!token || Object.keys(liveBatches.byId).length === 0) return;
+    const t = setTimeout(() => fetchStatus(token), 500);
+    return () => clearTimeout(t);
+  }, [token, liveBatches.byId]);
   useEffect(() => {
     if (!token) return;
-    const onFocus = () => fetchStatus();
+    const onFocus = () => fetchStatus(token);
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [token]);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (phoneDropdownRef.current && !phoneDropdownRef.current.contains(e.target as Node))
+        setPhoneDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Auto-poll every 5s while calls are active or pending
+  useEffect(() => {
+    if (!token) return;
+    const isLive = (batchStatus?.active_calls ?? 0) > 0 || (batchStatus?.pending ?? 0) > 0;
+    if (!isLive) return;
+    const id = setInterval(() => fetchStatus(token), 5000);
+    return () => clearInterval(id);
+  }, [token, batchStatus?.active_calls, batchStatus?.pending, fetchStatus]);
+
+  // Tick "X seconds ago" counter
+  useEffect(() => {
+    if (!lastUpdated) return;
+    const id = setInterval(() => setSecondsAgo(Math.floor((Date.now() - lastUpdated.getTime()) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [lastUpdated]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const qs = `language=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}&agent_type=${encodeURIComponent(agentType)}`;
-      const res = await fetch(`${API_URL}/api/agent/upload-excel?${qs}`, {
+      const params = new URLSearchParams({
+        language, gender, agent_type: agentType,
+        ...(bankId        ? { bank_id: bankId }                : {}),
+        ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
+      });
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
         method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Upload failed'); }
-      await fetchBatches();
-    } catch (err: any) { alert(err.message); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Upload failed (${res.status})`); }
+      notify(`Uploaded ${(await res.json()).inserted_count ?? '?'} records`);
+      refresh();
+    } catch (err: any) { notify(err.message || 'Upload failed', false); }
     finally { setUploading(false); }
+  };
+
+  const apiPost = async (path: string) => {
+    const res = await fetch(`${API_URL}${path}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, credentials: 'include',
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Request failed (${res.status})`); }
+    return res.json();
   };
 
   const triggerBatch = async () => {
     if (!confirm('Start batch calling? This will initiate calls to all pending customers.')) return;
-    try {
-      await fetch(`${API_URL}/api/agent/batch-call`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, credentials: 'include' });
-      fetchStatus();
-    } catch { }
+    setStarting(true);
+    try { const d = await apiPost(`/api/agent/batch-call${phoneNumberId ? `?phone_number_id=${encodeURIComponent(phoneNumberId)}` : ''}`); notify(d.message || 'Batch started'); refresh(); }
+    catch (err: any) { notify(err.message, false); } finally { setStarting(false); }
   };
-
   const emergencyStop = async () => {
     if (!confirm('EMERGENCY STOP: This will terminate ALL active calls immediately.')) return;
-    try {
-      await fetch(`${API_URL}/api/agent/emergency-stop`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, credentials: 'include' });
-      fetchStatus();
-    } catch { }
+    setStopping(true);
+    try { await apiPost('/api/agent/emergency-stop'); notify('Emergency stop sent'); refresh(); }
+    catch (err: any) { notify(err.message, false); } finally { setStopping(false); }
+  };
+  const retryFailed   = async () => { setRetrying(true);  try { notify((await apiPost('/api/agent/batch-retry')).message   || 'Retrying'); refresh(); } catch (e: any) { notify(e.message, false); } finally { setRetrying(false); } };
+  const cleanupStuck  = async () => { setCleaning(true);  try { notify((await apiPost('/api/agent/stale-cleanup')).message  || 'Cleaned'); refresh(); }  catch (e: any) { notify(e.message, false); } finally { setCleaning(false); } };
+  const resumeCalling = async () => { setResuming(true);  try { notify((await apiPost('/api/agent/resume-calling')).message || 'Resumed'); refresh(); }  catch (e: any) { notify(e.message, false); } finally { setResuming(false); } };
+
+  const toggleBatch = (batchId: string) => {
+    if (expandedBatch === batchId) { setExpandedBatch(null); return; }
+    setExpandedBatch(batchId);
+    if (!batchCalls[batchId]) fetchBatchCalls(batchId);
   };
 
+  const isLive = (batchStatus?.active_calls ?? 0) > 0 || (batchStatus?.pending ?? 0) > 0;
+
+  const statItems = [
+    { label: 'Active Now',  value: batchStatus?.active_calls ?? 0, accent: 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500' },
+    { label: 'Pending',     value: batchStatus?.pending      ?? 0, accent: 'bg-amber-50 dark:bg-amber-950/30 border-l-4 border-l-amber-500' },
+    { label: 'Completed',   value: batchStatus?.completed    ?? 0, accent: 'bg-emerald-50 dark:bg-emerald-950/30 border-l-4 border-l-emerald-500' },
+    { label: 'Failed',      value: batchStatus?.failed       ?? 0, accent: 'bg-red-50 dark:bg-red-950/30 border-l-4 border-l-red-500' },
+    { label: 'Total',       value: batchStatus?.total        ?? 0, accent: 'bg-slate-50 dark:bg-slate-800/50 border-l-4 border-l-slate-400' },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
-      <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 relative">
+
+      {/* Ambient background glow */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden -z-10">
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[80rem] h-[36rem] rounded-full bg-blue-400/[0.04] dark:bg-blue-400/[0.06] blur-3xl" />
+      </div>
+
+      {/* Header */}
+      <div className="sticky top-0 z-30 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/bank/dashboard')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-              <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            <button onClick={() => router.push('/bank/dashboard')}
+              className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+              <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Batch Calling</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Upload Excel, trigger calls, monitor progress</p>
+              <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100">Batch Calling</h1>
+              <p className="text-xs text-slate-400 dark:text-slate-500">Upload Excel, trigger calls, monitor progress</p>
             </div>
           </div>
           <ThemeToggle />
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        {/* Live Status */}
-        {batchStatus && (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-5">
-            <h2 className="font-semibold text-gray-900 dark:text-white mb-3">Live Status</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-blue-600">{batchStatus.active_calls || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Active Calls</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-green-600">{batchStatus.completed || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Completed</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-yellow-600">{batchStatus.pending || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Pending</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-red-600">{batchStatus.failed || 0}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Failed</p>
-              </div>
-            </div>
+      <div className="max-w-5xl mx-auto px-6 py-6 space-y-4">
+
+        {/* Notification */}
+        {notice && (
+          <div className={`flex items-center gap-2.5 rounded-lg px-4 py-3 text-sm border ${notice.ok
+            ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'}`}>
+            {notice.ok ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
+            {notice.msg}
           </div>
         )}
 
-        {/* Agent voice config — applied to every record in the next upload */}
-        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm p-5 flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">🌐 Agent Language</label>
-            <select
-              value={language}
-              onChange={e => setLanguage(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
-            >
-              <option value="hindi">🇮🇳 Hindi</option>
-              <option value="marathi">🏛️ Marathi</option>
-              <option value="english">🌍 English</option>
-            </select>
+        {/* Live Status */}
+        {batchStatus && (
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                {isLive && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                  </span>
+                )}
+                <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                  {isLive ? 'Calling — live' : batchStatus?.pending === 0 && batchStatus?.active_calls === 0 ? 'Idle' : 'Live Status'}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {lastUpdated && (
+                  <span className="text-xs text-slate-400 dark:text-slate-500">
+                    Updated {secondsAgo}s ago
+                  </span>
+                )}
+                <button onClick={() => fetchStatus(token)}
+                  className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3" /> Refresh
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {statItems.map(({ label, value, accent }) => (
+                <div key={label} className={`rounded-lg px-4 py-3 border border-slate-200 dark:border-slate-800 ${accent}`}>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{label}</p>
+                </div>
+              ))}
+            </div>
+            {batchStatus?.message && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">{batchStatus.message}</p>
+            )}
           </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">👤 Agent Voice</label>
-            <select
-              value={gender}
-              onChange={e => setGender(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
-            >
-              <option value="male">Male (Rajesh)</option>
-              <option value="female">Female (Diya)</option>
-            </select>
+        )}
+
+        {/* Voice Config */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
+          <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-4">Voice Config & Upload</p>
+          <div className="flex flex-wrap gap-4 items-end">
+            {[
+              { label: 'Language', val: language, set: setLanguage, opts: [['hindi','Hindi'],['marathi','Marathi'],['english','English']] },
+              { label: 'Voice',    val: gender,   set: setGender,   opts: [['male','Male (Rajesh)'],['female','Female (Diya)']] },
+              { label: 'Agent Type', val: agentType, set: setAgentType, opts: [['loan_enquiry','Loan Enquiry — Pusad Urban'],['account_opening','Account Opening — Union Bank']] },
+            ].map(({ label, val, set, opts }) => (
+              <div key={label} className="flex-1 min-w-[140px]">
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">{label}</label>
+                <select value={val} onChange={e => set(e.target.value)} className={selectCls}>
+                  {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+            ))}
+
+            {/* Phone custom dropdown */}
+            <div className="flex-1 min-w-[220px] relative" ref={phoneDropdownRef}>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">From Number (Caller ID)</label>
+              <button onClick={() => setPhoneDropdownOpen(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-left transition focus:outline-none focus:ring-2 focus:ring-blue-500/30">
+                <span className="truncate text-slate-800 dark:text-slate-200">
+                  {phoneNumberId
+                    ? (() => { const o = phoneOptions.find(p => p.id === phoneNumberId); return o ? `${o.phone}${o.provider ? ` · ${o.provider}` : ''}` : phoneNumberId; })()
+                    : 'Auto — pool picks least-loaded'}
+                </span>
+                <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 ml-1 text-slate-400 transition-transform ${phoneDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {phoneDropdownOpen && (
+                <div className="absolute z-50 left-0 right-0 mt-1 rounded-xl overflow-hidden shadow-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700" style={{ top: '100%' }}>
+                  {[{ id: '', phone: 'Auto', provider: 'pool picks least-loaded', trunkId: '' }, ...phoneOptions].map((p, i) => {
+                    const isSelected = phoneNumberId === p.id;
+                    const isDefault  = p.id !== '' && localStorage.getItem(`bank_default_phone_${bankId || 'default'}`) === p.id;
+                    return (
+                      <button key={p.id} onClick={() => {
+                        setPhoneNumberId(p.id);
+                        if (p.id) localStorage.setItem(`bank_default_phone_${bankId || 'default'}`, p.id);
+                        setPhoneDropdownOpen(false);
+                      }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm transition ${i > 0 ? 'border-t border-slate-100 dark:border-slate-700/50' : ''} ${isSelected ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
+                        <span className={`flex-shrink-0 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center ${isSelected ? 'border-blue-600 dark:border-blue-400' : 'border-slate-300 dark:border-slate-600'}`}>
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 block" />}
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="text-xs font-medium text-slate-800 dark:text-slate-200 block">{p.phone}</span>
+                          {p.provider && <span className="text-[11px] text-slate-400 dark:text-slate-500">{p.provider}</span>}
+                        </span>
+                        {isDefault && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex-shrink-0">default</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">🏦 Agent Type</label>
-            <select
-              value={agentType}
-              onChange={(e) => setAgentType(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
-            >
-              <option value="loan_enquiry">Loan Enquiry — Pusad Urban Bank</option>
-              <option value="account_opening">Account Opening — Union Bank of India</option>
-            </select>
-          </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 w-full">
-            Selected voice + language are stored per row at upload. Existing batches keep their original config.
+          <p className="text-xs text-slate-300 dark:text-slate-600 mt-3">
+            Voice + language are baked into every row at upload time. Existing batches keep their original config.
           </p>
         </div>
 
         {/* Actions */}
-        <div className="flex flex-wrap gap-3">
-          <label className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700 transition">
-            <Upload className="w-4 h-4" /> {uploading ? 'Uploading...' : 'Upload Excel'}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Primary: Upload */}
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer bg-gradient-to-b from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 dark:from-blue-600 dark:to-blue-700 dark:hover:from-blue-500 dark:hover:to-blue-600 text-white shadow-sm shadow-blue-500/20 border border-blue-600 dark:border-blue-700 transition">
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {uploading ? 'Uploading…' : 'Upload Excel'}
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleUpload} disabled={uploading} />
           </label>
-          <button onClick={triggerBatch} className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition">
-            <Play className="w-4 h-4" /> Start Batch
+
+          {/* Primary: Start Batch */}
+          <button onClick={triggerBatch} disabled={starting}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-b from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 dark:from-blue-600 dark:to-blue-700 dark:hover:from-blue-500 dark:hover:to-blue-600 text-white shadow-sm shadow-blue-500/20 border border-blue-600 dark:border-blue-700 transition disabled:opacity-50">
+            {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            Start Batch
           </button>
-          <button onClick={emergencyStop} className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition">
-            <Square className="w-4 h-4" /> Emergency Stop
-          </button>
-          <button onClick={fetchBatches} className="flex items-center gap-2 px-4 py-2.5 bg-gray-200 dark:bg-dark-section text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-700 transition">
-            <RefreshCw className="w-4 h-4" /> Refresh
+
+          {/* Secondary actions */}
+          {[
+            { label: 'Resume',        icon: <Play className="w-4 h-4" />,      busy: resuming, onClick: resumeCalling },
+            { label: 'Retry Failed',  icon: <RotateCcw className="w-4 h-4" />, busy: retrying, onClick: retryFailed   },
+            { label: 'Cleanup Stuck', icon: <Wrench className="w-4 h-4" />,    busy: cleaning, onClick: cleanupStuck  },
+            { label: 'Refresh',       icon: <RefreshCw className="w-4 h-4" />, busy: false,    onClick: refresh       },
+          ].map(({ label, icon, busy, onClick }) => (
+            <button key={label} onClick={onClick} disabled={busy} className={btnSecondary}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
+              {label}
+            </button>
+          ))}
+
+          {/* Danger */}
+          <button onClick={emergencyStop} disabled={stopping}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ml-auto border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition disabled:opacity-50">
+            {stopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+            Emergency Stop
           </button>
         </div>
 
-        {/* Batch History */}
-        <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm">
-          <div className="p-5 border-b border-gray-100 dark:border-gray-700/50">
-            <div className="flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-              <h2 className="font-semibold text-gray-900 dark:text-white">Upload History</h2>
-            </div>
+        {/* Upload History */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Upload History</h2>
+            <span className="ml-auto text-xs text-slate-400 dark:text-slate-500">Click a row to view calls</span>
           </div>
+
           {loading ? (
-            <div className="p-8 text-center"><Loader2 className="w-6 h-6 text-blue-600 animate-spin mx-auto" /></div>
+            <div className="py-12 flex justify-center">
+              <Loader2 className="w-5 h-5 animate-spin text-slate-300 dark:text-slate-600" />
+            </div>
           ) : batches.length === 0 ? (
-            <div className="p-8 text-center">
-              <FileSpreadsheet className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-              <p className="text-sm text-gray-500 dark:text-gray-400">No batches uploaded yet</p>
+            <div className="py-12 text-center">
+              <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 text-slate-200 dark:text-slate-700" />
+              <p className="text-sm text-slate-400">No batches uploaded yet</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
-              {batches.map((batch: any) => (
-                <div key={batch._id || batch.id} className="p-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{batch.filename || batch.file_name}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {batch.total_records || batch.count || 0} records · {formatDateTime(batch.uploaded_at || batch.created_at || '')}
-                    </p>
+            <div>
+              {batches.map((batch: any, i: number) => {
+                const bId    = batch.batch_id || batch.id;
+                const isOpen = expandedBatch === bId;
+                const calls  = batchCalls[bId] || [];
+                const isBusy = loadingCalls === bId;
+                return (
+                  <div key={batch.id || bId} className={i < batches.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
+                    <button onClick={() => toggleBatch(bId)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+                          {batch.filename || batch.file_name || 'Unknown file'}
+                        </p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          {batch.total_records ?? batch.count ?? 0} records · {formatDateTime(batch.uploaded_at || batch.created_at || '')}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                        <StatusBadge status={batch.status || 'pending'} />
+                        {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                      </div>
+                    </button>
+
+                    {isOpen && (
+                      <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+                        {isBusy ? (
+                          <div className="py-8 flex justify-center">
+                            <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                          </div>
+                        ) : calls.length === 0 ? (
+                          <p className="py-6 text-center text-sm text-slate-400">No calls in this batch</p>
+                        ) : (
+                          <div>
+                            <div className="grid grid-cols-[2fr_1.5fr_1fr_0.5fr_0.5fr_0.5fr] gap-2 px-5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                              <span>Name</span><span>Phone</span><span>Status</span><span>Duration</span><span>Interested</span><span>Form</span>
+                            </div>
+                            <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                              {calls.map((call: any) => (
+                                <div key={call.id} className="grid grid-cols-[2fr_1.5fr_1fr_0.5fr_0.5fr_0.5fr] gap-2 px-5 py-2.5 items-center">
+                                  <span className="flex items-center gap-1.5 text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+                                    <User className="w-3 h-3 flex-shrink-0 text-slate-400" />{call.customer_name || '—'}
+                                  </span>
+                                  <span className="flex items-center gap-1.5 font-mono text-xs text-slate-500 dark:text-slate-400 truncate">
+                                    <Phone className="w-3 h-3 flex-shrink-0 text-slate-300 dark:text-slate-600" />{call.phone || '—'}
+                                  </span>
+                                  <span><StatusBadge status={call.status || ''} /></span>
+                                  <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                                    <Clock className="w-3 h-3" />{call.call_duration ? `${call.call_duration}s` : '—'}
+                                  </span>
+                                  <span className={`text-xs font-medium ${call.interested === true ? 'text-emerald-600 dark:text-emerald-400' : call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
+                                    {call.interested === true ? 'Yes' : call.interested === false ? 'No' : '—'}
+                                  </span>
+                                  <span className={`text-xs font-medium ${call.form_sent ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
+                                    {call.form_sent ? 'Sent' : '—'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                    batch.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
-                    batch.status === 'in_progress' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
-                    'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                  }`}>
-                    {batch.status || 'uploaded'}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

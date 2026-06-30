@@ -1,23 +1,10 @@
 "use client";
 
-/**
- * /bank/applications — bank's own loan applications list.
- *
- * Multi-bank gap from design-upgrade parity: bank users could open a
- * specific app via /bank/applications/[id] (link from dashboard recent
- * list) but had no searchable, filterable index of their own bank's
- * pipeline. This is that index.
- *
- * Auth: requires bank token (matches /bank/* convention). Calls existing
- * GET /api/bank/applications which scopes to bank_id from the JWT.
- */
-
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, Filter, Loader2, ArrowLeft, Search } from "lucide-react";
-
 import { API_URL } from "@/lib/api";
 import { getAccessToken, getCurrentUser } from "@/lib/auth";
 
@@ -29,34 +16,41 @@ interface AppRow {
   loan_id?: string;
   requested_loan_amount?: number | null;
   loan_amount_requested?: number | null;
+  consumer_loan_type?: string | null;
   status: string;
   created_at?: string;
   submitted_at?: string;
   system_score?: number | null;
   system_suggestion?: string | null;
+  interested?: boolean | null;
+  form_status?: string | null;
 }
 
-// Filters are scoped to what a bank user typically wants to see. Officers
-// see pre-approval states; supervisors see post-approval too. We show the
-// union — UI doesn't need to fork.
 const STATUS_FILTERS = [
   "all", "submitted", "system_reviewed",
   "officer_approved", "officer_rejected", "documents_submitted",
   "approved", "supervisor_rejected", "disbursed",
 ] as const;
 
-type Filter = (typeof STATUS_FILTERS)[number];
+type StatusFilter = (typeof STATUS_FILTERS)[number];
 
-const STATUS_COLORS: Record<string, string> = {
-  submitted: "bg-blue-100 text-blue-700",
-  system_reviewed: "bg-indigo-100 text-indigo-700",
-  officer_approved: "bg-cyan-100 text-cyan-700",
-  officer_rejected: "bg-rose-100 text-rose-700",
-  documents_submitted: "bg-violet-100 text-violet-700",
-  approved: "bg-emerald-100 text-emerald-700",
-  supervisor_rejected: "bg-red-100 text-red-700",
-  disbursed: "bg-teal-100 text-teal-700",
-};
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    submitted:           'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+    system_reviewed:     'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
+    officer_approved:    'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300',
+    officer_rejected:    'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300',
+    documents_submitted: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+    approved:            'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+    supervisor_rejected: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+    disbursed:           'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
+  };
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${map[status] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}>
+      {status.replace(/_/g, " ")}
+    </span>
+  );
+}
 
 function fmtINR(n?: number | null) {
   if (n == null) return "—";
@@ -70,9 +64,9 @@ function fmtDate(iso?: string) {
 
 export default function BankApplicationsListPage() {
   const router = useRouter();
-  const [filter, setFilter] = React.useState<Filter>("all");
+  const [filter, setFilter] = React.useState<StatusFilter>("all");
   const [search, setSearch] = React.useState("");
-  const [user, setUser] = React.useState<any>(null);
+  const [user, setUser]     = React.useState<any>(null);
 
   React.useEffect(() => {
     const t = getAccessToken("bank");
@@ -85,9 +79,7 @@ export default function BankApplicationsListPage() {
     queryKey: ["bank", "applications"],
     queryFn: async () => {
       const token = getAccessToken("bank");
-      const r = await fetch(`${API_URL}/api/bank/applications`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await fetch(`${API_URL}/api/bank/applications`, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -98,11 +90,10 @@ export default function BankApplicationsListPage() {
   const apps: AppRow[] = q.data?.applications ?? [];
 
   const filtered = React.useMemo(() => {
-    let rows = apps;
-    if (filter !== "all") rows = rows.filter((a) => a.status === filter);
+    let rows = filter !== "all" ? apps.filter(a => a.status === filter) : apps;
     if (search.trim()) {
       const s = search.trim().toLowerCase();
-      rows = rows.filter((a) =>
+      rows = rows.filter(a =>
         (a.customer_name || a.full_name || "").toLowerCase().includes(s) ||
         (a.phone || "").includes(s) ||
         (a.loan_id || "").toLowerCase().includes(s) ||
@@ -119,112 +110,123 @@ export default function BankApplicationsListPage() {
   }, [apps]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-gray-950">
-      {/* Top bar — minimal, matches /bank/dashboard chrome */}
-      <div className="bg-white dark:bg-gray-900 shadow-sm border-b border-slate-200 dark:border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push("/bank/dashboard")}
-              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-gray-300 dark:hover:bg-gray-800"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <FileText className="h-5 w-5 text-blue-600" />
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 dark:text-white">Applications</h1>
-              <p className="text-xs text-slate-500 dark:text-gray-400">
-                {user?.bank_name ? `${user.bank_name} · ` : ""}{apps.length} total
-              </p>
-            </div>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 relative">
+
+      {/* Ambient glow */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden -z-10">
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[80rem] h-[36rem] rounded-full bg-blue-400/[0.04] dark:bg-blue-400/[0.06] blur-3xl" />
+      </div>
+
+      {/* Header */}
+      <div className="sticky top-0 z-30 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-3">
+          <button onClick={() => router.push("/bank/dashboard")}
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-blue-600 shadow-sm shadow-blue-600/30">
+            <FileText className="h-4 w-4 text-white" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Applications</h1>
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              {user?.bank_name ? `${user.bank_name} · ` : ""}{apps.length} total
+            </p>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
-        <div className="relative max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, phone, loan ID…"
-            className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-10 pr-3 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-          />
+
+        {/* Search + filters */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-3 space-y-3">
+          <div className="relative max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search name, phone, loan ID…"
+              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 py-2 pl-10 pr-3 text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition" />
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+            <Filter className="h-4 w-4 flex-shrink-0 text-slate-400" />
+            {STATUS_FILTERS.map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`flex-shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  filter === f
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}>
+                {f.replace(/_/g, " ")}{counts[f] != null ? ` · ${counts[f]}` : ""}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <Filter className="h-4 w-4 shrink-0 text-slate-400" />
-          {STATUS_FILTERS.map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                filter === f
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700"
-              }`}
-            >
-              {f.replace(/_/g, " ")}{counts[f] != null ? ` · ${counts[f]}` : ""}
-            </button>
-          ))}
-        </div>
-
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+        {/* Table */}
+        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
           {q.isLoading ? (
-            <div className="grid place-items-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+            <div className="grid place-items-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+            </div>
           ) : filtered.length === 0 ? (
-            <div className="py-16 text-center text-sm text-slate-500">
-              {apps.length === 0 ? "No applications assigned to your bank yet." : `No applications match "${search || filter}".`}
+            <div className="py-16 text-center text-sm text-slate-400">
+              {apps.length === 0 ? "No applications assigned to your bank yet." : `No results for "${search || filter}".`}
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-gray-800/50">
-                <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-5 py-3 font-medium">Applicant</th>
-                  <th className="px-5 py-3 font-medium">Loan ID</th>
-                  <th className="px-5 py-3 font-medium text-right">Amount</th>
-                  <th className="px-5 py-3 font-medium text-right">AI Score</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Submitted</th>
+              <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                <tr className="text-left text-xs uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <th className="px-5 py-3 font-semibold">Applicant</th>
+                  <th className="px-5 py-3 font-semibold">Loan ID</th>
+                  <th className="px-5 py-3 font-semibold">Type</th>
+                  <th className="px-5 py-3 font-semibold text-right">Amount</th>
+                  <th className="px-5 py-3 font-semibold">Status</th>
+                  <th className="px-5 py-3 font-semibold">Interested</th>
+                  <th className="px-5 py-3 font-semibold">Form</th>
+                  <th className="px-5 py-3 font-semibold text-right">AI Score</th>
+                  <th className="px-5 py-3 font-semibold">Submitted</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-gray-800">
-                {filtered.map((a) => (
-                  <tr
-                    key={a.id}
-                    onClick={() => router.push(`/bank/applications/${a.id}`)}
-                    className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-gray-800/40"
-                  >
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filtered.map(a => (
+                  <tr key={a.id} onClick={() => router.push(`/bank/applications/${a.id}`)}
+                    className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                     <td className="px-5 py-3">
-                      <Link
-                        href={`/bank/applications/${a.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="font-medium text-slate-900 hover:text-blue-700 dark:text-gray-100"
-                      >
+                      <Link href={`/bank/applications/${a.id}`} onClick={e => e.stopPropagation()}
+                        className="font-medium text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 transition">
                         {a.customer_name || a.full_name || "—"}
                       </Link>
-                      <div className="text-xs text-slate-500">{a.phone || ""}</div>
+                      <div className="text-xs text-slate-400 dark:text-slate-500">{a.phone || ""}</div>
                     </td>
-                    <td className="px-5 py-3 font-mono text-xs text-slate-500">{a.loan_id || "—"}</td>
-                    <td className="px-5 py-3 text-right font-medium">
+                    <td className="px-5 py-3 font-mono text-xs text-slate-400 dark:text-slate-500">{a.loan_id || "—"}</td>
+                    <td className="px-5 py-3 text-xs text-slate-500 dark:text-slate-400">
+                      {a.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : a.consumer_loan_type === 'personal' ? 'Personal' : '—'}
+                    </td>
+                    <td className="px-5 py-3 text-right font-medium text-slate-900 dark:text-slate-100">
                       {fmtINR(a.requested_loan_amount ?? a.loan_amount_requested)}
                     </td>
-                    <td className="px-5 py-3 text-right">
-                      {a.system_score != null ? (
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          a.system_score >= 70 ? "bg-emerald-100 text-emerald-700"
-                            : a.system_score >= 50 ? "bg-amber-100 text-amber-700"
-                            : "bg-rose-100 text-rose-700"
-                        }`}>{a.system_score}</span>
-                      ) : <span className="text-slate-400">—</span>}
+                    <td className="px-5 py-3"><StatusBadge status={a.status} /></td>
+                    <td className="px-5 py-3">
+                      {a.interested === true
+                        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Yes</span>
+                        : a.interested === false
+                        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400">No</span>
+                        : <span className="text-slate-400">—</span>}
                     </td>
                     <td className="px-5 py-3">
-                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${STATUS_COLORS[a.status] || "bg-slate-100 text-slate-700"}`}>
-                        {a.status.replace(/_/g, " ")}
-                      </span>
+                      {a.form_status === 'completed'
+                        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Submitted</span>
+                        : a.form_status === 'in_progress'
+                        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">In Progress</span>
+                        : a.form_status === 'pending'
+                        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">Pending</span>
+                        : <span className="text-slate-400">—</span>}
                     </td>
-                    <td className="px-5 py-3 text-xs text-slate-500">{fmtDate(a.submitted_at || a.created_at)}</td>
+                    <td className="px-5 py-3 text-right">
+                      {a.system_score != null
+                        ? <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${a.system_score >= 70 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : a.system_score >= 50 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" : "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"}`}>{a.system_score}</span>
+                        : <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-xs text-slate-400 dark:text-slate-500">{fmtDate(a.submitted_at || a.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

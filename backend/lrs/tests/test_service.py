@@ -38,6 +38,10 @@ def test_score_application_full_result():
         "credit_bureau", "income", "banking_behaviour", "personal_profile",
     }
     assert r["config_version"]
+    # explainability present
+    assert "reasons" in r
+    assert set(r["reasons"].keys()) == {"summary", "positives", "negatives"}
+    assert r["reasons"]["summary"]
 
 
 def test_deterministic_same_pan_same_score():

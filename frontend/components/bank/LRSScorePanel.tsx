@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp } from "lucide-react";
+import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getLRSScore, rescoreLRS } from "@/lib/api/bank";
@@ -191,7 +191,43 @@ export function LRSScorePanel({
         ))}
       </div>
 
-      {/* 5-pillar breakdown */}
+      {/* Why this score (explainability) */}
+      {data.reasons?.summary && (
+        <div className="mt-5 border-t border-slate-100 pt-4 dark:border-gray-700/50">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Why this score</div>
+          <p className="text-sm text-gray-700 dark:text-gray-300">{data.reasons.summary}</p>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            {data.reasons.positives?.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-medium text-emerald-600">Strengths</div>
+                <ul className="space-y-1">
+                  {data.reasons.positives.map((f: any, i: number) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                      <span>{f.factor}{f.value != null ? `: ${f.value}` : ""}{f.rating ? ` (${f.rating})` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {data.reasons.negatives?.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-medium text-rose-600">Watch-outs</div>
+                <ul className="space-y-1">
+                  {data.reasons.negatives.map((f: any, i: number) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />
+                      <span>{f.factor}{f.value != null ? `: ${f.value}` : ""}{f.rating ? ` (${f.rating})` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 4-pillar breakdown */}
       <div className="mt-5 border-t border-slate-100 pt-4 dark:border-gray-700/50">
         <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Pillar breakdown</div>
         {pillars.map((p, i) => <PillarBar key={i} p={p} />)}

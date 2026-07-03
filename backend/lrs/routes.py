@@ -9,7 +9,7 @@ logger = logging.getLogger("lrs-routes")
 
 router = APIRouter()
 
-_JSON_FIELDS = ("pillar_scores", "effective_weights", "raw_provider_data")
+_JSON_FIELDS = ("pillar_scores", "effective_weights", "raw_provider_data", "reasons")
 
 
 def _row_to_payload(row) -> dict:

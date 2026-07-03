@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lrs import decision, engine, normalize
+from lrs import decision, engine, explain, normalize
 from lrs.providers import FetchContext, get_providers
 
 # LRS decision → the existing loan_applications.system_suggestion vocabulary
@@ -44,6 +44,10 @@ async def score_application(app: dict, providers: list | None = None) -> dict[st
     dinp = normalize.decision_inputs(app, inputs)
     d = decision.decide(result.total_score, **dinp)
 
+    reasons = explain.build_reasons(
+        result.pillar_scores, d.decision, result.rating, result.total_score
+    )
+
     return {
         "status": "scored",
         "total_score": result.total_score,
@@ -59,6 +63,7 @@ async def score_application(app: dict, providers: list | None = None) -> dict[st
         "effective_weights": result.effective_weights,
         "missing_pillars": result.missing_pillars,
         "incomplete": result.incomplete,
+        "reasons": reasons,
         "raw_provider_data": raw,
         "config_version": result.config_version,
         "canonical_inputs": inputs,

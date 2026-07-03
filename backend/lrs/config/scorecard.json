@@ -516,7 +516,7 @@
               ]
             },
             "emi_to_income": {
-              "title": "EMI-to-Income (%)", "weight": 10, "type": "range", "input_key": "emi_to_income_pct",
+              "title": "EMI-to-Income (%)", "weight": 10, "type": "range", "input_key": "new_loan_emi_to_income_pct",
               "bands": [
                 { "from": 0, "to": 30, "score": 100, "rating": "Low Risk" },
                 { "from": 30.001, "to": 50, "score": 75, "rating": "Medium Risk" },

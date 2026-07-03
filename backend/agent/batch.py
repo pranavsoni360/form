@@ -93,6 +93,13 @@ async def agent_startup():
         id="guarantor_runner",
         replace_existing=True,
     )
+    from lrs.runner import process_lrs_run
+    _scheduler.add_job(
+        process_lrs_run,
+        CronTrigger(minute="*/5", timezone="Asia/Kolkata"),
+        id="lrs_runner",
+        replace_existing=True,
+    )
     # Daily system_errors cleanup — runs at 03:00 IST (low-traffic window).
     # Retention configurable via LOS_ERROR_RETENTION_DAYS env, default 1 day.
     # Bounded DELETE so the table never grows unbounded across deployments.

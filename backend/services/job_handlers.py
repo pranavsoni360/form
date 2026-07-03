@@ -257,9 +257,12 @@ async def _schedule_callback_from_analysis(
 # Registry — single source of truth for what the worker pool can run.
 # ============================================================================
 
+from lrs.handlers import lrs_score  # LRS scoring job (isolated module)
+
 HANDLERS = {
     "transcript_analyze":    transcript_analyze,
     "whatsapp_send_retry":   whatsapp_send_retry,
     "recording_verify":      recording_verify,
     "recording_archive_b2":  recording_archive_b2,
+    "lrs_score":             lrs_score,
 }

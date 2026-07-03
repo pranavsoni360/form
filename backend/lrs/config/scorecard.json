@@ -1,0 +1,531 @@
+{
+  "config_version": "v1-2026-07",
+  "score_range": [0, 100],
+  "decision_thresholds": { "approve": 70, "refer": 50 },
+  "_note": "Ported from LRS/[1]-Analysis Parameter.xlsx (VGIPL reference). Each pillar weight and leaf band mirrors the reference scorecard. Leaves are 'range' (numeric bands, inclusive from..to), 'category' (exact-match map with __default__), or 'composite' (weighted children summing to 100). Pillar weights sum to 100.",
+  "pillars": {
+    "credit_bureau": {
+      "title": "Credit Bureau Analysis",
+      "weight": 30,
+      "source": "bureau",
+      "parameters": {
+        "credit_score": {
+          "title": "Credit Score", "weight": 15, "type": "range", "input_key": "credit_score",
+          "bands": [
+            { "from": 800, "to": 900, "score": 100, "rating": "Excellent", "approval": "Very High" },
+            { "from": 750, "to": 799, "score": 80, "rating": "Very Good", "approval": "High" },
+            { "from": 700, "to": 749, "score": 60, "rating": "Good", "approval": "Moderate" },
+            { "from": 650, "to": 699, "score": 40, "rating": "Fair", "approval": "Low to Moderate" },
+            { "from": 300, "to": 649, "score": 20, "rating": "Poor", "approval": "Low" }
+          ]
+        },
+        "payment_history": {
+          "title": "Payment History", "weight": 5, "type": "range", "input_key": "on_time_payment_pct",
+          "bands": [
+            { "from": 99, "to": 100, "score": 100, "rating": "Excellent", "approval": "Very High" },
+            { "from": 95, "to": 98.999, "score": 80, "rating": "Very Good", "approval": "High" },
+            { "from": 90, "to": 94.999, "score": 60, "rating": "Good", "approval": "Moderate" },
+            { "from": 80, "to": 89.999, "score": 40, "rating": "Fair", "approval": "Low to Moderate" },
+            { "from": 0, "to": 79.999, "score": 20, "rating": "Poor", "approval": "Low" }
+          ]
+        },
+        "credit_history_length": {
+          "title": "Credit History Length", "weight": 3, "type": "range", "input_key": "credit_history_years",
+          "bands": [
+            { "from": 10, "to": 100, "score": 100, "rating": "Excellent", "approval": "Very High" },
+            { "from": 7, "to": 9.999, "score": 80, "rating": "Very Good", "approval": "High" },
+            { "from": 4, "to": 6.999, "score": 60, "rating": "Good", "approval": "Moderate" },
+            { "from": 2, "to": 3.999, "score": 40, "rating": "Fair", "approval": "Low to Moderate" },
+            { "from": 0, "to": 1.999, "score": 20, "rating": "Poor", "approval": "Low" }
+          ]
+        },
+        "credit_utilization": {
+          "title": "Credit Utilization", "weight": 3, "type": "range", "input_key": "credit_utilization_pct",
+          "bands": [
+            { "from": 0, "to": 10, "score": 100, "rating": "Excellent", "approval": "Very High" },
+            { "from": 10.001, "to": 30, "score": 80, "rating": "Very Good", "approval": "High" },
+            { "from": 30.001, "to": 50, "score": 60, "rating": "Good", "approval": "Moderate" },
+            { "from": 50.001, "to": 70, "score": 40, "rating": "Fair", "approval": "Low to Moderate" },
+            { "from": 70.001, "to": 100, "score": 20, "rating": "Poor", "approval": "Low" }
+          ]
+        },
+        "recent_inquiries": {
+          "title": "Recent Inquiries (12m)", "weight": 2, "type": "range", "input_key": "hard_inquiries_12m",
+          "bands": [
+            { "from": 0, "to": 1, "score": 100, "rating": "Excellent", "approval": "Very High" },
+            { "from": 2, "to": 3, "score": 80, "rating": "Very Good", "approval": "High" },
+            { "from": 4, "to": 5, "score": 60, "rating": "Good", "approval": "Moderate" },
+            { "from": 6, "to": 8, "score": 40, "rating": "Fair", "approval": "Low to Moderate" },
+            { "from": 9, "to": 9999, "score": 20, "rating": "Poor", "approval": "Low" }
+          ]
+        },
+        "public_records": {
+          "title": "Public Records", "weight": 2, "type": "category", "input_key": "public_record_type",
+          "categories": {
+            "none": { "score": 100, "rating": "Excellent", "approval": "Very High" },
+            "civil_judgment_gt5": { "score": 70, "rating": "Medium", "approval": "Medium" },
+            "civil_judgment_lt5": { "score": 50, "rating": "High", "approval": "High" },
+            "tax_lien_gt5": { "score": 60, "rating": "Medium", "approval": "Medium" },
+            "tax_lien_lt5": { "score": 40, "rating": "High", "approval": "High" },
+            "foreclosure_gt5": { "score": 50, "rating": "High", "approval": "High" },
+            "foreclosure_lt5": { "score": 30, "rating": "Very High", "approval": "Very High" },
+            "bankruptcy_gt7": { "score": 50, "rating": "High", "approval": "High" },
+            "bankruptcy_lt7": { "score": 20, "rating": "Very High", "approval": "Very High" },
+            "__default__": { "score": 100, "rating": "Excellent", "approval": "Very High" }
+          }
+        }
+      }
+    },
+
+    "income": {
+      "title": "Income Analysis",
+      "weight": 30,
+      "source": "income",
+      "parameters": {
+        "net_monthly_income": {
+          "title": "Net Monthly Income", "weight": 15, "type": "range", "input_key": "net_monthly_income",
+          "bands": [
+            { "from": 100000.01, "to": 999999999, "score": 100, "rating": "Excellent", "approval": "Very High" },
+            { "from": 75000.01, "to": 100000, "score": 80, "rating": "Very Good", "approval": "High" },
+            { "from": 50000.01, "to": 75000, "score": 60, "rating": "Good", "approval": "Moderate" },
+            { "from": 30000, "to": 50000, "score": 40, "rating": "Fair", "approval": "Low to Moderate" },
+            { "from": 0, "to": 29999.99, "score": 20, "rating": "Poor", "approval": "Low" }
+          ]
+        },
+        "income_stability": {
+          "title": "Income Stability", "weight": 5, "type": "composite",
+          "children": {
+            "employment_type": {
+              "title": "Employment Type", "weight": 30, "type": "category", "input_key": "employment_type",
+              "categories": {
+                "salaried_govt_psu": { "score": 100, "rating": "Very Low" },
+                "salaried_private_mnc": { "score": 90, "rating": "Low" },
+                "salaried_private_small": { "score": 70, "rating": "Medium" },
+                "self_employed_stable": { "score": 60, "rating": "Medium" },
+                "self_employed_irregular": { "score": 40, "rating": "High" },
+                "freelancer": { "score": 20, "rating": "Very High" },
+                "__default__": { "score": 60, "rating": "Medium" }
+              }
+            },
+            "job_tenure": {
+              "title": "Job Tenure (years)", "weight": 30, "type": "range", "input_key": "job_tenure_years",
+              "bands": [
+                { "from": 5.001, "to": 100, "score": 100, "rating": "Very Low" },
+                { "from": 3, "to": 5, "score": 80, "rating": "Low" },
+                { "from": 1, "to": 2.999, "score": 60, "rating": "Medium" },
+                { "from": 0, "to": 0.999, "score": 40, "rating": "High" }
+              ]
+            },
+            "income_volatility": {
+              "title": "Income Volatility (% fluctuation)", "weight": 20, "type": "range", "input_key": "income_volatility_pct",
+              "bands": [
+                { "from": 0, "to": 9.999, "score": 100, "rating": "Very Low" },
+                { "from": 10, "to": 25, "score": 60, "rating": "Medium" },
+                { "from": 25.001, "to": 100, "score": 40, "rating": "High" }
+              ]
+            },
+            "industry_risk": {
+              "title": "Industry Risk", "weight": 20, "type": "category", "input_key": "industry_risk_class",
+              "categories": {
+                "govt_health_it_banking": { "score": 100, "rating": "Very Low" },
+                "retail_manufacturing": { "score": 70, "rating": "Medium" },
+                "construction_tourism": { "score": 40, "rating": "High" },
+                "__default__": { "score": 70, "rating": "Medium" }
+              }
+            }
+          }
+        },
+        "debt_to_income": {
+          "title": "Loan-to-Income Ratio", "weight": 10, "type": "range", "input_key": "loan_to_income_x",
+          "bands": [
+            { "from": 0, "to": 2, "score": 100, "rating": "Very Low", "approval": "Very High" },
+            { "from": 2.001, "to": 3, "score": 80, "rating": "Low", "approval": "High" },
+            { "from": 3.001, "to": 4, "score": 60, "rating": "Medium", "approval": "Moderate" },
+            { "from": 4.001, "to": 5, "score": 40, "rating": "High", "approval": "Low" },
+            { "from": 5.001, "to": 9999, "score": 20, "rating": "Very High", "approval": "Very Low" }
+          ]
+        }
+      }
+    },
+
+    "bank_statement": {
+      "title": "Bank Statement Analysis",
+      "weight": 20,
+      "source": "bankstmt",
+      "parameters": {
+        "avg_monthly_balance": {
+          "title": "Average Monthly Balance (% of NMI)", "weight": 5, "type": "range", "input_key": "amb_pct_of_nmi",
+          "bands": [
+            { "from": 50.001, "to": 999999, "score": 100, "rating": "Very Low" },
+            { "from": 30, "to": 50, "score": 80, "rating": "Low" },
+            { "from": 20, "to": 29.999, "score": 60, "rating": "Medium" },
+            { "from": 10, "to": 19.999, "score": 40, "rating": "High" },
+            { "from": 0, "to": 9.999, "score": 20, "rating": "Very High" }
+          ]
+        },
+        "cash_flow": {
+          "title": "Cash Flow Analysis", "weight": 5, "type": "composite",
+          "children": {
+            "net_cash_flow": {
+              "title": "Net Cash Flow", "weight": 20, "type": "range", "input_key": "net_cash_flow",
+              "bands": [
+                { "from": 0.01, "to": 999999999, "score": 100, "rating": "Low Risk" },
+                { "from": 0, "to": 0, "score": 60, "rating": "Medium" },
+                { "from": -999999999, "to": -0.01, "score": 20, "rating": "Very High" }
+              ]
+            },
+            "cash_flow_ratio": {
+              "title": "Cash Flow Ratio", "weight": 20, "type": "range", "input_key": "cash_flow_ratio",
+              "bands": [
+                { "from": 1.5, "to": 9999, "score": 100, "rating": "Very Low Risk" },
+                { "from": 1.0, "to": 1.499, "score": 60, "rating": "Medium" },
+                { "from": 0, "to": 0.999, "score": 20, "rating": "Very High" }
+              ]
+            },
+            "surplus_income_ratio": {
+              "title": "Surplus-to-Income Ratio", "weight": 20, "type": "range", "input_key": "surplus_income_ratio",
+              "bands": [
+                { "from": 30, "to": 9999, "score": 100, "rating": "Low Risk" },
+                { "from": 15, "to": 29.999, "score": 60, "rating": "Medium" },
+                { "from": -9999, "to": 14.999, "score": 20, "rating": "High" }
+              ]
+            },
+            "volatility_index": {
+              "title": "Volatility Index", "weight": 20, "type": "range", "input_key": "volatility_index",
+              "bands": [
+                { "from": 0, "to": 9.999, "score": 100, "rating": "Stable" },
+                { "from": 10, "to": 30, "score": 60, "rating": "Medium" },
+                { "from": 30.001, "to": 9999, "score": 20, "rating": "High" }
+              ]
+            },
+            "frequent_negative_flow": {
+              "title": "Frequent Negative Cash Flow (ratio)", "weight": 20, "type": "range", "input_key": "negative_flow_ratio",
+              "bands": [
+                { "from": 0, "to": 0, "score": 100, "rating": "Low Risk" },
+                { "from": 0.001, "to": 0.25, "score": 60, "rating": "Medium" },
+                { "from": 0.251, "to": 1, "score": 20, "rating": "High" }
+              ]
+            }
+          }
+        },
+        "expense_pattern": {
+          "title": "Expense Pattern", "weight": 5, "type": "composite",
+          "children": {
+            "fixed_expense_ratio": {
+              "title": "Fixed Expense Ratio", "weight": 20, "type": "range", "input_key": "fixed_expense_ratio",
+              "bands": [
+                { "from": 0, "to": 29.999, "score": 80, "rating": "Low Risk" },
+                { "from": 30, "to": 50, "score": 60, "rating": "Medium" },
+                { "from": 50.001, "to": 70, "score": 40, "rating": "High" },
+                { "from": 70.001, "to": 9999, "score": 20, "rating": "Very High" }
+              ]
+            },
+            "essential_spending_ratio": {
+              "title": "Essential Spending Ratio", "weight": 20, "type": "range", "input_key": "essential_spending_ratio",
+              "bands": [
+                { "from": 0, "to": 39.999, "score": 80, "rating": "Very Low Risk" },
+                { "from": 40, "to": 60, "score": 60, "rating": "Medium" },
+                { "from": 60.001, "to": 80, "score": 40, "rating": "High" },
+                { "from": 80.001, "to": 9999, "score": 20, "rating": "Very High" }
+              ]
+            },
+            "savings_ratio": {
+              "title": "Savings Ratio", "weight": 20, "type": "range", "input_key": "savings_ratio",
+              "bands": [
+                { "from": 30.001, "to": 9999, "score": 80, "rating": "Low Risk" },
+                { "from": 20, "to": 30, "score": 60, "rating": "Medium" },
+                { "from": 10, "to": 19.999, "score": 40, "rating": "High" },
+                { "from": -9999, "to": 9.999, "score": 20, "rating": "Very High" }
+              ]
+            },
+            "frequent_overdrafts": {
+              "title": "Frequent Overdrafts (per month)", "weight": 20, "type": "range", "input_key": "overdrafts_per_month",
+              "bands": [
+                { "from": 0, "to": 0, "score": 80, "rating": "Stable" },
+                { "from": 0.001, "to": 1, "score": 60, "rating": "Medium" },
+                { "from": 1.001, "to": 2, "score": 40, "rating": "High" },
+                { "from": 2.001, "to": 9999, "score": 20, "rating": "Very High" }
+              ]
+            },
+            "late_payment_penalties": {
+              "title": "Late Payments & Penalties (count)", "weight": 20, "type": "range", "input_key": "penalty_count",
+              "bands": [
+                { "from": 0, "to": 0, "score": 80, "rating": "Moderate Risk" },
+                { "from": 0.001, "to": 1, "score": 60, "rating": "Medium" },
+                { "from": 1.001, "to": 3, "score": 40, "rating": "High" },
+                { "from": 3.001, "to": 9999, "score": 20, "rating": "Very High" }
+              ]
+            }
+          }
+        },
+        "loan_payment_history": {
+          "title": "Loan Payment History", "weight": 5, "type": "composite",
+          "children": {
+            "otp_ratio": {
+              "title": "On-Time Payment Ratio", "weight": 40, "type": "range", "input_key": "otp_ratio_pct",
+              "bands": [
+                { "from": 95, "to": 100, "score": 100, "rating": "Very Low Risk" },
+                { "from": 90, "to": 94.999, "score": 80, "rating": "Low" },
+                { "from": 80, "to": 89.999, "score": 50, "rating": "Medium" },
+                { "from": 0, "to": 79.999, "score": 20, "rating": "High" }
+              ]
+            },
+            "missed_payment_frequency": {
+              "title": "Missed Payment Frequency (ratio)", "weight": 20, "type": "range", "input_key": "missed_payment_ratio",
+              "bands": [
+                { "from": 0, "to": 0, "score": 100, "rating": "Low Risk" },
+                { "from": 0.001, "to": 0.1, "score": 60, "rating": "Medium" },
+                { "from": 0.101, "to": 1, "score": 20, "rating": "High" }
+              ]
+            },
+            "emi_to_income": {
+              "title": "EMI-to-Income Ratio", "weight": 20, "type": "range", "input_key": "emi_to_income_pct",
+              "bands": [
+                { "from": 0, "to": 19.999, "score": 100, "rating": "Low Risk" },
+                { "from": 20, "to": 40, "score": 60, "rating": "Medium" },
+                { "from": 40.001, "to": 9999, "score": 20, "rating": "High" }
+              ]
+            },
+            "late_payment_penalties_cibil": {
+              "title": "Late Payment Penalties (count)", "weight": 20, "type": "range", "input_key": "cibil_penalty_count",
+              "bands": [
+                { "from": 0, "to": 0, "score": 100, "rating": "Stable" },
+                { "from": 0.001, "to": 1, "score": 60, "rating": "Medium" },
+                { "from": 1.001, "to": 9999, "score": 20, "rating": "High" }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "personal_profile": {
+      "title": "Personal Profile Evaluation",
+      "weight": 10,
+      "source": "profile",
+      "parameters": {
+        "employment_status": {
+          "title": "Employment Status", "weight": 3, "type": "composite",
+          "children": {
+            "employer_reputation": {
+              "title": "Employer Reputation Score", "weight": 34, "type": "category", "input_key": "employer_reputation_class",
+              "categories": {
+                "govt_psu": { "score": 100, "rating": "Very Low Risk" },
+                "mnc": { "score": 90, "rating": "Low Risk" },
+                "large_corporate": { "score": 85, "rating": "Low Risk" },
+                "sme": { "score": 70, "rating": "Medium Risk" },
+                "startup": { "score": 60, "rating": "Medium Risk" },
+                "self_employed_professional": { "score": 50, "rating": "Medium Risk" },
+                "self_employed_business": { "score": 50, "rating": "High Risk" },
+                "contract_parttime": { "score": 40, "rating": "High Risk" },
+                "unemployed": { "score": 0, "rating": "Very High Risk" },
+                "__default__": { "score": 60, "rating": "Medium Risk" }
+              }
+            },
+            "job_tenure_stability": {
+              "title": "Job Tenure Stability (%)", "weight": 33, "type": "range", "input_key": "job_tenure_stability_pct",
+              "bands": [
+                { "from": 50, "to": 100, "score": 100, "rating": "Low Risk" },
+                { "from": 0, "to": 49.999, "score": 50, "rating": "Medium Risk" }
+              ]
+            },
+            "income_consistency": {
+              "title": "Income Consistency (CV%)", "weight": 33, "type": "range", "input_key": "income_cv_pct",
+              "bands": [
+                { "from": 0, "to": 2, "score": 100, "rating": "Low Risk" },
+                { "from": 2.001, "to": 5, "score": 80, "rating": "Low Risk" },
+                { "from": 5.001, "to": 10, "score": 60, "rating": "Medium" },
+                { "from": 10.001, "to": 20, "score": 40, "rating": "High" },
+                { "from": 20.001, "to": 9999, "score": 20, "rating": "Very High" }
+              ]
+            }
+          }
+        },
+        "age_education": {
+          "title": "Age and Education", "weight": 2, "type": "composite",
+          "children": {
+            "age_stability": {
+              "title": "Age Stability Score", "weight": 50, "type": "range", "input_key": "age_years",
+              "bands": [
+                { "from": 25, "to": 55, "score": 80, "rating": "Low Risk" },
+                { "from": 18, "to": 24.999, "score": 40, "rating": "Medium Risk" },
+                { "from": 55.001, "to": 65, "score": 40, "rating": "Medium Risk" },
+                { "from": 0, "to": 17.999, "score": 20, "rating": "High Risk" },
+                { "from": 65.001, "to": 150, "score": 20, "rating": "High Risk" }
+              ]
+            },
+            "education_level": {
+              "title": "Education Level Score", "weight": 50, "type": "category", "input_key": "education_class",
+              "categories": {
+                "postgraduate_professional": { "score": 100, "rating": "Low Risk" },
+                "graduate_diploma": { "score": 70, "rating": "Medium Risk" },
+                "highschool_or_below": { "score": 40, "rating": "High Risk" },
+                "__default__": { "score": 70, "rating": "Medium Risk" }
+              }
+            }
+          }
+        },
+        "residential_status": {
+          "title": "Residential Status", "weight": 2, "type": "composite",
+          "children": {
+            "ownership_stability": {
+              "title": "Ownership Stability Score", "weight": 40, "type": "category", "input_key": "ownership_class",
+              "categories": {
+                "owned_no_mortgage": { "score": 100, "rating": "Very Low Risk" },
+                "owned_with_mortgage": { "score": 90, "rating": "Low Risk" },
+                "rented_long_term": { "score": 85, "rating": "Medium Risk" },
+                "rented_short_term": { "score": 70, "rating": "High Risk" },
+                "living_with_family": { "score": 90, "rating": "Low Risk" },
+                "pg_hostel_temporary": { "score": 50, "rating": "High Risk" },
+                "homeless_unknown": { "score": 20, "rating": "Very High Risk" },
+                "__default__": { "score": 70, "rating": "Medium Risk" }
+              }
+            },
+            "tenure_stability": {
+              "title": "Tenure Stability Score (years at address)", "weight": 30, "type": "range", "input_key": "years_at_address",
+              "bands": [
+                { "from": 3.001, "to": 150, "score": 100, "rating": "Low Risk" },
+                { "from": 1, "to": 3, "score": 75, "rating": "Medium Risk" },
+                { "from": 0, "to": 0.999, "score": 50, "rating": "High Risk" }
+              ]
+            },
+            "financial_burden_index": {
+              "title": "Financial Burden Index (housing burden %)", "weight": 30, "type": "range", "input_key": "housing_burden_pct",
+              "bands": [
+                { "from": 0, "to": 29.999, "score": 100, "rating": "Low Risk" },
+                { "from": 30, "to": 49.999, "score": 70, "rating": "Medium Risk" },
+                { "from": 50, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            }
+          }
+        },
+        "existing_liabilities": {
+          "title": "Existing Liabilities", "weight": 3, "type": "composite",
+          "children": {
+            "total_emi_pct": {
+              "title": "Total EMI as % of Income", "weight": 20, "type": "range", "input_key": "total_emi_pct_income",
+              "bands": [
+                { "from": 0, "to": 19.999, "score": 100, "rating": "Low Risk" },
+                { "from": 20, "to": 40, "score": 75, "rating": "Medium Risk" },
+                { "from": 40.001, "to": 9999, "score": 50, "rating": "High Risk" }
+              ]
+            },
+            "active_loans": {
+              "title": "Number of Active Loans", "weight": 20, "type": "range", "input_key": "active_loans_count",
+              "bands": [
+                { "from": 0, "to": 1, "score": 100, "rating": "Low Risk" },
+                { "from": 2, "to": 3, "score": 75, "rating": "Medium Risk" },
+                { "from": 4, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            },
+            "credit_card_utilization": {
+              "title": "Credit Card Utilization", "weight": 20, "type": "range", "input_key": "cc_utilization_pct",
+              "bands": [
+                { "from": 0, "to": 9.999, "score": 100, "rating": "Low Risk" },
+                { "from": 10, "to": 30, "score": 75, "rating": "Medium Risk" },
+                { "from": 30.001, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            },
+            "debt_to_income_ratio": {
+              "title": "Debt-to-Income Ratio", "weight": 40, "type": "range", "input_key": "dti_pct",
+              "bands": [
+                { "from": 0, "to": 29.999, "score": 100, "rating": "Low Risk" },
+                { "from": 30, "to": 50, "score": 75, "rating": "Medium Risk" },
+                { "from": 50.001, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "loan_specific": {
+      "title": "Loan-Specific Evaluation",
+      "weight": 10,
+      "source": "loan",
+      "parameters": {
+        "loan_purpose": {
+          "title": "Loan Purpose", "weight": 5, "type": "composite",
+          "children": {
+            "purpose_score": {
+              "title": "Loan Purpose", "weight": 40, "type": "category", "input_key": "loan_purpose",
+              "categories": {
+                "home_loan": { "score": 100 },
+                "auto_loan": { "score": 90 },
+                "education_top_institute": { "score": 85 },
+                "business_expansion": { "score": 75 },
+                "debt_consolidation": { "score": 65 },
+                "used_car_loan": { "score": 55 },
+                "education_low_tier": { "score": 50 },
+                "personal_loan": { "score": 40 },
+                "speculation": { "score": 20 },
+                "__default__": { "score": 40 }
+              }
+            },
+            "secured_unsecured": {
+              "title": "Secured vs Unsecured", "weight": 30, "type": "category", "input_key": "secured_unsecured",
+              "categories": {
+                "secured": { "score": 100, "rating": "Low Risk" },
+                "unsecured": { "score": 50, "rating": "Medium Risk" },
+                "__default__": { "score": 50, "rating": "Medium Risk" }
+              }
+            },
+            "income_generating": {
+              "title": "Income-Generating vs Non", "weight": 20, "type": "category", "input_key": "income_generating",
+              "categories": {
+                "income_generating": { "score": 100, "rating": "Low Risk" },
+                "not_generating": { "score": 50, "rating": "Medium Risk" },
+                "__default__": { "score": 50, "rating": "Medium Risk" }
+              }
+            },
+            "essential_discretionary": {
+              "title": "Essential vs Discretionary", "weight": 10, "type": "category", "input_key": "essential_discretionary",
+              "categories": {
+                "essential": { "score": 100, "rating": "Low Risk" },
+                "discretionary": { "score": 50, "rating": "Medium Risk" },
+                "__default__": { "score": 50, "rating": "Medium Risk" }
+              }
+            }
+          }
+        },
+        "loan_amount_tenure": {
+          "title": "Loan Amount and Tenure", "weight": 5, "type": "composite",
+          "children": {
+            "loan_amount_vs_income": {
+              "title": "Loan Amount vs Income (x annual)", "weight": 40, "type": "range", "input_key": "loan_amount_to_annual_income_x",
+              "bands": [
+                { "from": 0, "to": 3, "score": 100, "rating": "Low Risk" },
+                { "from": 3.001, "to": 5, "score": 75, "rating": "Medium Risk" },
+                { "from": 5.001, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            },
+            "tenure": {
+              "title": "Tenure (years)", "weight": 30, "type": "range", "input_key": "tenure_years",
+              "bands": [
+                { "from": 0, "to": 5, "score": 100, "rating": "Low Risk" },
+                { "from": 5.001, "to": 10, "score": 75, "rating": "Medium Risk" },
+                { "from": 10.001, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            },
+            "loan_to_value": {
+              "title": "Loan-to-Value (%)", "weight": 20, "type": "range", "input_key": "ltv_pct",
+              "bands": [
+                { "from": 0, "to": 70, "score": 100, "rating": "Low Risk" },
+                { "from": 70.001, "to": 85, "score": 75, "rating": "Medium Risk" },
+                { "from": 85.001, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            },
+            "emi_to_income": {
+              "title": "EMI-to-Income (%)", "weight": 10, "type": "range", "input_key": "emi_to_income_pct",
+              "bands": [
+                { "from": 0, "to": 30, "score": 100, "rating": "Low Risk" },
+                { "from": 30.001, "to": 50, "score": 75, "rating": "Medium Risk" },
+                { "from": 50.001, "to": 9999, "score": 40, "rating": "High Risk" }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

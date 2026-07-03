@@ -1,5 +1,5 @@
 {
-  "config_version": "v2-small-ticket-2026-07",
+  "config_version": "v2-2026-07",
   "score_range": [0, 100],
   "decision_thresholds": { "approve": 70, "refer": 50 },
   "_note": "LEAN model calibrated for SMALL-TICKET UNSECURED loans (personal + consumer, Rs 10k-2L). 4 pillars: Credit 35 / Income+Affordability 30 / Banking-behaviour 20 / Profile 15. Loan-Specific pillar dropped (LTV/secured irrelevant for unsecured). Parameter weights are ABSOLUTE (share of total 100) so a pillar's params sum to its weight; composite children sum to 100.",

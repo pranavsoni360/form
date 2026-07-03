@@ -44,6 +44,12 @@ def test_composite_children_weights_sum_100():
                 assert abs(s - 100) <= 0.01, f"{pkey}.{name} children sum {s}"
 
 
+def test_config_version_fits_db_column():
+    """lrs_scores.config_version is VARCHAR(20) — keep versions short."""
+    assert len(scorecard.config_version()) <= 20
+    assert len(scorecard.load_risk_premium()["config_version"]) <= 20
+
+
 def test_risk_premium_loads_and_covers_range():
     cfg = scorecard.load_risk_premium()
     assert "personal_loan" in cfg["products"]

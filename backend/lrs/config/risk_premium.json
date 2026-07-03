@@ -1,5 +1,5 @@
 {
-  "config_version": "v2-small-ticket-2026-07",
+  "config_version": "v2-2026-07",
   "_note": "SMALL-TICKET UNSECURED (Rs 10k-2L). Score-band → interest + amount/tenure bounds per product. final_roi = base_roi + risk_premium. ROI values are SENSIBLE DEFAULTS for unsecured small loans — tune to the bank's actual rate card. Bands cover 0..100 with no gaps.",
   "default_product": "personal_loan",
   "products": {

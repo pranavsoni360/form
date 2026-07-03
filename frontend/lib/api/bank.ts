@@ -112,3 +112,17 @@ export async function initiateDisbursement(
     body: JSON.stringify({ notes }),
   });
 }
+
+// ── LRS (Loan Recommendation System) ──────────────
+export async function getLRSScore(token: string, appId: string) {
+  return apiFetch(`/api/lrs/score/${appId}`, {
+    headers: authHeaders(token),
+  });
+}
+
+export async function rescoreLRS(token: string, appId: string) {
+  return apiFetch(`/api/lrs/rescore/${appId}`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+}

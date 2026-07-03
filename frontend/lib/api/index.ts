@@ -79,6 +79,8 @@ export {
   supervisorReject,
   requestDocuments,
   initiateDisbursement,
+  getLRSScore,
+  rescoreLRS,
 } from "./bank";
 
 export {

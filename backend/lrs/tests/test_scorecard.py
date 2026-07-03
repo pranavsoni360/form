@@ -17,11 +17,10 @@ def test_scorecard_loads_and_validates():
 def test_expected_pillars_and_weights():
     cfg = scorecard.load_scorecard()
     expected = {
-        "credit_bureau": 30,
+        "credit_bureau": 35,
         "income": 30,
-        "bank_statement": 20,
-        "personal_profile": 10,
-        "loan_specific": 10,
+        "banking_behaviour": 20,
+        "personal_profile": 15,
     }
     got = {k: v["weight"] for k, v in cfg["pillars"].items()}
     assert got == expected

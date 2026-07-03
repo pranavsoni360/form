@@ -23,8 +23,8 @@ def test_high_score_approves_low_rate():
         net_monthly_income=120000, existing_emi=0,
     )
     assert r.decision == "approve"
-    # base 11.0 + 0.0 premium for 85-100 band
-    assert r.interest_rate == pytest.approx(11.0)
+    # base 16.0 + 0.0 premium for 85-100 band
+    assert r.interest_rate == pytest.approx(16.0)
     assert r.risk_band == "Excellent"
     assert r.recommended_amount > 0
     assert r.recommended_emi > 0
@@ -37,7 +37,7 @@ def test_low_score_rejects_high_rate():
         net_monthly_income=120000, existing_emi=0,
     )
     assert r.decision == "reject"
-    assert r.interest_rate == pytest.approx(19.0)  # 11 + 8 premium
+    assert r.interest_rate == pytest.approx(25.0)  # 16 + 9 premium
 
 
 def test_mid_score_refers():
@@ -65,7 +65,7 @@ def test_capacity_caps_recommended_amount():
 def test_tenure_clamped_to_product_max():
     r = decision.decide(
         80, product_key="personal_loan",
-        requested_amount=300000, requested_tenure_months=120,  # over 60 max
+        requested_amount=150000, requested_tenure_months=120,  # over 24 max
         net_monthly_income=100000,
     )
-    assert r.recommended_tenure_m == 60
+    assert r.recommended_tenure_m == 24

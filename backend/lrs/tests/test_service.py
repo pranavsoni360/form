@@ -1,6 +1,8 @@
 """Integration tests for the LRS orchestration service (mock providers, no DB)."""
 import asyncio
 
+import pytest
+
 from lrs import normalize, service
 from lrs.providers.base import FetchContext
 from lrs.providers.mock import get_mock_providers
@@ -33,7 +35,7 @@ def test_score_application_full_result():
     assert r["recommended_amount"] >= 0
     assert r["interest_rate"] > 0
     assert set(r["pillar_scores"].keys()) == {
-        "credit_bureau", "income", "bank_statement", "personal_profile", "loan_specific",
+        "credit_bureau", "income", "banking_behaviour", "personal_profile",
     }
     assert r["config_version"]
 
@@ -51,13 +53,13 @@ def test_uses_real_form_income():
     assert r["canonical_inputs"]["net_monthly_income"] == 70000.0
 
 
-def test_normalize_derives_loan_specific():
-    inputs = normalize.to_canonical_inputs(FAKE_APP, [{"annual_income": 840000}])
-    # purpose "home renovation..." → 'home' keyword → home_loan
-    assert inputs["loan_purpose"] == "home_loan"
-    assert inputs["secured_unsecured"] == "secured"
-    assert inputs["loan_to_income_x"] == round(500000 / 840000, 3)
-    assert inputs["tenure_years"] == 4
+def test_normalize_derives_affordability_and_obligations():
+    inputs = normalize.to_canonical_inputs(FAKE_APP, [{"net_monthly_income": 70000}])
+    # existing EMI 12000 / 70000 = 17.14% → obligations
+    assert inputs["total_emi_pct_income"] == pytest.approx(17.14, abs=0.01)
+    assert inputs["dti_pct"] == pytest.approx(17.14, abs=0.01)
+    # proposed-loan EMI-to-income affordability computed
+    assert inputs["new_loan_emi_to_income_pct"] > 0
 
 
 def test_missing_provider_degrades_gracefully():

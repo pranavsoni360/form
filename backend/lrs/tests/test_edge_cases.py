@@ -62,21 +62,21 @@ def test_partial_pillar_still_scores_and_not_flagged_missing():
 
 def test_effective_weights_reweight_when_two_pillars_missing():
     inp = {k: v for k, v in GOOD_INPUTS.items()}
-    # Drop bank_statement + loan_specific entirely.
+    # Drop banking_behaviour + personal_profile entirely.
     drop = [k for k in inp if k in (
-        "amb_pct_of_nmi","net_cash_flow","cash_flow_ratio","surplus_income_ratio",
-        "volatility_index","negative_flow_ratio","fixed_expense_ratio",
-        "essential_spending_ratio","savings_ratio","overdrafts_per_month","penalty_count",
-        "otp_ratio_pct","missed_payment_ratio","emi_to_income_pct","cibil_penalty_count",
-        "loan_purpose","secured_unsecured","income_generating","essential_discretionary",
-        "loan_amount_to_annual_income_x","tenure_years","ltv_pct")]
+        "amb_pct_of_nmi", "otp_ratio_pct", "missed_payment_ratio", "penalty_count",
+        "net_cash_flow", "surplus_income_ratio",
+        "employer_reputation_class", "job_tenure_stability_pct", "income_cv_pct",
+        "age_years", "education_class", "ownership_class", "years_at_address",
+        "housing_burden_pct", "total_emi_pct_income", "active_loans_count",
+        "cc_utilization_pct", "dti_pct")]
     for k in drop:
         inp.pop(k)
     r = engine.score(inp)
-    assert set(r.missing_pillars) == {"bank_statement", "loan_specific"}
-    # credit(30)+income(30)+profile(10) = 70 → renormalize to 100
+    assert set(r.missing_pillars) == {"banking_behaviour", "personal_profile"}
+    # credit(35)+income(30) = 65 → renormalize to 100
     assert sum(r.effective_weights.values()) == pytest.approx(100, abs=0.05)
-    assert r.effective_weights["credit_bureau"] == pytest.approx(30/70*100, abs=0.05)
+    assert r.effective_weights["credit_bureau"] == pytest.approx(35 / 65 * 100, abs=0.05)
 
 
 # ---------- decision edge cases ----------
@@ -124,4 +124,5 @@ def test_end_to_end_good_applicant():
     assert d.decision == "approve"
     assert d.recommended_amount > 0
     assert d.recommended_emi > 0
-    assert 11.0 <= d.interest_rate <= 13.0
+    assert 16.0 <= d.interest_rate <= 18.0
+    assert d.recommended_amount <= 200000  # product cap for small-ticket

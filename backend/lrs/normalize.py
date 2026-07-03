@@ -1,9 +1,8 @@
 """Normalise provider payloads + application data into canonical scorecard inputs.
 
 Providers emit canonical `input_key` fields for their pillar; this module merges
-them and derives the loan-specific + ratio fields that come from the application
-itself (requested amount, tenure, purpose, income-relative ratios). The output
-is the flat dict the engine consumes.
+them and derives the affordability + existing-obligation ratios that come from
+the application itself. Output is the flat dict the engine consumes.
 """
 from __future__ import annotations
 
@@ -12,31 +11,19 @@ from typing import Any
 from lrs import decision
 
 # Nominal ROI used only to ESTIMATE the proposed loan's EMI-to-income at scoring
-# time (the real rate is set later in decision.decide). Kept deliberately simple.
-_NOMINAL_ROI = 13.0
+# time (the real rate is set later in decision.decide).
+_NOMINAL_ROI = 16.0
+# Tenure assumed for the affordability estimate when the form didn't capture one.
+_DEFAULT_TENURE_MONTHS = 24
 
-# Keyword → loan_purpose category (scorecard.json loan_specific.loan_purpose).
+# Keyword → loan_purpose category (used to pick the risk_premium product).
 _PURPOSE_KEYWORDS = [
-    ("home", "home_loan"),
-    ("house", "home_loan"),
-    ("auto", "auto_loan"),
-    ("car", "auto_loan"),
-    ("vehicle", "auto_loan"),
-    ("education", "education_low_tier"),
-    ("business", "business_expansion"),
-    ("consolidat", "debt_consolidation"),
-    ("wedding", "personal_loan"),
-    ("marriage", "personal_loan"),
-    ("travel", "personal_loan"),
-    ("medical", "personal_loan"),
-    ("crypto", "speculation"),
-    ("stock", "speculation"),
-    ("trading", "speculation"),
+    ("home", "home_loan"), ("house", "home_loan"),
+    ("auto", "auto_loan"), ("car", "auto_loan"), ("vehicle", "auto_loan"),
+    ("consumer", "consumer_durable"), ("durable", "consumer_durable"),
+    ("appliance", "consumer_durable"), ("phone", "consumer_durable"),
+    ("laptop", "consumer_durable"), ("tv", "consumer_durable"),
 ]
-
-_INCOME_GENERATING_PURPOSES = {"business_expansion", "auto_loan", "home_loan"}
-_ESSENTIAL_PURPOSES = {"home_loan", "education_low_tier", "education_top_institute", "auto_loan"}
-_SECURED_PURPOSES = {"home_loan", "auto_loan", "used_car_loan"}
 
 
 def _f(v) -> float | None:
@@ -55,7 +42,7 @@ def map_loan_purpose(text: str | None) -> str:
 
 
 def to_canonical_inputs(app: dict, payloads: list[dict]) -> dict[str, Any]:
-    """Merge provider payloads + derive application-based fields → engine inputs."""
+    """Merge provider payloads + derive affordability/obligation ratios."""
     inputs: dict[str, Any] = {}
     for p in payloads:
         if p:
@@ -66,47 +53,20 @@ def to_canonical_inputs(app: dict, payloads: list[dict]) -> dict[str, Any]:
     nmi = _f(inputs.get("net_monthly_income")) \
         or _f(app.get("monthly_net_income")) \
         or _f(app.get("monthly_gross_income")) or 0.0
-    annual_income = _f(inputs.get("annual_income")) or (nmi * 12)
     existing_emi = _f(app.get("monthly_emi_existing")) \
         or _f(inputs.get("total_existing_emi")) or 0.0
     tenure_years = _f(app.get("repayment_period_years")) or 0.0
 
-    # Ratios (guard divide-by-zero).
-    if annual_income > 0:
-        lti = round(requested_amount / annual_income, 3)
-        inputs.setdefault("loan_to_income_x", lti)
-        inputs.setdefault("loan_amount_to_annual_income_x", lti)
     if nmi > 0:
-        # Existing-obligation ratio → personal_profile.existing_liabilities.
-        # (bank_statement's own emi_to_income_pct comes from the statement provider.)
+        # Existing obligations → personal_profile.existing_liabilities.
         existing_pct = round(existing_emi / nmi * 100, 2)
         inputs.setdefault("total_emi_pct_income", existing_pct)
         inputs.setdefault("dti_pct", existing_pct)
-        # Proposed-loan EMI-to-income (estimate) → loan_specific.
-        if requested_amount > 0 and tenure_years > 0:
-            months = int(tenure_years * 12)
+        # Proposed-loan EMI-to-income (affordability) → income pillar.
+        if requested_amount > 0:
+            months = int(tenure_years * 12) if tenure_years > 0 else _DEFAULT_TENURE_MONTHS
             new_emi = decision.emi(requested_amount, _NOMINAL_ROI, months)
             inputs.setdefault("new_loan_emi_to_income_pct", round(new_emi / nmi * 100, 2))
-
-    inputs.setdefault("tenure_years", tenure_years)
-
-    # Loan-specific categoricals from the application.
-    purpose = map_loan_purpose(app.get("purpose_of_loan"))
-    inputs.setdefault("loan_purpose", purpose)
-    inputs.setdefault(
-        "secured_unsecured",
-        "secured" if purpose in _SECURED_PURPOSES else "unsecured",
-    )
-    inputs.setdefault(
-        "income_generating",
-        "income_generating" if purpose in _INCOME_GENERATING_PURPOSES else "not_generating",
-    )
-    inputs.setdefault(
-        "essential_discretionary",
-        "essential" if purpose in _ESSENTIAL_PURPOSES else "discretionary",
-    )
-    # LTV only meaningful for secured; default 0 (unsecured).
-    inputs.setdefault("ltv_pct", 0)
 
     return inputs
 
@@ -131,8 +91,8 @@ def decision_inputs(app: dict, inputs: dict) -> dict:
 
 
 def _product_for(app: dict) -> str:
-    """Choose the risk_premium product. Consumer-durable purposes → consumer_loan."""
+    """Consumer-durable / auto purposes → consumer_loan; else personal_loan."""
     purpose = map_loan_purpose(app.get("purpose_of_loan"))
-    if purpose in ("auto_loan", "used_car_loan"):
+    if purpose in ("auto_loan", "used_car_loan", "consumer_durable"):
         return "consumer_loan"
     return "personal_loan"

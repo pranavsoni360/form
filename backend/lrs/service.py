@@ -23,10 +23,15 @@ def _aadhaar(app: dict) -> str | None:
     return app.get("aadhaar_number") or app.get("ekyc_adhar") or app.get("aadhaar")
 
 
-async def score_application(app: dict, providers: list | None = None) -> dict[str, Any]:
+async def score_application(
+    app: dict,
+    providers: list | None = None,
+    config: dict | None = None,
+) -> dict[str, Any]:
     """Run the full LRS pipeline for one application row. Returns a dict shaped
     for the lrs_scores table. Provider exceptions propagate (so the job retries);
     a provider that returns {} is treated as genuinely-absent data (re-weighted).
+    Pass `config` to use the bank-configured scorecard instead of the file default.
     """
     ctx = FetchContext(pan=_pan(app), aadhaar=_aadhaar(app), phone=app.get("phone"), app=app)
     provs = providers if providers is not None else get_providers()
@@ -39,10 +44,10 @@ async def score_application(app: dict, providers: list | None = None) -> dict[st
         raw[getattr(p, "name", "provider")] = data or {}
 
     inputs = normalize.to_canonical_inputs(app, payloads)
-    result = engine.score(inputs)
+    result = engine.score(inputs, config=config)
 
     dinp = normalize.decision_inputs(app, inputs)
-    d = decision.decide(result.total_score, **dinp)
+    d = decision.decide(result.total_score, scorecard_cfg=config, **dinp)
 
     reasons = explain.build_reasons(
         result.pillar_scores, d.decision, result.rating, result.total_score

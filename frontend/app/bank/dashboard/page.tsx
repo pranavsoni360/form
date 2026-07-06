@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getBankApplications, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate } from '@/lib/api';
-import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle, Search } from 'lucide-react';
+import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle, Search, SlidersHorizontal } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 
@@ -115,6 +115,7 @@ export default function BankDashboardPage() {
               {[
                 { label: 'Calls', icon: <Phone className="w-4 h-4" />, path: '/bank/calls' },
                 { label: 'Batch', icon: <Upload className="w-4 h-4" />, path: '/bank/batch' },
+                { label: 'Scorecard', icon: <SlidersHorizontal className="w-4 h-4" />, path: '/bank/scorecard' },
               ].map(({ label, icon, path }) => (
                 <button key={label} onClick={() => router.push(path)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">

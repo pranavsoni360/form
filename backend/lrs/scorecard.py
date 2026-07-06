@@ -78,17 +78,17 @@ def _validate_scorecard(cfg: dict) -> None:
         params = pillar.get("parameters")
         if not params:
             raise ScorecardConfigError(f"pillar {pkey}: no parameters")
+        has_disabled = any(not node.get("enabled", True) for node in params.values())
         pw = 0.0
         for name, node in params.items():
             if "weight" not in node:
                 raise ScorecardConfigError(f"{pkey}.{name}: missing weight")
             pw += float(node["weight"])
             _validate_node(node, f"{pkey}.{name}")
-        # Parameter weights are ABSOLUTE (share of the total 100), so within a
-        # pillar they sum to that pillar's weight — not to 100. This matches the
-        # reference xlsx ("Credit Score 15%") and makes missing-pillar
-        # re-weighting a simple renormalisation of remaining absolute weights.
-        if abs(pw - float(pillar["weight"])) > _WEIGHT_TOLERANCE:
+        # When no params are disabled, weights must sum exactly to pillar weight.
+        # When some are disabled the bank holds their original weights for reference;
+        # the engine rescales at scoring time so we skip the strict check.
+        if not has_disabled and abs(pw - float(pillar["weight"])) > _WEIGHT_TOLERANCE:
             raise ScorecardConfigError(
                 f"pillar {pkey}: parameter weights sum to {pw}, "
                 f"expected {pillar['weight']} (pillar weight)"
@@ -139,3 +139,37 @@ def load_risk_premium() -> dict:
 
 def config_version() -> str:
     return load_scorecard().get("config_version", "unknown")
+
+
+# ── DB-backed config (bank-configurable, mutable) ─────────────────────────────
+
+_live_config: dict | None = None  # in-process cache; invalidated on PUT /api/lrs/config
+
+
+async def get_db_config(pool) -> dict:
+    """Return active scorecard config from DB; seeds from file on first call."""
+    global _live_config
+    if _live_config is not None:
+        return _live_config
+    row = await pool.fetchrow("SELECT config FROM lrs_scorecard_config WHERE id = 1")
+    if not row:
+        cfg = load_scorecard()
+        await save_db_config(pool, cfg)
+        return cfg
+    # asyncpg returns JSONB columns as dicts directly
+    cfg = dict(row["config"])
+    _live_config = cfg
+    return cfg
+
+
+async def save_db_config(pool, config: dict) -> None:
+    """Validate, persist to DB, and refresh in-process cache."""
+    global _live_config
+    _validate_scorecard(config)
+    await pool.execute(
+        "INSERT INTO lrs_scorecard_config(id, config, updated_at) "
+        "VALUES(1, $1::jsonb, NOW()) "
+        "ON CONFLICT (id) DO UPDATE SET config = $1::jsonb, updated_at = NOW()",
+        json.dumps(config),
+    )
+    _live_config = config

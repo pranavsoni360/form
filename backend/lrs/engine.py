@@ -12,6 +12,7 @@ parameters are renormalised inside `pillars.score_node`).
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 
 from lrs import scorecard
@@ -59,9 +60,31 @@ def _node_to_dict(name: str, r: NodeResult) -> dict:
     return d
 
 
+def _prepare_config(cfg: dict) -> dict:
+    """Return a scoring-ready config with disabled parameters removed and
+    remaining parameter weights rescaled proportionally to fill each pillar weight."""
+    cfg = copy.deepcopy(cfg)
+    for pillar in cfg["pillars"].values():
+        params = pillar["parameters"]
+        active = {k: v for k, v in params.items() if v.get("enabled", True)}
+        if not active:
+            pillar["parameters"] = {}
+            continue
+        if len(active) < len(params):
+            pillar_w = float(pillar["weight"])
+            active_w = sum(float(p["weight"]) for p in active.values())
+            if active_w > 0:
+                scale = pillar_w / active_w
+                for p in active.values():
+                    p["weight"] = round(float(p["weight"]) * scale, 6)
+        pillar["parameters"] = active
+    return cfg
+
+
 def score(inputs: dict, config: dict | None = None) -> EngineResult:
     """Compute the final LRS score from canonical inputs."""
-    cfg = config or scorecard.load_scorecard()
+    raw_cfg = config or scorecard.load_scorecard()
+    cfg = _prepare_config(raw_cfg)
     pillars = cfg["pillars"]
 
     pillar_results: dict[str, NodeResult] = {}

@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 
-from lrs import service
+from lrs import scorecard as sc_module, service
 
 logger = logging.getLogger("lrs-handler")
 
@@ -50,7 +50,8 @@ async def run_and_persist(db_pool, application_id, *, force: bool = False) -> di
     )
 
     try:
-        result = await service.score_application(app)
+        config = await sc_module.get_db_config(db_pool)
+        result = await service.score_application(app, config=config)
     except Exception as e:
         await db_pool.execute(
             "UPDATE lrs_scores SET status='failed', error=$2, updated_at=NOW() "

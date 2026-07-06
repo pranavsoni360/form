@@ -50,6 +50,8 @@ export default function BatchPage() {
   const [cleaning, setCleaning]   = useState(false);
   const [resuming, setResuming]   = useState(false);
   const [notice, setNotice] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsAgo, setSecondsAgo]   = useState(0);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const [batchCalls, setBatchCalls]       = useState<Record<string, any[]>>({});
   const [loadingCalls, setLoadingCalls]   = useState<string | null>(null);
@@ -115,6 +117,7 @@ export default function BatchPage() {
     try {
       const res = await fetch(`${API_URL}/api/agent/batch-status`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
       setBatchStatus(await res.json());
+      setLastUpdated(new Date());
     } catch { }
   }, [token]);
 
@@ -150,6 +153,22 @@ export default function BatchPage() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Auto-poll every 5s while calls are active or pending
+  useEffect(() => {
+    if (!token) return;
+    const isLive = (batchStatus?.active_calls ?? 0) > 0 || (batchStatus?.pending ?? 0) > 0;
+    if (!isLive) return;
+    const id = setInterval(() => fetchStatus(token), 5000);
+    return () => clearInterval(id);
+  }, [token, batchStatus?.active_calls, batchStatus?.pending, fetchStatus]);
+
+  // Tick "X seconds ago" counter
+  useEffect(() => {
+    if (!lastUpdated) return;
+    const id = setInterval(() => setSecondsAgo(Math.floor((Date.now() - lastUpdated.getTime()) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [lastUpdated]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -204,11 +223,14 @@ export default function BatchPage() {
     if (!batchCalls[batchId]) fetchBatchCalls(batchId);
   };
 
+  const isLive = (batchStatus?.active_calls ?? 0) > 0 || (batchStatus?.pending ?? 0) > 0;
+
   const statItems = [
-    { label: 'Active Calls', value: batchStatus?.active_calls ?? 0, accent: 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500' },
-    { label: 'Completed',    value: batchStatus?.completed    ?? 0, accent: 'bg-emerald-50 dark:bg-emerald-950/30 border-l-4 border-l-emerald-500' },
-    { label: 'Pending',      value: batchStatus?.pending      ?? 0, accent: 'bg-amber-50 dark:bg-amber-950/30 border-l-4 border-l-amber-500' },
-    { label: 'Failed',       value: batchStatus?.failed       ?? 0, accent: 'bg-red-50 dark:bg-red-950/30 border-l-4 border-l-red-500' },
+    { label: 'Active Now',  value: batchStatus?.active_calls ?? 0, accent: 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-l-blue-500' },
+    { label: 'Pending',     value: batchStatus?.pending      ?? 0, accent: 'bg-amber-50 dark:bg-amber-950/30 border-l-4 border-l-amber-500' },
+    { label: 'Completed',   value: batchStatus?.completed    ?? 0, accent: 'bg-emerald-50 dark:bg-emerald-950/30 border-l-4 border-l-emerald-500' },
+    { label: 'Failed',      value: batchStatus?.failed       ?? 0, accent: 'bg-red-50 dark:bg-red-950/30 border-l-4 border-l-red-500' },
+    { label: 'Total',       value: batchStatus?.total        ?? 0, accent: 'bg-slate-50 dark:bg-slate-800/50 border-l-4 border-l-slate-400' },
   ];
 
   return (
@@ -251,8 +273,31 @@ export default function BatchPage() {
         {/* Live Status */}
         {batchStatus && (
           <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
-            <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-4">Live Status</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                {isLive && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                  </span>
+                )}
+                <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                  {isLive ? 'Calling — live' : batchStatus?.pending === 0 && batchStatus?.active_calls === 0 ? 'Idle' : 'Live Status'}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {lastUpdated && (
+                  <span className="text-xs text-slate-400 dark:text-slate-500">
+                    Updated {secondsAgo}s ago
+                  </span>
+                )}
+                <button onClick={() => fetchStatus(token)}
+                  className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3" /> Refresh
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               {statItems.map(({ label, value, accent }) => (
                 <div key={label} className={`rounded-lg px-4 py-3 border border-slate-200 dark:border-slate-800 ${accent}`}>
                   <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
@@ -260,6 +305,9 @@ export default function BatchPage() {
                 </div>
               ))}
             </div>
+            {batchStatus?.message && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">{batchStatus.message}</p>
+            )}
           </div>
         )}
 

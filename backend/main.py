@@ -163,6 +163,10 @@ app.include_router(vendor_router)
 from guarantor.routes import router as guarantor_router  # noqa: E402
 app.include_router(guarantor_router, prefix="/api/guarantor", tags=["guarantor"])
 
+# LRS (Loan Recommendation System) score endpoints
+from lrs.routes import router as lrs_router  # noqa: E402
+app.include_router(lrs_router, prefix="/api/lrs", tags=["lrs"])
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
@@ -846,6 +850,13 @@ async def shutdown():
 
 # Mount uploads directory
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+# Mount recordings directory (LiveKit egress writes call audio .ogg files here).
+# Served under /api so nginx's existing /api -> backend route reaches it; the
+# backend runs as root so it can read the egress dir under /root (nginx cannot).
+# check_dir=False so non-server environments (no such dir) still start cleanly.
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "/root/livekit-sip-server/recordings")
+app.mount("/api/recordings", StaticFiles(directory=RECORDINGS_DIR, check_dir=False), name="recordings")
 
 # ============================================
 # PYDANTIC MODELS
@@ -2496,6 +2507,12 @@ async def submit_form(token: str, request: Request):
         await enqueue_guarantor_consent_call(db_pool, app_uuid)
     except Exception as e:
         logger.warning(f"Guarantor enqueue failed (non-blocking): {e}")
+    # LRS scoring (additive, best-effort — never block submission)
+    try:
+        from lrs.trigger import enqueue_lrs_scoring
+        await enqueue_lrs_scoring(db_pool, app_uuid)
+    except Exception as e:
+        logger.warning(f"LRS enqueue failed (non-blocking): {e}")
     la = float(token_row["loan_amount"]) if token_row["loan_amount"] else 0
     message = (
         f"Dear {token_row['customer_name']},\n\nYour loan application has been submitted successfully!\n\n"
@@ -3199,6 +3216,12 @@ async def submit_form_session(session_token: str, request: Request):
         await enqueue_guarantor_consent_call(db_pool, app_row["id"])
     except Exception as e:
         logger.warning(f"Guarantor enqueue failed (non-blocking): {e}")
+    # LRS scoring (additive, best-effort — never block submission)
+    try:
+        from lrs.trigger import enqueue_lrs_scoring
+        await enqueue_lrs_scoring(db_pool, app_row["id"])
+    except Exception as e:
+        logger.warning(f"LRS enqueue failed (non-blocking): {e}")
     # Send confirmation via AiSensy
     try:
         customer_name = app_row["customer_name"] or "Customer"

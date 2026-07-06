@@ -5,7 +5,7 @@ const fs = require("fs");
 
 const app = next({ dev: false });
 const handle = app.getRequestHandler();
-const port = 3001;
+const port = parseInt(process.env.PORT, 10) || 3001;
 
 const httpsOptions = {
   key: fs.readFileSync("/etc/letsencrypt/live/virtualvaani.vgipl.com-0002/privkey.pem"),

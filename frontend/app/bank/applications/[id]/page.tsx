@@ -7,6 +7,7 @@ import { ArrowLeft, User, Briefcase, FileText, ClipboardCheck, CheckCircle2, XCi
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 import { AssignVendorPanel } from '@/components/bank/AssignVendorPanel';
+import { LRSScorePanel } from '@/components/bank/LRSScorePanel';
 
 interface TimelineEvent {
   id: string;
@@ -176,6 +177,9 @@ export default function ApplicationDetailPage() {
             </div>
           </div>
         )}
+
+        {/* LRS Credit Assessment */}
+        {token && <LRSScorePanel token={token} applicationId={appId} canRescore={isOfficer} />}
 
         {/* Personal Details */}
         <Section title="Personal Details" icon={User} sectionKey="personal">

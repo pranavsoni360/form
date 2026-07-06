@@ -1,5 +1,5 @@
 'use client';
-import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -794,7 +794,7 @@ export default function LoanApplication() {
 
           {currentStep === 1 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="🪪" color="#2563EB" title="KYC & Personal Details" />
+              <SectionTitle icon="KYC" color="#2563EB" title="KYC & Personal Details" />
               {nameMatchLocked && (
                 <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
                   <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: '#DC2626' }} />
@@ -808,7 +808,7 @@ export default function LoanApplication() {
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
                   <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
-                    <span style={{ fontSize: '13px' }}>🔐</span>
+                    <Lock className="w-3.5 h-3.5" style={{ color: '#2563EB' }} />
                   </div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Identity Verification</p>
                 </div>
@@ -893,7 +893,7 @@ export default function LoanApplication() {
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
                   <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
-                    <span style={{ fontSize: '13px' }}>👤</span>
+                    <User className="w-3.5 h-3.5" style={{ color: '#2563EB' }} />
                   </div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Personal Details</p>
                 </div>
@@ -930,11 +930,11 @@ export default function LoanApplication() {
 
           {currentStep === 2 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="🏠" color="#059669" title="Address Details" />
+              <SectionTitle icon="ADR" color="#059669" title="Address Details" />
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><span style={{ fontSize: '13px' }}>🏡</span></div>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><Home className="w-3.5 h-3.5" style={{ color: '#059669' }} /></div>
                     <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Current Address</p>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -978,7 +978,7 @@ export default function LoanApplication() {
               </div>
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><span style={{ fontSize: '13px' }}>📍</span></div>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><MapPin className="w-3.5 h-3.5" style={{ color: '#059669' }} /></div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Permanent Address</p>
                 </div>
                 <div className="p-5 space-y-4">
@@ -1023,10 +1023,10 @@ export default function LoanApplication() {
 
           {currentStep === 3 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="💼" color="#D97706" title="Occupation Details" />
+              <SectionTitle icon="WRK" color="#D97706" title="Occupation Details" />
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#FFFBEB', borderBottom: '1px solid #FDE68A' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#D9770618' }}><span style={{ fontSize: '13px' }}>🏢</span></div>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#D9770618' }}><Building2 className="w-3.5 h-3.5" style={{ color: '#D97706' }} /></div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Employment Details</p>
                 </div>
               <div className="p-5 space-y-4">
@@ -1096,7 +1096,7 @@ export default function LoanApplication() {
               {/* ── Loan Type Selector ── */}
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><span style={{ fontSize: '13px' }}>🏷️</span></div>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><Tag className="w-3.5 h-3.5" style={{ color: '#7C3AED' }} /></div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Type</p>
                   {(() => {
                     const src = formData.field_sources?.consumer_loan_type;
@@ -1109,8 +1109,8 @@ export default function LoanApplication() {
                 <div className="p-5">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
-                      { value: 'personal', label: 'Personal Loan', desc: 'For any personal need — medical, travel, wedding, etc.', icon: '👤' },
-                      { value: 'consumer_durable', label: 'Consumer Durable Loan', desc: 'For buying electronics or home appliances with a dealer quotation.', icon: '🛒' },
+                      { value: 'personal', label: 'Personal Loan', desc: 'For any personal need — medical, travel, wedding, etc.' },
+                      { value: 'consumer_durable', label: 'Consumer Durable Loan', desc: 'For buying electronics or home appliances with a dealer quotation.' },
                     ].map(opt => (
                       <button key={opt.value} type="button"
                         onClick={() => onChange('consumer_loan_type', opt.value)}
@@ -1120,7 +1120,6 @@ export default function LoanApplication() {
                           background: (formData.consumer_loan_type || 'personal') === opt.value ? '#F5F3FF' : '#fff',
                         }}>
                         <div className="flex items-center gap-2 mb-1">
-                          <span style={{ fontSize: '18px' }}>{opt.icon}</span>
                           <span className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{opt.label}</span>
                           {(formData.consumer_loan_type || 'personal') === opt.value && (
                             <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#7C3AED', color: '#fff' }}>Selected</span>
@@ -1137,7 +1136,7 @@ export default function LoanApplication() {
               {(formData.consumer_loan_type || 'personal') === 'consumer_durable' && (
                 <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #FED7AA', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                   <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#FFF7ED', borderBottom: '1px solid #FED7AA' }}>
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#F9731618' }}><span style={{ fontSize: '13px' }}>🛒</span></div>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#F9731618' }}><ShoppingBag className="w-3.5 h-3.5" style={{ color: '#F97316' }} /></div>
                     <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Product & Dealer Details</p>
                   </div>
                   <div className="p-5 space-y-4">
@@ -1233,7 +1232,7 @@ export default function LoanApplication() {
 
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><span style={{ fontSize: '13px' }}>💳</span></div>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><CreditCard className="w-3.5 h-3.5" style={{ color: '#7C3AED' }} /></div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Details</p>
                 </div>
               <div className="p-5 space-y-4">
@@ -1257,7 +1256,7 @@ export default function LoanApplication() {
 
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><span style={{ fontSize: '13px' }}>💰</span></div>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><Banknote className="w-3.5 h-3.5" style={{ color: '#059669' }} /></div>
                   <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Financial Details</p>
                 </div>
               <div className="p-5 space-y-4">
@@ -1287,7 +1286,7 @@ export default function LoanApplication() {
                 return (
                 <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', opacity: disabled ? 0.5 : 1 }}>
                   <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0F9FF', borderBottom: '1px solid #BAE6FD' }}>
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E918' }}><span style={{ fontSize: '13px' }}>🤝</span></div>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E918' }}><Users className="w-3.5 h-3.5" style={{ color: '#0EA5E9' }} /></div>
                     <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Guarantor Details</p>
                     {required
                       ? <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#FEE2E2', color: '#B91C1C', fontFamily: 'var(--font-body)' }}>Required for loans &gt; ₹1 lakh</span>
@@ -1323,7 +1322,7 @@ export default function LoanApplication() {
 
           {currentStep === 5 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="📎" color="#DC2626" title="Document Upload" />
+              <SectionTitle icon="DOC" color="#DC2626" title="Document Upload" />
               <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · PDF / JPG / PNG accepted</p>
               <div className="space-y-3">
                 {[
@@ -1403,7 +1402,7 @@ export default function LoanApplication() {
 
           {currentStep === 6 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="✅" color="#059669" title="Review & Submit" />
+              <SectionTitle icon="RVW" color="#059669" title="Review & Submit" />
               <RS title="Identity & KYC">
                 <RR label="PAN" value={formData.pan_number ? formData.pan_number.slice(0,2)+'***'+formData.pan_number.slice(-2) : ''} />
                 <RR label="Aadhaar" value={formData.aadhaar_number ? 'XXXX XXXX '+String(formData.aadhaar_number).slice(-4) : formData.aadhaar_last4 ? `XXXX XXXX ${formData.aadhaar_last4}` : ''} />
@@ -1570,8 +1569,8 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
 function SectionTitle({ icon, color, title }: { icon: string; color: string; title: string }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
-        style={{ background: color + '18', border: `1px solid ${color}28` }}>
+      <div className="w-8 h-8 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+        style={{ background: color + '18', border: `1px solid ${color}40`, color, fontFamily: 'var(--font-heading)' }}>
         {icon}
       </div>
       <h2 className="text-lg font-bold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{title}</h2>

@@ -210,8 +210,8 @@ function ParamRow({
             className="w-16 px-2 py-1 rounded text-xs text-right outline-none"
             style={{ border: '1px solid #CBD5E1', background: disabled ? '#F1F5F9' : '#fff', color: '#0F172A' }}
           />
-          <span className="text-[10px] w-20 text-right" style={{ color: '#64748B' }}>
-            {disabled ? '(disabled)' : `→ ${effW.toFixed(1)} eff.`}
+          <span className="text-[10px] w-24 text-right" style={{ color: disabled ? '#94A3B8' : '#2563EB' }}>
+            {disabled ? '(excluded)' : `→ ${effW.toFixed(1)} pts effective`}
           </span>
         </div>
       </div>
@@ -291,9 +291,8 @@ function PillarCard({
   onUpdateParam: (pk: string, ppk: string, updated: ScoreParam) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const enabledW = enabledWeightSum(pillar);
-  const allW = Object.values(pillar.parameters).reduce((s, p) => s + p.weight, 0);
-  const weightOk = Math.abs(enabledW - pillar.weight) < 0.5;
+  const activeCount = Object.values(pillar.parameters).filter(p => p.enabled !== false).length;
+  const totalCount = Object.keys(pillar.parameters).length;
 
   return (
     <div className="rounded-xl mb-4 overflow-hidden"
@@ -307,8 +306,7 @@ function PillarCard({
         <span className="flex-1 font-semibold text-sm">{pillar.title}</span>
         <div className="flex items-center gap-2">
           <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            {Object.values(pillar.parameters).filter(p => p.enabled !== false).length}/
-            {Object.keys(pillar.parameters).length} active
+            {activeCount}/{totalCount} active
           </span>
           <div className="flex items-center gap-1.5">
             <input type="number" min="0" max="100" step="1"
@@ -321,15 +319,6 @@ function PillarCard({
           </div>
         </div>
       </button>
-
-      {!weightOk && open && (
-        <div className="flex items-center gap-2 px-4 py-2 text-xs"
-          style={{ background: '#FEF3C7', color: '#92400E', borderBottom: '1px solid #FDE68A' }}>
-          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-          Active parameter weights sum to {enabledW.toFixed(1)}, but pillar weight is {pillar.weight}.
-          Adjust weights so they match — the engine will rescale, but mismatches may cause unexpected effective weights.
-        </div>
-      )}
 
       {open && (
         <div className="p-4" style={{ background: '#F8FAFC' }}>
@@ -563,8 +552,8 @@ export default function ScorecardPage() {
           <p className="font-semibold mb-1" style={{ color: '#374151' }}>How weights work</p>
           <ul className="space-y-1 list-disc list-inside">
             <li>Pillar weights must sum to <strong>100</strong>.</li>
-            <li>Parameter weights are absolute points — active ones should sum to their pillar weight.</li>
-            <li>Disabled parameters are <strong>excluded from scoring</strong>; remaining weights are proportionally scaled at scoring time.</li>
+            <li>Parameter weights are <strong>relative</strong> — you set any numbers, and the enabled ones are auto-rescaled to fill their pillar weight. The <span style={{ color: '#2563EB' }}>→ effective</span> value shows each parameter&apos;s real contribution.</li>
+            <li>Disabling or re-weighting a parameter <strong>proportionally rebalances</strong> the rest automatically — no need to make them add up.</li>
             <li>If a parameter requires a document and none was submitted, its score is capped at the configured max (default 95).</li>
           </ul>
         </div>

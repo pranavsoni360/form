@@ -70,13 +70,15 @@ def _prepare_config(cfg: dict) -> dict:
         if not active:
             pillar["parameters"] = {}
             continue
-        if len(active) < len(params):
-            pillar_w = float(pillar["weight"])
-            active_w = sum(float(p["weight"]) for p in active.values())
-            if active_w > 0:
-                scale = pillar_w / active_w
-                for p in active.values():
-                    p["weight"] = round(float(p["weight"]) * scale, 6)
+        # Parameter weights are RELATIVE — always renormalise the enabled ones so
+        # they fill the pillar weight, regardless of what they sum to. Disabling
+        # or re-weighting any parameter proportionally rebalances the rest.
+        pillar_w = float(pillar["weight"])
+        active_w = sum(float(p["weight"]) for p in active.values())
+        if active_w > 0:
+            scale = pillar_w / active_w
+            for p in active.values():
+                p["weight"] = round(float(p["weight"]) * scale, 6)
         pillar["parameters"] = active
     return cfg
 

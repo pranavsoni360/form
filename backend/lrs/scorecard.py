@@ -78,20 +78,21 @@ def _validate_scorecard(cfg: dict) -> None:
         params = pillar.get("parameters")
         if not params:
             raise ScorecardConfigError(f"pillar {pkey}: no parameters")
-        has_disabled = any(not node.get("enabled", True) for node in params.values())
-        pw = 0.0
+        enabled_w = 0.0
         for name, node in params.items():
             if "weight" not in node:
                 raise ScorecardConfigError(f"{pkey}.{name}: missing weight")
-            pw += float(node["weight"])
+            if node.get("enabled", True):
+                enabled_w += float(node["weight"])
             _validate_node(node, f"{pkey}.{name}")
-        # When no params are disabled, weights must sum exactly to pillar weight.
-        # When some are disabled the bank holds their original weights for reference;
-        # the engine rescales at scoring time so we skip the strict check.
-        if not has_disabled and abs(pw - float(pillar["weight"])) > _WEIGHT_TOLERANCE:
+        # Parameter weights are RELATIVE proportions within a pillar — the engine
+        # renormalises the enabled ones to fill the pillar weight at scoring time
+        # (see engine._prepare_config). So they need not sum to the pillar weight;
+        # we only require at least one enabled parameter with positive weight, so
+        # the pillar can produce a score.
+        if enabled_w <= 0:
             raise ScorecardConfigError(
-                f"pillar {pkey}: parameter weights sum to {pw}, "
-                f"expected {pillar['weight']} (pillar weight)"
+                f"pillar {pkey}: needs at least one enabled parameter with weight > 0"
             )
     if not _approx_100(total_w):
         raise ScorecardConfigError(

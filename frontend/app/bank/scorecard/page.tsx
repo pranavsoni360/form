@@ -349,7 +349,13 @@ export default function ScorecardPage() {
   useEffect(() => {
     if (!token) { router.push('/bank/login'); return; }
     fetch(`${API_URL}/api/lrs/config`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
+      .then(async r => {
+        const data = await r.json();
+        if (!r.ok || !data || typeof data !== 'object' || !data.pillars) {
+          throw new Error(data?.detail || data?.error || 'Invalid scorecard config response');
+        }
+        return data as ScorecardConfig;
+      })
       .then(data => {
         setConfig(deepClone(data));
         setOriginal(deepClone(data));
@@ -364,8 +370,8 @@ export default function ScorecardPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const totalPillarWeight = config
-    ? Object.values(config.pillars).reduce((s, p) => s + p.weight, 0)
+  const totalPillarWeight = config?.pillars
+    ? Object.values(config.pillars).reduce((s, p) => s + (p.weight || 0), 0)
     : 0;
 
   const handleSave = async () => {

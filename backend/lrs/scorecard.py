@@ -157,8 +157,10 @@ async def get_db_config(pool) -> dict:
         cfg = load_scorecard()
         await save_db_config(pool, cfg)
         return cfg
-    # asyncpg returns JSONB columns as dicts directly
-    cfg = dict(row["config"])
+    # asyncpg returns JSONB as a str unless a codec is registered on the pool;
+    # accept either a str (json) or an already-decoded dict.
+    raw = row["config"]
+    cfg = json.loads(raw) if isinstance(raw, str) else dict(raw)
     _live_config = cfg
     return cfg
 

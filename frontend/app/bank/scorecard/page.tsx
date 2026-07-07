@@ -355,7 +355,7 @@ export default function ScorecardPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
-  const token = typeof window !== 'undefined' ? getAccessToken() : null;
+  const token = typeof window !== 'undefined' ? getAccessToken('bank') : null;
 
   useEffect(() => {
     if (!token) { router.push('/bank/login'); return; }

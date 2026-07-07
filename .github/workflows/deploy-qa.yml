@@ -30,5 +30,10 @@ jobs:
           command_timeout: 20m
           script: |
             set -e
-            cd /root/vaani_los_form
+            # Run the qa-branch copy of the deploy script (prod's copy is stale and
+            # only moves on a master deploy). Refresh the QA worktree, then exec its
+            # deploy-qa.sh so script changes on `qa` take effect immediately.
+            cd /root/vaani_los_form_qa
+            git fetch origin qa
+            git reset --hard origin/qa
             bash scripts/deploy-qa.sh

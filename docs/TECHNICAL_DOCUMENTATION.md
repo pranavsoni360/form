@@ -188,6 +188,7 @@ PostgreSQL, accessed with raw parameterized SQL via `asyncpg` (no ORM). `gen_ran
 | `/api/...` (root) | `main.py` | customer form, OTP, autosave, submit, auth (bank/admin), admin review |
 | `/api/agent/*` | `agent_routes.py` → `agent/*` | batch upload/call, transcript webhook, calls list/detail, callbacks, whatsapp |
 | `/api/guarantor/*` | `guarantor/routes.py` | consent + transcript webhooks |
+| `/api/lrs/*` | `lrs/routes.py` | credit score fetch/rescore + bank-configurable scorecard config |
 | `/ops/*` | `routers/ops.py` | ops dashboard REST |
 | `/events` (SSE) | `routers/realtime.py` | realtime stream |
 | `/api/internal/*` | `routers/internal.py` | HMAC-signed internal (error ingest) |
@@ -450,7 +451,50 @@ Portals (each route is a `page.tsx` under `frontend/app/`):
 
 ---
 
-## 16. Known constraints & gotchas
+## 16. LRS credit-scoring & bank-configurable scorecard
+
+The **LRS** (Loan Recommendation System) scores each application 0–100 across four weighted pillars and produces a decision (approve / refer / reject) plus a risk-priced offer. The full scorecard — weights, bands, and which parameters count — is editable live from the bank portal, with no code deploy.
+
+### 16.1 Scoring model (`backend/lrs/`)
+| File | Responsibility |
+|---|---|
+| `service.py` | Orchestrates one application: providers → normalize → engine → decision → explain. Pure async, no DB. |
+| `engine.py` | Rolls parameters up to a final weighted 0–100 score; drops absent pillars and renormalizes to 100. |
+| `pillars.py` | Pure per-node scoring (range band lookup / category map / composite weighted-average) + the missing-document cap. |
+| `normalize.py` | Merges provider payloads, derives affordability/obligation ratios, injects `_doc_<field>` availability flags. |
+| `decision.py` | Thresholds → decision; risk band → ROI; FOIR-bounded recommended amount / tenure / EMI. |
+| `scorecard.py` | Config loader/validator + DB-backed active config (`get_db_config` / `save_db_config`). |
+| `handlers.py` | Job handler `lrs_score` + `run_and_persist`; writes `lrs_scores`, mirrors headline onto `loan_applications`. |
+| `routes.py` | `/api/lrs/*` endpoints. |
+
+The four pillars: **Credit Bureau (35)**, **Income & Affordability (30)**, **Banking Behaviour (20)**, **Profile & Identity (15)** — tuned for small-ticket unsecured loans. Weights shown are the file default; the active config lives in the DB and is bank-editable.
+
+### 16.2 Bank-configurable scorecard
+- **Where:** Bank dashboard → **Scorecard** nav → `/bank/scorecard` (`frontend/app/bank/scorecard/page.tsx`).
+- **What's editable:** decision thresholds (approve-≥ / refer-≥), pillar weights, per-parameter weights, range band cut-offs & scores, category scores, per-parameter enable/disable, and per-parameter "requires document" with a missing-doc score cap.
+- **Effect:** immediate — the next scoring or rescore uses the saved config. One active config, no versioning; any application can be re-scored against the current config at any time.
+
+### 16.3 Behavioral rules
+- **Parameter weights are RELATIVE proportions, not absolutes.** The engine (`engine._prepare_config`) renormalizes the *enabled* parameters to fill their pillar weight. Raw `5/0/3/3` (sum 11) in a pillar weighted 15 scores as `6.82/0/4.09/4.09` (sum 15). The UI shows each parameter's live `→ N pts effective`.
+- **Disabling or re-weighting a parameter auto-rebalances the rest proportionally** — no manual "make it add up" step, no warning.
+- **Only hard constraint:** pillar weights must total **100** (save is blocked otherwise). Each pillar must keep ≥1 enabled parameter with weight > 0.
+- **Missing-document cap:** if a parameter has `doc_required: true` and the mapped document (`doc_field`, e.g. `bank_statement_url`) is absent on the application, that parameter's score is capped at `no_doc_max_score` (default **95**). Because weights renormalize, the effective out-of-100 stays proportionate.
+
+### 16.4 Storage & API
+- **Table:** `lrs_scorecard_config` — single row (`id=1`), JSONB `config`, seeded from `backend/lrs/config/scorecard.json` on first read. Migration: `database/migration_v20_lrs_scorecard_config.sql`.
+- **Score storage:** `lrs_scores` (per application; migrations v18/v19) with pillar breakdown, effective weights, missing pillars, plain-language reasons, and the mirror onto `loan_applications.system_score / system_suggestion`.
+- **Endpoints (mounted at `/api/lrs`):**
+  | Method | Path | Purpose |
+  |---|---|---|
+  | `GET` | `/config` | Fetch active scorecard config (seeds from file on first call) |
+  | `PUT` | `/config` | Validate + persist a new config; takes effect immediately (422 on invalid) |
+  | `GET` | `/score/{application_id}` | Stored score for an application |
+  | `POST` | `/rescore/{application_id}` | Force re-score against the current config |
+- **Config cache:** `scorecard.py` holds an in-process copy invalidated on every `PUT`, so edits propagate without restart.
+
+---
+
+## 17. Known constraints & gotchas
 
 - **Telephony, not code, is the usual blocker for failed calls:** check `agent_calls.error_message` and the provider console first (Twilio trial 32100 / Vobiz international-not-enabled / pool cooldown).
 - **`+91` default:** any number stored **without** a `+` and not matching an Indian pattern is treated per `_to_e164`; always store international numbers with their `+`.

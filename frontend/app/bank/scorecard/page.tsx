@@ -76,7 +76,7 @@ const DOC_FIELDS = [
 function BandEditor({ bands, onChange }: { bands: Band[]; onChange: (b: Band[]) => void }) {
   const update = (i: number, key: keyof Band, val: string) => {
     const next = deepClone(bands);
-    (next[i] as Record<string, unknown>)[key] = key === 'rating' || key === 'approval' ? val : parseFloat(val) || 0;
+    (next[i] as unknown as Record<string, unknown>)[key] = key === 'rating' || key === 'approval' ? val : parseFloat(val) || 0;
     onChange(next);
   };
   return (

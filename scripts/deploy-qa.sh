@@ -34,15 +34,36 @@ for f in "$QA"/database/migration*.sql; do
 done
 
 echo "── 4. rebuild QA frontend ──"
-cd "$QA/frontend" && PORT=3002 npm run build 2>&1 | tail -3
+# Build BEFORE restarting anything. If it fails, abort the deploy — the old
+# build keeps serving and QA stays up (a broken build must never take QA down).
+cd "$QA/frontend"
+if ! PORT=3002 npm run build 2>&1 | tail -20; then
+  echo "❌ QA frontend build FAILED — aborting deploy, services NOT restarted (old build still serving)"
+  exit 1
+fi
+if [ ! -f "$QA/frontend/.next/BUILD_ID" ]; then
+  echo "❌ .next/BUILD_ID missing after build — aborting deploy, services NOT restarted"
+  exit 1
+fi
 
 echo "── 5. restart QA services ──"
 systemctl restart los-backend-qa los-agent-qa-pusad los-agent-qa-union los-agent-qa-guarantor los-frontend-qa
 sleep 9
 
 echo "── 6. health ──"
-curl -fsk -o /dev/null -w "QA backend /readyz: HTTP %{http_code}\n" https://localhost:8300/readyz || echo "BACKEND UNHEALTHY"
+# Fail the deploy loudly if anything is unhealthy, so the workflow goes red
+# (and GitHub notifies) instead of silently reporting success on a dead QA.
+FAILED=0
+code=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8300/readyz || echo 000)
+echo "QA backend /readyz: HTTP $code"
+[ "$code" = "200" ] || { echo "  ↳ backend NOT healthy"; FAILED=1; }
 for s in los-backend-qa los-frontend-qa los-agent-qa-pusad los-agent-qa-union los-agent-qa-guarantor; do
-  echo "  $s: $(systemctl is-active "$s")"
+  st=$(systemctl is-active "$s")
+  echo "  $s: $st"
+  [ "$st" = "active" ] || FAILED=1
 done
+if [ "$FAILED" != "0" ]; then
+  echo "❌ QA deploy finished but environment is UNHEALTHY — see above"
+  exit 1
+fi
 echo "═══ QA deploy complete → https://finix.vgipl.com:8445 ═══"

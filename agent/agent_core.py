@@ -469,13 +469,20 @@ async def entrypoint(ctx: JobContext):
 
     finally:
         if session:
-            logger.info("Waiting for transcript save to complete...")
+            logger.info("Waiting for call to finish (shutdown_event)...")
             try:
-                # Bounded wait: shutdown_event is now set on every teardown path,
-                # but if some future path misses it, 60s beats hanging forever.
-                await asyncio.wait_for(session.shutdown_event.wait(), timeout=60)
+                # ⚠️ This wait is the CALL'S LIFETIME ANCHOR, not a post-teardown
+                # flush: the entrypoint reaches this finally right after setup,
+                # and returning from it ends the LiveKit job (agent leaves the
+                # room). It must block for the entire live conversation until
+                # save_and_disconnect completes and sets shutdown_event.
+                # A 60s bound here force-killed every call at the 60s mark.
+                # 600s is a pure backstop: safety_timeout force-ends any call at
+                # 360s and worst-case teardown (transcript retries + egress) is
+                # ~60s more, so a healthy call ALWAYS finishes well under this.
+                await asyncio.wait_for(session.shutdown_event.wait(), timeout=600)
                 logger.info("Agent shutdown complete")
             except asyncio.TimeoutError:
-                logger.error("Shutdown wait timed out after 60s — exiting anyway")
+                logger.error("Shutdown wait timed out after 600s — exiting anyway")
             except Exception as e:
                 logger.error(f"Error waiting for shutdown: {e}")

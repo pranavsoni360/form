@@ -24,6 +24,19 @@ try:
 except ImportError:
     _BACKGROUND_AUDIO_AVAILABLE = False
 
+# Semantic end-of-utterance model (multilingual, Hindi supported). VAD alone
+# treats any pause as end-of-turn — on a real QA call the agent barged in on
+# "नहीं नहीं नहीं मुझे" (customer mid-sentence; EOU prob 0.2% per the model)
+# and closed the call. With the model, incomplete sentences hold the turn
+# (waits up to max_endpointing_delay) while complete ones stay fast at
+# min_endpointing_delay. Inference ~20ms in the worker's inference process.
+# Graceful fallback: without the plugin/model files, behaviour is unchanged.
+try:
+    from livekit.plugins.turn_detector.multilingual import MultilingualModel
+    _TURN_DETECTOR_AVAILABLE = True
+except ImportError:
+    _TURN_DETECTOR_AVAILABLE = False
+
 from config import IST, BACKEND_URL, LANG_CONFIG, GENDER_CONFIG
 from session import LoanEnquirySession, CustomerType
 from tools import send_form_link, end_call, schedule_callback, collect_all_data, record_guarantor_consent
@@ -267,6 +280,9 @@ async def entrypoint(ctx: JobContext):
                 ]
             ),
             vad=vad,
+            # Semantic turn detection (see import note above); "vad" = the
+            # exact pre-turn-detector behaviour if the plugin/model is absent.
+            turn_detection=MultilingualModel() if _TURN_DETECTOR_AVAILABLE else "vad",
             preemptive_generation=True,
             min_endpointing_delay=0.13,
             max_endpointing_delay=2.5,

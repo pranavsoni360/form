@@ -10,6 +10,9 @@ livekit-plugins-silero==1.3.11
 livekit-plugins-sarvam==1.3.11
 livekit-plugins-openai==1.3.11
 livekit-plugins-groq==1.3.11
+# Semantic end-of-utterance model (multilingual incl. Hindi). Model files come
+# from HuggingFace: run `python los_updated.py download-files` once per box.
+livekit-plugins-turn-detector==1.3.11
 
 # Utilities
 python-dotenv~=1.0

@@ -416,6 +416,10 @@ class TranscriptPayload(BaseModel):
     # Eligibility flags (loan-enquiry agent) — "yes"/"no" confirmed up-front
     is_salaried: Optional[str] = None
     individual_purpose: Optional[str] = None
+    # Why the call ended (interested/not_interested/wrong_number/user_busy/
+    # silence_timeout/safety_timeout/...) — set by the agent's end_call tool
+    # and watchdogs; stored in call_analysis for retry/disposition logic.
+    call_outcome: Optional[str] = None
     # Account opening fields (Union Bank agent)
     account_type: str = ""
     initial_deposit: str = ""

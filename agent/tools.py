@@ -164,7 +164,14 @@ async def end_call(context: RunContext, reason: str) -> str:
     session.call_outcome = reason
     logger.info(f"END CALL: {reason}")
 
-    if reason == "interested" and not session.form_link_sent:
+    # Loan-enquiry only: this fallback sends a LOAN form. end_call is shared by
+    # all three agent purposes, and "interested" is a natural reason on a
+    # guarantor/account call too — those must never receive a loan form.
+    if (
+        reason == "interested"
+        and getattr(session, "agent_purpose", "loan_enquiry") == "loan_enquiry"
+        and not session.form_link_sent
+    ):
         try:
             # Same prefill payload as send_form_link — if the LLM jumps
             # straight to end_call("interested") without calling
@@ -172,7 +179,7 @@ async def end_call(context: RunContext, reason: str) -> str:
             # populated loan_applications row (not an empty one).
             fallback_collected = _build_collected_data(session)
             async with aiohttp.ClientSession() as http:
-                await http.post(
+                async with http.post(
                     f"{BACKEND_URL}/api/agent/send-whatsapp-form",
                     json={
                         "phone": session.phone,
@@ -185,12 +192,21 @@ async def end_call(context: RunContext, reason: str) -> str:
                     },
                     timeout=aiohttp.ClientTimeout(total=10),
                     ssl=False,
-                )
-            session.form_link_sent = True
-            logger.info(
-                f"WhatsApp form link sent to {session.phone} via end_call fallback "
-                f"({len(fallback_collected)} prefill fields)"
-            )
+                ) as resp:
+                    # Only mark sent on success — an unchecked 4xx/5xx used to
+                    # set form_link_sent=True and the interested customer never
+                    # received anything while the record said they did.
+                    if resp.status == 200:
+                        session.form_link_sent = True
+                        logger.info(
+                            f"WhatsApp form link sent to {session.phone} via end_call fallback "
+                            f"({len(fallback_collected)} prefill fields)"
+                        )
+                    else:
+                        logger.error(
+                            f"end_call fallback form send returned {resp.status}: "
+                            f"{await resp.text()}"
+                        )
         except Exception as e:
             logger.error(f"WhatsApp send failed: {e}")
 

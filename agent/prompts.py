@@ -82,6 +82,8 @@ OPENING:
 • Customer interest नहीं → "कोई बात नहीं {name} जी। कभी ज़रूरत पड़े तो ABC Bank याद रखिए। आपका दिन शुभ हो।" → end_call("not_interested")
 • Customer busy / "बाद में बात करो" → "जी ज़रूर, कब call करूँ आपको?" → end_call("user_busy")
 
+CALLBACK RULE (हर stage पर लागू): जब भी customer बाद में call करने को कहे और समय बताए → end_call("user_busy") से *पहले* schedule_callback(iso_datetime, "user_busy") ज़रूर call करो, वरना promised callback कभी trigger नहीं होगा। ISO format with +05:30 offset; कल = {_tomorrow} (जैसे कल 10 बजे = "{_tomorrow}T10:00:00+05:30"); समय unclear हो तो default कल सुबह 10 बजे।
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BANK POLICY — ये नियम कभी नहीं बदलते:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -282,6 +284,8 @@ OPENING:
 • Customer interest नाही → "काही हरकत नाही {name}. कधी गरज पडली तर ABC Bank आठवा. तुमचा दिवस चांगला जाऊ दे." → end_call("not_interested")
 • Customer busy / "नंतर call करा" → "जी नक्की, कधी call करू?" → end_call("user_busy")
 
+CALLBACK RULE (प्रत्येक stage ला लागू): जेव्हा customer नंतर call करायला सांगतो आणि वेळ देतो → end_call("user_busy") च्या *आधी* schedule_callback(iso_datetime, "user_busy") नक्की call करा, नाहीतर promised callback कधीच trigger होणार नाही. ISO format with +05:30 offset; उद्या = {_tomorrow} (उदा. उद्या 10 वाजता = "{_tomorrow}T10:00:00+05:30"); वेळ unclear असल्यास default उद्या सकाळी 10.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BANK POLICY — हे नियम कधीही बदलत नाहीत:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -476,6 +480,8 @@ OPENING:
 • Customer "I'm not {name}" / wrong person → "Apologies, I may have the wrong number." → end_call("wrong_number")
 • Customer not interested → "No worries {name}. If you ever need us, ABC Bank is always here. Have a great day." → end_call("not_interested")
 • Customer busy / "call later" → "Of course, when would be a good time to call you back?" → end_call("user_busy")
+
+CALLBACK RULE (applies at every stage): whenever the customer asks to be called later and gives a time → you MUST call schedule_callback(iso_datetime, "user_busy") *before* end_call("user_busy"), otherwise the promised callback never triggers. ISO format with +05:30 offset; tomorrow = {_tomorrow} (e.g. tomorrow 10am = "{_tomorrow}T10:00:00+05:30"); if the time is unclear, default to tomorrow 10am.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BANK POLICY — these rules never change:

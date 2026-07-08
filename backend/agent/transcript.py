@@ -114,6 +114,7 @@ async def save_transcript(data: TranscriptPayload):
     call_analysis = {
         "lead_quality": (data.lead_quality or "cold").lower(),
         "interest_reason": data.interest_reason,
+        "call_outcome": data.call_outcome,
     }
 
     # Safe parse: agent occasionally sends free-text amounts ("5 lakh") that would crash float().

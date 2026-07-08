@@ -158,7 +158,13 @@ async def entrypoint(ctx: JobContext):
         except TimeoutError:
             logger.error("No participant, exiting")
             if session:
+                session.call_ended = True
                 await session._send_transcript()
+                # Without this the finally-block below waits forever on an
+                # event nobody will set — every unanswered call (the most
+                # common outbound outcome) parked its job until LiveKit
+                # force-killed it.
+                session.shutdown_event.set()
             return
 
         @ctx.room.on("participant_disconnected")
@@ -454,12 +460,22 @@ async def entrypoint(ctx: JobContext):
                 await session._send_transcript()
             except Exception as e2:
                 logger.error(f"Emergency save failed: {e2}")
+        if session:
+            session.shutdown_event.set()
+        # Job cancellation (worker shutdown/drain) must propagate — swallowing
+        # it here left jobs "stuck draining" during deploys.
+        if isinstance(e, asyncio.CancelledError):
+            raise
 
     finally:
         if session:
             logger.info("Waiting for transcript save to complete...")
             try:
-                await session.shutdown_event.wait()
+                # Bounded wait: shutdown_event is now set on every teardown path,
+                # but if some future path misses it, 60s beats hanging forever.
+                await asyncio.wait_for(session.shutdown_event.wait(), timeout=60)
                 logger.info("Agent shutdown complete")
+            except asyncio.TimeoutError:
+                logger.error("Shutdown wait timed out after 60s — exiting anyway")
             except Exception as e:
                 logger.error(f"Error waiting for shutdown: {e}")

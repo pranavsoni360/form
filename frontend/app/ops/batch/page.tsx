@@ -436,11 +436,15 @@ export default function OpsBatchPage() {
               </Button>
               <Button
                 onClick={() => start.mutate()}
-                disabled={start.isPending}
+                disabled={start.isPending || live}
                 className="btn-gradient"
               >
-                {start.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Start batch
+                {start.isPending || live ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                {start.isPending
+                  ? "Starting…"
+                  : live
+                  ? `Running — ${s?.pending ?? 0} pending`
+                  : "Start batch"}
               </Button>
               <Button
                 variant="outline"

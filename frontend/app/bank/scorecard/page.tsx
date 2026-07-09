@@ -6,9 +6,42 @@ import { API_URL } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import {
   ChevronDown, ChevronRight, Save, RotateCcw, AlertTriangle,
-  CheckCircle2, Loader2, ArrowLeft, ToggleLeft, ToggleRight,
-  FileText, Info,
+  CheckCircle2, Loader2, ArrowLeft, Info,
 } from 'lucide-react';
+
+// ── Toggle switch (pill style) ──────────────────────────────────────────────
+function Toggle({ on, onChange, size = 'md', onColor = '#2563EB' }: {
+  on: boolean;
+  onChange: (next: boolean) => void;
+  size?: 'sm' | 'md';
+  onColor?: string;
+}) {
+  const dims = size === 'sm'
+    ? { w: 32, h: 18, knob: 12, pad: 3 }
+    : { w: 40, h: 22, knob: 16, pad: 3 };
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={e => { e.stopPropagation(); onChange(!on); }}
+      className="sc-toggle flex-shrink-0"
+      style={{
+        width: dims.w, height: dims.h, borderRadius: dims.h,
+        background: on ? onColor : '#94A3B8',
+        padding: dims.pad,
+      }}
+    >
+      <span
+        className="sc-toggle-knob"
+        style={{
+          width: dims.knob, height: dims.knob, borderRadius: '50%',
+          transform: on ? `translateX(${dims.w - dims.knob - dims.pad * 2}px)` : 'translateX(0)',
+        }}
+      />
+    </button>
+  );
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -178,48 +211,59 @@ function ParamRow({
 
   const set = (patch: Partial<ScoreParam>) => onUpdate(pillarKey, paramKey, { ...param, ...patch });
 
+  // Effective bar width relative to the pillar weight (so it reads as share).
+  const effPct = pillar.weight > 0 ? Math.min(100, (effW / pillar.weight) * 100) : 0;
+
   return (
-    <div className="rounded-lg mb-2 overflow-hidden"
-      style={{ border: `1px solid ${disabled ? '#E2E8F0' : '#CBD5E1'}`, opacity: disabled ? 0.55 : 1 }}>
+    <div className="mb-2 overflow-hidden"
+      style={{
+        border: `1px solid ${disabled ? 'var(--line)' : '#C9D4E3'}`,
+        borderRadius: 10, opacity: disabled ? 0.6 : 1,
+        background: 'var(--surface)',
+      }}>
       {/* Header row */}
       <div className="flex items-center gap-3 px-3 py-2.5"
-        style={{ background: disabled ? '#F8FAFC' : '#F1F5F9' }}>
-        <button onClick={() => setExpanded(v => !v)} className="flex-shrink-0" style={{ color: '#64748B' }}>
+        style={{ background: disabled ? 'var(--raised)' : 'var(--surface)' }}>
+        <button onClick={() => setExpanded(v => !v)} className="flex-shrink-0" style={{ color: 'var(--ink-faint)' }}
+          aria-label={expanded ? 'Collapse' : 'Expand'}>
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </button>
 
         {/* Toggle enable/disable */}
-        <button onClick={() => set({ enabled: !disabled })} className="flex-shrink-0">
-          {disabled
-            ? <ToggleLeft className="w-5 h-5" style={{ color: '#94A3B8' }} />
-            : <ToggleRight className="w-5 h-5" style={{ color: '#2563EB' }} />}
-        </button>
+        <Toggle on={!disabled} onChange={next => set({ enabled: next })} />
 
-        <span className="flex-1 text-sm font-medium truncate" style={{ color: '#0F172A' }}>
+        <span className="flex-1 text-sm font-semibold truncate" style={{ color: 'var(--ink)' }}>
           {param.title}
-          <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded"
-            style={{ background: '#E2E8F0', color: '#64748B' }}>{param.type}</span>
+          <span className="ml-2 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{ background: 'var(--ground)', color: 'var(--ink-muted)' }}>{param.type}</span>
         </span>
 
-        {/* Weight */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        {/* Weight + effective share */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="w-28">
+            <div className="sc-eff-bar">
+              <div className="sc-eff-fill" style={{
+                width: `${disabled ? 0 : effPct}%`,
+                background: disabled ? 'var(--ink-faint)' : 'var(--accent)',
+              }} />
+            </div>
+            <div className="text-[10px] mt-1 text-right" style={{ color: disabled ? 'var(--ink-faint)' : 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>
+              {disabled ? 'excluded' : `${effW.toFixed(1)} pts effective`}
+            </div>
+          </div>
           <input
             type="number" min="0" max="100" step="0.1"
             value={param.weight}
             disabled={disabled}
             onChange={e => set({ weight: parseFloat(e.target.value) || 0 })}
-            className="w-16 px-2 py-1 rounded text-xs text-right outline-none"
-            style={{ border: '1px solid #CBD5E1', background: disabled ? '#F1F5F9' : '#fff', color: '#0F172A' }}
+            className="sc-num w-16 text-xs"
           />
-          <span className="text-[10px] w-24 text-right" style={{ color: disabled ? '#94A3B8' : '#2563EB' }}>
-            {disabled ? '(excluded)' : `→ ${effW.toFixed(1)} pts effective`}
-          </span>
         </div>
       </div>
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="px-4 py-3" style={{ background: '#fff', borderTop: '1px solid #E2E8F0' }}>
+        <div className="px-4 py-3" style={{ background: 'var(--raised)', borderTop: '1px solid var(--line)' }}>
           {/* Doc required */}
           <div className="flex items-center gap-4 mb-3">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -285,11 +329,8 @@ function ParamRow({
                   return (
                     <div key={ck} className="flex items-center gap-2 py-1"
                       style={{ opacity: cDisabled ? 0.5 : 1 }}>
-                      <button onClick={() => setChild(ck, { enabled: cDisabled })} className="flex-shrink-0">
-                        {cDisabled
-                          ? <ToggleLeft className="w-4 h-4" style={{ color: '#94A3B8' }} />
-                          : <ToggleRight className="w-4 h-4" style={{ color: '#2563EB' }} />}
-                      </button>
+                      <Toggle size="sm" on={!cDisabled}
+                        onChange={next => setChild(ck, { enabled: next })} />
                       <span className="flex-1 truncate" style={{ color: '#475569' }}>{child.title}</span>
                       <input type="number" min="0" step="1"
                         value={child.weight} disabled={cDisabled}
@@ -330,32 +371,34 @@ function PillarCard({
   const totalCount = Object.keys(pillar.parameters).length;
 
   return (
-    <div className="rounded-xl mb-4 overflow-hidden"
-      style={{ border: '1px solid #CBD5E1', opacity: pillarDisabled ? 0.6 : 1 }}>
+    <div className="sc-card mb-4 overflow-hidden"
+      style={{ opacity: pillarDisabled ? 0.65 : 1, borderRadius: 14 }}>
       {/* Pillar header */}
-      <div className="w-full flex items-center gap-3 px-4 py-3"
-        style={{ background: pillarDisabled ? '#334155' : '#0D2650', color: '#fff' }}>
-        <button onClick={() => setOpen(v => !v)} className="flex-shrink-0">
+      <div className="w-full flex items-center gap-3 pr-4 py-3"
+        style={{
+          background: pillarDisabled ? '#475569' : 'var(--navy-soft)',
+          color: '#fff',
+          // Weight-share spine: a left rail sized to this pillar's % of 100.
+          borderLeft: `4px solid ${pillarDisabled ? 'rgba(255,255,255,0.2)' : '#60A5FA'}`,
+          paddingLeft: 'calc(1rem - 4px)',
+        }}>
+        <button onClick={() => setOpen(v => !v)} className="flex-shrink-0" aria-label={open ? 'Collapse' : 'Expand'}>
           {open ? <ChevronDown className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
                  : <ChevronRight className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />}
         </button>
 
         {/* Pillar enable/disable toggle */}
-        <button onClick={() => onTogglePillar(pillarKey, pillarDisabled)} className="flex-shrink-0"
-          title={pillarDisabled ? 'Enable pillar' : 'Disable pillar'}>
-          {pillarDisabled
-            ? <ToggleLeft className="w-5 h-5" style={{ color: 'rgba(255,255,255,0.5)' }} />
-            : <ToggleRight className="w-5 h-5" style={{ color: '#60A5FA' }} />}
+        <Toggle on={!pillarDisabled} onColor="#3B82F6"
+          onChange={next => onTogglePillar(pillarKey, next)} />
+
+        <button onClick={() => setOpen(v => !v)} className="flex-1 text-left">
+          <span className="font-semibold text-sm">{pillar.title}</span>
+          {pillarDisabled && <span className="ml-2 text-[10px] font-medium uppercase tracking-wide"
+            style={{ color: 'rgba(255,255,255,0.55)' }}>excluded</span>}
         </button>
 
-        <button onClick={() => setOpen(v => !v)} className="flex-1 text-left font-semibold text-sm">
-          {pillar.title}
-          {pillarDisabled && <span className="ml-2 text-[10px] font-normal"
-            style={{ color: 'rgba(255,255,255,0.5)' }}>excluded from scoring</span>}
-        </button>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.55)', fontVariantNumeric: 'tabular-nums' }}>
             {activeCount}/{totalCount} active
           </span>
           <div className="flex items-center gap-1.5">
@@ -363,15 +406,15 @@ function PillarCard({
               value={pillar.weight}
               disabled={pillarDisabled}
               onChange={e => onUpdatePillar(pillarKey, parseFloat(e.target.value) || 0)}
-              className="w-14 px-2 py-1 rounded text-xs text-right outline-none font-semibold"
-              style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)' }} />
-            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>/ 100</span>
+              className="w-14 px-2 py-1 rounded-md text-xs text-right outline-none font-bold"
+              style={{ background: 'rgba(255,255,255,0.14)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', fontVariantNumeric: 'tabular-nums' }} />
+            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>/ 100</span>
           </div>
         </div>
       </div>
 
       {open && (
-        <div className="p-4" style={{ background: '#F8FAFC' }}>
+        <div className="p-4" style={{ background: 'var(--raised)' }}>
           {Object.entries(pillar.parameters).map(([ppk, param]) => (
             <ParamRow key={ppk}
               pillarKey={pillarKey} paramKey={ppk}
@@ -506,7 +549,70 @@ export default function ScorecardPage() {
   const pillarWeightOk = Math.abs(totalPillarWeight - 100) < 0.5;
 
   return (
-    <div className="min-h-screen" style={{ background: '#F1F5F9' }}>
+    <div className="min-h-screen sc-root" style={{ background: 'var(--ground)' }}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        .sc-root {
+          --ground: #EEF1F6;
+          --surface: #FFFFFF;
+          --raised: #F7F9FC;
+          --ink: #0B1E3B;
+          --ink-muted: #5A6B85;
+          --ink-faint: #94A3B8;
+          --line: #DBE2EC;
+          --accent: #1D4ED8;
+          --navy: #071A38;
+          --navy-soft: #0D2650;
+          --approve: #047857;
+          --refer: #B45309;
+          --reject: #B91C1C;
+          color: var(--ink);
+        }
+        .sc-card {
+          background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          box-shadow: 0 1px 2px rgba(11,30,59,0.04);
+        }
+        .sc-eyebrow {
+          font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+          text-transform: uppercase; color: var(--ink-muted);
+        }
+        .sc-hint { font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
+        .sc-field-label {
+          display: inline-flex; align-items: center; gap: 6px;
+          font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+        }
+        .sc-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+        .sc-num {
+          border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+          color: var(--ink); padding: 6px 8px; text-align: right; outline: none;
+          font-variant-numeric: tabular-nums; transition: border-color .15s, box-shadow .15s;
+        }
+        .sc-num:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29,78,216,0.12); }
+        .sc-num:disabled { background: var(--raised); color: var(--ink-faint); }
+        /* Decision score track */
+        .sc-track { display: flex; height: 12px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(11,30,59,0.06); }
+        .sc-track-zone { transition: width .2s ease; }
+        /* Header meter */
+        .sc-meter { width: 120px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+        .sc-meter-fill { height: 100%; border-radius: 4px; transition: width .25s ease, background .25s; }
+        /* Effective-weight proportion bar */
+        .sc-eff-bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+        .sc-eff-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .2s ease; }
+        /* Toggle */
+        .sc-toggle {
+          position: relative; border: none; cursor: pointer; display: inline-flex; align-items: center;
+          transition: background .18s ease; outline: none;
+        }
+        .sc-toggle:focus-visible { box-shadow: 0 0 0 3px rgba(29,78,216,0.35); }
+        .sc-toggle-knob {
+          display: block; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+          transition: transform .18s cubic-bezier(.4,.0,.2,1);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .sc-toggle-knob, .sc-track-zone, .sc-meter-fill, .sc-eff-fill { transition: none; }
+        }
+      ` }} />
 
       {/* Top bar */}
       <div className="sticky top-0 z-20 flex items-center gap-3 px-6 py-3"
@@ -561,47 +667,72 @@ export default function ScorecardPage() {
         )}
 
         {/* ── Decision thresholds ── */}
-        <section className="rounded-xl p-5 mb-5"
-          style={{ background: '#fff', border: '1px solid #CBD5E1' }}>
-          <h2 className="text-sm font-bold mb-4" style={{ color: '#0F172A' }}>Decision Thresholds</h2>
+        <section className="sc-card mb-5" style={{ padding: '1.25rem 1.35rem' }}>
+          <div className="flex items-baseline justify-between mb-1">
+            <h2 className="sc-eyebrow">Decision Thresholds</h2>
+            <span className="sc-hint">how the score maps to an outcome</span>
+          </div>
+
+          {/* Visual score track: reject | refer | approve zones */}
+          <div className="mt-4 mb-5">
+            <div className="sc-track" role="img"
+              aria-label={`Reject below ${config.decision_thresholds.refer}, refer ${config.decision_thresholds.refer} to ${config.decision_thresholds.approve - 1}, approve ${config.decision_thresholds.approve} and above`}>
+              <div className="sc-track-zone" style={{ width: `${config.decision_thresholds.refer}%`, background: 'var(--reject)' }} />
+              <div className="sc-track-zone" style={{ width: `${config.decision_thresholds.approve - config.decision_thresholds.refer}%`, background: 'var(--refer)' }} />
+              <div className="sc-track-zone" style={{ width: `${100 - config.decision_thresholds.approve}%`, background: 'var(--approve)' }} />
+            </div>
+            <div className="flex justify-between mt-1.5 sc-hint" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              <span>0</span><span>50</span><span>100</span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-6">
             {(['approve', 'refer'] as const).map(key => (
               <div key={key}>
-                <label className="block text-xs font-semibold mb-1 uppercase tracking-wide"
-                  style={{ color: '#64748B' }}>
+                <label className="sc-field-label" style={{ color: key === 'approve' ? 'var(--approve)' : 'var(--refer)' }}>
+                  <span className="sc-dot" style={{ background: key === 'approve' ? 'var(--approve)' : 'var(--refer)' }} />
                   {key === 'approve' ? 'Approve if score ≥' : 'Refer if score ≥'}
                 </label>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 mt-1.5">
                   <input type="range" min="0" max="100" step="1"
                     value={config.decision_thresholds[key]}
                     onChange={e => updateThreshold(key, parseInt(e.target.value))}
-                    className="flex-1 accent-blue-600" />
+                    className="flex-1"
+                    style={{ accentColor: key === 'approve' ? 'var(--approve)' : 'var(--refer)' }} />
                   <input type="number" min="0" max="100"
                     value={config.decision_thresholds[key]}
                     onChange={e => updateThreshold(key, parseInt(e.target.value) || 0)}
-                    className="w-14 px-2 py-1.5 rounded text-sm font-bold text-right outline-none"
-                    style={{ border: '1px solid #CBD5E1', color: '#0F172A' }} />
+                    className="sc-num w-16 font-bold" style={{ fontSize: '0.95rem' }} />
                 </div>
-                <p className="text-[11px] mt-1" style={{ color: '#94A3B8' }}>
+                <p className="sc-hint mt-1.5">
                   {key === 'approve'
-                    ? `Score ≥ ${config.decision_thresholds.approve} → Approved`
-                    : `Score ${config.decision_thresholds.refer}–${config.decision_thresholds.approve - 1} → Refer for review`}
+                    ? `${config.decision_thresholds.approve} and above → Approved`
+                    : `${config.decision_thresholds.refer}–${config.decision_thresholds.approve - 1} → Refer for review`}
                 </p>
               </div>
             ))}
           </div>
-          <p className="text-[11px] mt-3 flex items-center gap-1" style={{ color: '#94A3B8' }}>
-            <Info className="w-3 h-3" />
-            Score below {config.decision_thresholds.refer} → Rejected automatically.
+          <p className="sc-hint mt-3 flex items-center gap-1.5">
+            <Info className="w-3 h-3" style={{ color: 'var(--reject)' }} />
+            Below {config.decision_thresholds.refer} → Rejected automatically.
           </p>
         </section>
 
         {/* ── Pillars ── */}
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold" style={{ color: '#0F172A' }}>Pillars & Parameters</h2>
-          <span className="text-xs" style={{ color: pillarWeightOk ? '#16A34A' : '#DC2626' }}>
-            Enabled pillar total: {totalPillarWeight.toFixed(1)} / 100
-          </span>
+          <h2 className="sc-eyebrow">Pillars &amp; Parameters</h2>
+          <div className="flex items-center gap-2.5">
+            <div className="sc-meter" title={`${totalPillarWeight.toFixed(1)} of 100`}>
+              <div className="sc-meter-fill"
+                style={{
+                  width: `${Math.min(100, totalPillarWeight)}%`,
+                  background: pillarWeightOk ? 'var(--approve)' : 'var(--refer)',
+                }} />
+            </div>
+            <span className="text-xs font-semibold" style={{ color: pillarWeightOk ? 'var(--approve)' : 'var(--refer)', fontVariantNumeric: 'tabular-nums' }}>
+              {totalPillarWeight.toFixed(0)} / 100
+            </span>
+          </div>
         </div>
 
         {Object.entries(config.pillars).map(([pillarKey, pillar]) => (

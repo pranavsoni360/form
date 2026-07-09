@@ -99,7 +99,7 @@ export function Sidebar({ className }: { className?: string }) {
   return (
     <aside
       className={cn(
-        "flex w-64 shrink-0 flex-col border-r border-border bg-card",
+        "flex h-screen w-64 shrink-0 sticky top-0 flex-col border-r border-border bg-card",
         className
       )}
     >
@@ -124,7 +124,7 @@ export function Sidebar({ className }: { className?: string }) {
       </Link>
 
       {/* Navigation */}
-      <div className="flex-1 px-3">
+      <div className="flex-1 overflow-y-auto min-h-0 px-3">
         <div className="mb-2 mt-2 px-3 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
           Navigation
         </div>

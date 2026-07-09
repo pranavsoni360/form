@@ -15,6 +15,7 @@ from livekit.agents import JobContext, function_tool, RunContext, APIConnectOpti
 from livekit.agents.voice import AgentSession, Agent
 from livekit.plugins import deepgram, silero, sarvam, google, groq
 from livekit.agents.llm import FallbackAdapter
+from livekit.agents.tts import FallbackAdapter as TTSFallbackAdapter
 from google.genai import types as genai_types
 
 try:
@@ -69,6 +70,10 @@ if _SENTRY_DSN_AGENT:
 #   "WebSocket receive timeout" → retry → 5-6 s silence at call start
 #   "_SegmentSynchronizerImpl.resume called after close" warning cascade
 # Bumping to 30 s eliminates these without changing any other behaviour.
+# NOTE: inside TTSFallbackAdapter this is bypassed — the adapter passes its own
+# conn options (10 s timeout, no inner retries) so a dead Sarvam fails over to
+# Gemini TTS fast instead of stalling 30 s. _SARVAM_CONN still applies to any
+# direct _SarvamTTS use outside the adapter.
 _SARVAM_CONN = APIConnectOptions(timeout=30.0, max_retry=3, retry_interval=2.0)
 
 
@@ -224,24 +229,52 @@ async def entrypoint(ctx: JobContext):
                     groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
                 ]
             ),
-            tts=_SarvamTTS(
-                model="bulbul:v3",
-                target_language_code=session.tts_language_code,
-                speaker=session.tts_speaker,
-                # pace=1.18 — ~15% faster than the Bulbul default. At 1.06 the Hindi
-                # voice felt sluggish on phone calls (customers were interrupting mid-
-                # sentence because each utterance took 8-10 sec to play). 1.18 stays
-                # natural-sounding while delivering content noticeably quicker. Sarvam
-                # docs accept 0.5-2.0; 1.20+ starts sounding rushed.
-                pace=1.06,
-                speech_sample_rate=22050,
-                enable_preprocessing=True,
+            # TTS fallback chain: Sarvam bulbul (primary) → Gemini TTS (backup).
+            # Sarvam's streaming WS intermittently drops mid-call ("Cannot write to
+            # closing transport") and its own 3 retries all hit the same dead
+            # service — the utterance was dropped and the agent went SILENT.
+            # FallbackAdapter tries Sarvam max twice with no inner retries
+            # (max_retry=0, 10s timeout per attempt), then switches to Gemini TTS
+            # (uses the existing GOOGLE_API_KEY; non-streaming, auto-wrapped in a
+            # StreamAdapter; 22050→24000 resampling is handled by the adapter).
+            # Tradeoff: during a Sarvam outage a sentence or two plays in the
+            # Gemini voice — always better than dead air on a live loan call.
+            tts=TTSFallbackAdapter(
+                [
+                    _SarvamTTS(
+                        model="bulbul:v3",
+                        target_language_code=session.tts_language_code,
+                        speaker=session.tts_speaker,
+                        # pace=1.18 — ~15% faster than the Bulbul default. At 1.06 the Hindi
+                        # voice felt sluggish on phone calls (customers were interrupting mid-
+                        # sentence because each utterance took 8-10 sec to play). 1.18 stays
+                        # natural-sounding while delivering content noticeably quicker. Sarvam
+                        # docs accept 0.5-2.0; 1.20+ starts sounding rushed.
+                        pace=1.06,
+                        speech_sample_rate=22050,
+                        enable_preprocessing=True,
+                    ),
+                    google.beta.GeminiTTS(
+                        model="gemini-2.5-flash-preview-tts",
+                        voice_name="Kore",
+                    ),
+                ]
             ),
             vad=vad,
             preemptive_generation=True,
             min_endpointing_delay=0.13,
             max_endpointing_delay=2.5,
             min_interruption_duration=0.35,
+            # Noise defense for phone calls. min_interruption_words=0 (default)
+            # meant raw VAD energy — traffic, TV, crowd noise — paused the agent,
+            # then resume_false_interruption waited 2s before resuming: customers
+            # heard the voice "breaking" in noisy places. Requiring 1 transcribed
+            # word means non-speech noise never pauses the agent at all, while a
+            # real barge-in ("हाँ", "रुको") still interrupts instantly.
+            min_interruption_words=1,
+            # If a false interruption still slips through, resume after 1s of
+            # user silence instead of the 2s default — halves the dead air.
+            false_interruption_timeout=1.0,
             discard_audio_if_uninterruptible=True,
             userdata={"session": session},
         )

@@ -60,26 +60,59 @@ def _node_to_dict(name: str, r: NodeResult) -> dict:
     return d
 
 
+def _rescale_children(node: dict) -> None:
+    """Drop disabled composite children and rescale the enabled siblings so their
+    relative weights are preserved. Recurses into nested composites."""
+    if node.get("type") != "composite":
+        return
+    children = node.get("children", {})
+    active = {k: c for k, c in children.items() if c.get("enabled", True)}
+    node["children"] = active
+    total = sum(float(c["weight"]) for c in active.values())
+    if total > 0:
+        # Renormalise children to sum to 100 (composite weights are relative,
+        # % of the composite — matches the file convention).
+        scale = 100.0 / total
+        for c in active.values():
+            c["weight"] = round(float(c["weight"]) * scale, 6)
+    for c in active.values():
+        _rescale_children(c)
+
+
 def _prepare_config(cfg: dict) -> dict:
-    """Return a scoring-ready config with disabled parameters removed and
-    remaining parameter weights rescaled proportionally to fill each pillar weight."""
+    """Return a scoring-ready config with disabled pillars/parameters/sub-params
+    removed and the remaining weights rescaled proportionally at every level:
+      - disabled pillars dropped, remaining pillars rescaled to sum 100
+      - disabled parameters dropped, remaining rescaled to the pillar weight
+      - disabled composite children dropped, remaining rescaled to sum 100
+    Weights are RELATIVE at every level, so any enable/disable or re-weight
+    proportionally rebalances the siblings."""
     cfg = copy.deepcopy(cfg)
-    for pillar in cfg["pillars"].values():
-        params = pillar["parameters"]
-        active = {k: v for k, v in params.items() if v.get("enabled", True)}
-        if not active:
+
+    # 1. Pillars: drop disabled, rescale the rest to sum 100.
+    pillars = {k: p for k, p in cfg["pillars"].items() if p.get("enabled", True)}
+    pillar_total = sum(float(p["weight"]) for p in pillars.values())
+    if pillar_total > 0:
+        pscale = 100.0 / pillar_total
+        for p in pillars.values():
+            p["weight"] = round(float(p["weight"]) * pscale, 6)
+    cfg["pillars"] = pillars
+
+    # 2. Parameters + 3. composite children.
+    for pillar in pillars.values():
+        params = {k: v for k, v in pillar["parameters"].items() if v.get("enabled", True)}
+        if not params:
             pillar["parameters"] = {}
             continue
-        # Parameter weights are RELATIVE — always renormalise the enabled ones so
-        # they fill the pillar weight, regardless of what they sum to. Disabling
-        # or re-weighting any parameter proportionally rebalances the rest.
         pillar_w = float(pillar["weight"])
-        active_w = sum(float(p["weight"]) for p in active.values())
+        active_w = sum(float(p["weight"]) for p in params.values())
         if active_w > 0:
             scale = pillar_w / active_w
-            for p in active.values():
+            for p in params.values():
                 p["weight"] = round(float(p["weight"]) * scale, 6)
-        pillar["parameters"] = active
+        for p in params.values():
+            _rescale_children(p)
+        pillar["parameters"] = params
     return cfg
 
 

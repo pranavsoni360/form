@@ -33,6 +33,7 @@ interface Pillar {
   title: string;
   weight: number;
   source?: string;
+  enabled?: boolean;
   parameters: Record<string, ScoreParam>;
 }
 
@@ -263,17 +264,49 @@ function ParamRow({
               onChange={categories => set({ categories })} />
           )}
 
-          {/* Composite: show children summary */}
+          {/* Composite: editable sub-parameters with toggle + weight */}
           {param.type === 'composite' && param.children && (
-            <div className="text-xs" style={{ color: '#64748B' }}>
-              <p className="mb-1 font-medium">Sub-parameters:</p>
-              {Object.entries(param.children).map(([k, child]) => (
-                <div key={k} className="flex justify-between py-0.5">
-                  <span>{child.title}</span>
-                  <span className="font-mono">{child.weight}% composite weight</span>
-                </div>
-              ))}
-              <p className="mt-1 italic" style={{ color: '#94A3B8' }}>Edit composite sub-weights via the JSON view (coming soon).</p>
+            <div className="text-xs">
+              <p className="mb-2 font-medium" style={{ color: '#374151' }}>Sub-parameters</p>
+              {(() => {
+                const children = param.children!;
+                const enabledSum = Object.values(children)
+                  .filter(c => c.enabled !== false)
+                  .reduce((s, c) => s + (c.weight || 0), 0);
+                const setChild = (ck: string, patch: Partial<ScoreParam>) => {
+                  const nextChildren = { ...children, [ck]: { ...children[ck], ...patch } };
+                  set({ children: nextChildren });
+                };
+                return Object.entries(children).map(([ck, child]) => {
+                  const cDisabled = child.enabled === false;
+                  const cEff = cDisabled || enabledSum <= 0
+                    ? 0
+                    : Math.round((child.weight / enabledSum) * 100 * 10) / 10;
+                  return (
+                    <div key={ck} className="flex items-center gap-2 py-1"
+                      style={{ opacity: cDisabled ? 0.5 : 1 }}>
+                      <button onClick={() => setChild(ck, { enabled: cDisabled })} className="flex-shrink-0">
+                        {cDisabled
+                          ? <ToggleLeft className="w-4 h-4" style={{ color: '#94A3B8' }} />
+                          : <ToggleRight className="w-4 h-4" style={{ color: '#2563EB' }} />}
+                      </button>
+                      <span className="flex-1 truncate" style={{ color: '#475569' }}>{child.title}</span>
+                      <input type="number" min="0" step="1"
+                        value={child.weight} disabled={cDisabled}
+                        onChange={e => setChild(ck, { weight: parseFloat(e.target.value) || 0 })}
+                        className="w-14 px-2 py-1 rounded text-xs text-right outline-none"
+                        style={{ border: '1px solid #CBD5E1', background: cDisabled ? '#F1F5F9' : '#fff', color: '#0F172A' }} />
+                      <span className="w-24 text-right text-[10px]"
+                        style={{ color: cDisabled ? '#94A3B8' : '#2563EB' }}>
+                        {cDisabled ? '(excluded)' : `→ ${cEff.toFixed(1)}% of group`}
+                      </span>
+                    </div>
+                  );
+                });
+              })()}
+              <p className="mt-1.5 italic" style={{ color: '#94A3B8' }}>
+                Sub-weights are relative — enabled ones are rescaled to 100% of this group.
+              </p>
             </div>
           )}
         </div>
@@ -284,26 +317,43 @@ function ParamRow({
 
 function PillarCard({
   pillarKey, pillar,
-  onUpdatePillar, onUpdateParam,
+  onUpdatePillar, onTogglePillar, onUpdateParam,
 }: {
   pillarKey: string; pillar: Pillar;
   onUpdatePillar: (key: string, weight: number) => void;
+  onTogglePillar: (key: string, enabled: boolean) => void;
   onUpdateParam: (pk: string, ppk: string, updated: ScoreParam) => void;
 }) {
   const [open, setOpen] = useState(true);
+  const pillarDisabled = pillar.enabled === false;
   const activeCount = Object.values(pillar.parameters).filter(p => p.enabled !== false).length;
   const totalCount = Object.keys(pillar.parameters).length;
 
   return (
     <div className="rounded-xl mb-4 overflow-hidden"
-      style={{ border: '1px solid #CBD5E1' }}>
+      style={{ border: '1px solid #CBD5E1', opacity: pillarDisabled ? 0.6 : 1 }}>
       {/* Pillar header */}
-      <button className="w-full flex items-center gap-3 px-4 py-3 text-left"
-        style={{ background: '#0D2650', color: '#fff' }}
-        onClick={() => setOpen(v => !v)}>
-        {open ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.6)' }} />
-               : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.6)' }} />}
-        <span className="flex-1 font-semibold text-sm">{pillar.title}</span>
+      <div className="w-full flex items-center gap-3 px-4 py-3"
+        style={{ background: pillarDisabled ? '#334155' : '#0D2650', color: '#fff' }}>
+        <button onClick={() => setOpen(v => !v)} className="flex-shrink-0">
+          {open ? <ChevronDown className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
+                 : <ChevronRight className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />}
+        </button>
+
+        {/* Pillar enable/disable toggle */}
+        <button onClick={() => onTogglePillar(pillarKey, pillarDisabled)} className="flex-shrink-0"
+          title={pillarDisabled ? 'Enable pillar' : 'Disable pillar'}>
+          {pillarDisabled
+            ? <ToggleLeft className="w-5 h-5" style={{ color: 'rgba(255,255,255,0.5)' }} />
+            : <ToggleRight className="w-5 h-5" style={{ color: '#60A5FA' }} />}
+        </button>
+
+        <button onClick={() => setOpen(v => !v)} className="flex-1 text-left font-semibold text-sm">
+          {pillar.title}
+          {pillarDisabled && <span className="ml-2 text-[10px] font-normal"
+            style={{ color: 'rgba(255,255,255,0.5)' }}>excluded from scoring</span>}
+        </button>
+
         <div className="flex items-center gap-2">
           <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
             {activeCount}/{totalCount} active
@@ -311,14 +361,14 @@ function PillarCard({
           <div className="flex items-center gap-1.5">
             <input type="number" min="0" max="100" step="1"
               value={pillar.weight}
-              onClick={e => e.stopPropagation()}
-              onChange={e => { e.stopPropagation(); onUpdatePillar(pillarKey, parseFloat(e.target.value) || 0); }}
+              disabled={pillarDisabled}
+              onChange={e => onUpdatePillar(pillarKey, parseFloat(e.target.value) || 0)}
               className="w-14 px-2 py-1 rounded text-xs text-right outline-none font-semibold"
               style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)' }} />
             <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>/ 100</span>
           </div>
         </div>
-      </button>
+      </div>
 
       {open && (
         <div className="p-4" style={{ background: '#F8FAFC' }}>
@@ -371,7 +421,9 @@ export default function ScorecardPage() {
   }, [toast]);
 
   const totalPillarWeight = config?.pillars
-    ? Object.values(config.pillars).reduce((s, p) => s + (p.weight || 0), 0)
+    ? Object.values(config.pillars)
+        .filter(p => p.enabled !== false)
+        .reduce((s, p) => s + (p.weight || 0), 0)
     : 0;
 
   const handleSave = async () => {
@@ -403,6 +455,15 @@ export default function ScorecardPage() {
       if (!prev) return prev;
       const next = deepClone(prev);
       next.pillars[pillarKey].weight = weight;
+      return next;
+    });
+  }, []);
+
+  const togglePillar = useCallback((pillarKey: string, enabled: boolean) => {
+    setConfig(prev => {
+      if (!prev) return prev;
+      const next = deepClone(prev);
+      next.pillars[pillarKey].enabled = enabled;
       return next;
     });
   }, []);
@@ -495,7 +556,7 @@ export default function ScorecardPage() {
           <div className="flex items-start gap-2.5 rounded-xl p-3 mb-4 text-sm"
             style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B' }}>
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            Pillar weights sum to {totalPillarWeight.toFixed(1)} — must equal exactly 100 before saving.
+            Enabled pillar weights sum to {totalPillarWeight.toFixed(1)} — must equal exactly 100 before saving. Adjust the enabled pillars&apos; weights (disabled pillars are excluded).
           </div>
         )}
 
@@ -539,7 +600,7 @@ export default function ScorecardPage() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-bold" style={{ color: '#0F172A' }}>Pillars & Parameters</h2>
           <span className="text-xs" style={{ color: pillarWeightOk ? '#16A34A' : '#DC2626' }}>
-            Pillar total: {totalPillarWeight.toFixed(1)} / 100
+            Enabled pillar total: {totalPillarWeight.toFixed(1)} / 100
           </span>
         </div>
 
@@ -549,6 +610,7 @@ export default function ScorecardPage() {
             pillarKey={pillarKey}
             pillar={pillar}
             onUpdatePillar={updatePillarWeight}
+            onTogglePillar={togglePillar}
             onUpdateParam={updateParam}
           />
         ))}
@@ -557,9 +619,10 @@ export default function ScorecardPage() {
         <div className="rounded-xl p-4 text-xs" style={{ background: '#fff', border: '1px solid #E2E8F0', color: '#64748B' }}>
           <p className="font-semibold mb-1" style={{ color: '#374151' }}>How weights work</p>
           <ul className="space-y-1 list-disc list-inside">
-            <li>Pillar weights must sum to <strong>100</strong>.</li>
-            <li>Parameter weights are <strong>relative</strong> — you set any numbers, and the enabled ones are auto-rescaled to fill their pillar weight. The <span style={{ color: '#2563EB' }}>→ effective</span> value shows each parameter&apos;s real contribution.</li>
-            <li>Disabling or re-weighting a parameter <strong>proportionally rebalances</strong> the rest automatically — no need to make them add up.</li>
+            <li>Everything has an <strong>on/off toggle</strong> — whole pillars, parameters, and composite sub-parameters. Turning anything off excludes it and rebalances its siblings.</li>
+            <li><strong>Enabled</strong> pillar weights must sum to <strong>100</strong> (disabled pillars are excluded and the rest are rescaled).</li>
+            <li>Parameter and sub-parameter weights are <strong>relative</strong> — set any numbers; the enabled ones are auto-rescaled (to the pillar weight, or to 100% within a composite group). The <span style={{ color: '#2563EB' }}>→ effective</span> value shows each one&apos;s real contribution.</li>
+            <li>Disabling or re-weighting anything <strong>proportionally rebalances</strong> the rest automatically — no need to make them add up.</li>
             <li>If a parameter requires a document and none was submitted, its score is capped at the configured max (default 95).</li>
           </ul>
         </div>

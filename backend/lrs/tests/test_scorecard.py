@@ -63,11 +63,32 @@ def test_bad_pillar_weights_rejected():
         scorecard._validate_scorecard(cfg)
 
 
-def test_bad_composite_children_rejected():
+def test_composite_children_are_relative_no_sum_constraint():
+    # Composite child weights are RELATIVE now — an arbitrary weight is fine as
+    # long as at least one enabled child has weight > 0 (engine rescales to 100).
     cfg = copy.deepcopy(scorecard.load_scorecard())
-    # Corrupt one composite child weight.
     kids = cfg["pillars"]["income"]["parameters"]["income_stability"]["children"]
     first = next(iter(kids))
     kids[first]["weight"] = 999
+    scorecard._validate_scorecard(cfg)  # must NOT raise
+
+
+def test_composite_all_children_disabled_rejected():
+    cfg = copy.deepcopy(scorecard.load_scorecard())
+    kids = cfg["pillars"]["income"]["parameters"]["income_stability"]["children"]
+    for c in kids.values():
+        c["enabled"] = False
     with pytest.raises(scorecard.ScorecardConfigError):
         scorecard._validate_scorecard(cfg)
+
+
+def test_disabled_pillar_excluded_from_100_sum():
+    # Disabling a pillar drops it from the enabled-total; the remaining enabled
+    # pillars must still sum to 100 (else rejected).
+    cfg = copy.deepcopy(scorecard.load_scorecard())
+    cfg["pillars"]["personal_profile"]["enabled"] = False  # weight 15 removed
+    with pytest.raises(scorecard.ScorecardConfigError):
+        scorecard._validate_scorecard(cfg)  # now enabled total = 85 ≠ 100
+    # Re-home that 15 onto credit_bureau → enabled total back to 100.
+    cfg["pillars"]["credit_bureau"]["weight"] += 15
+    scorecard._validate_scorecard(cfg)  # must NOT raise

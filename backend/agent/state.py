@@ -157,6 +157,12 @@ async def acquire_batch_lock() -> bool:
     return True
 
 
+def is_batch_lock_held() -> bool:
+    """Non-mutating peek at the batch lock — lets /batch-call return an
+    explicit 409 instead of silently no-oping in the background task."""
+    return _batch_locked
+
+
 async def release_batch_lock():
     global _batch_locked
     _batch_locked = False

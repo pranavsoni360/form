@@ -345,6 +345,23 @@ class Dispatcher:
             "Dispatcher batch=%s done | %s",
             self.batch_id_uuid, self.counts,
         )
+        # Ops acknowledgement — one Telegram ping per finished batch so the
+        # operator doesn't have to babysit the dashboard.
+        try:
+            from lib.notifier import notify
+            await notify(
+                severity="info",
+                title="Batch complete",
+                body=(
+                    f"Batch {self.batch_id_uuid}: "
+                    f"{self.counts.get('successful', 0)} successful, "
+                    f"{self.counts.get('failed', 0)} failed, "
+                    f"{self.counts.get('completed', 0)} total."
+                ),
+                dedupe_key=f"batch_done_{self.batch_id_uuid}",
+            )
+        except Exception:
+            pass
         _emit("batches", {
             "type": "batch_progress",
             "status": "done",

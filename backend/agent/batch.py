@@ -20,7 +20,7 @@ from apscheduler.events import EVENT_JOB_ERROR
 from . import state as _state
 from .state import (
     now_ist, now_ist_str, is_within_calling_hours,
-    acquire_batch_lock, release_batch_lock, is_emergency_stop_active,
+    acquire_batch_lock, release_batch_lock, is_batch_lock_held, is_emergency_stop_active,
     set_emergency_stop, cleanup_stuck_calls, _init_system_state,
     _row_to_dict, _rows_to_list, _serialize_call,
     LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
@@ -257,6 +257,25 @@ async def process_batch_run(batch_uuid_str: str = None):
     call_batch_id = None
     batch_row = None
     batch_id = None
+
+    # Zombie sweeper: a healthy call can never sit in 'Calling' >30 min (the
+    # agent safety-timeout force-ends at 6 min). Such rows are leftovers from
+    # a crashed dispatcher/agent and used to freeze the ops Start button
+    # forever. Runs before the lock so it heals even while a batch is live.
+    try:
+        res = await _state.db_pool.execute(
+            """UPDATE agent_calls
+                  SET status = 'Failed',
+                      error_message = 'auto-reclaimed: stuck in Calling >30min',
+                      ended_at = NOW(), updated_at = NOW()
+                WHERE status = 'Calling'
+                  AND updated_at < NOW() - INTERVAL '30 minutes'"""
+        )
+        n = int(res.split()[-1]) if res else 0
+        if n:
+            logger.warning(f"Zombie sweeper reclaimed {n} stuck 'Calling' row(s)")
+    except Exception as e:
+        logger.error(f"Zombie sweeper failed (non-fatal): {e}")
 
     if not await acquire_batch_lock():
         logger.warning("Batch already running")
@@ -579,6 +598,16 @@ async def trigger_batch(
                    f"Current: {now_ist().strftime('%I:%M %p IST')}",
         )
 
+    # Explicit 409 while a dispatcher is running. Without this the second
+    # start silently no-ops on the batch lock in the background task and the
+    # operator never learns why nothing happened.
+    if is_batch_lock_held():
+        raise HTTPException(
+            status_code=409,
+            detail="A batch is already running — wait for it to finish "
+                   "(or use Emergency stop to halt it first).",
+        )
+
     # Clear emergency stop first (operator is explicitly starting)
     await set_emergency_stop(False)
 
@@ -647,6 +676,15 @@ async def batch_status(
         )
 
     pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
+    # Split "will dial right now" from "parked for later": scheduled callbacks
+    # can sit for hours and must NOT freeze the Start button. Rows stuck in
+    # 'Calling' for >30 min are zombies (agent safety-timeout ends calls at
+    # 6 min) — a crashed dispatcher left them; exclude them from dialable so
+    # they can't freeze the UI either (the sweeper reclaims them separately).
+    dialable_count = await _count(
+        " AND (status = 'Pending' OR (status = 'Calling' AND updated_at > NOW() - INTERVAL '30 minutes'))"
+    )
+    callbacks_due_count = await _count(" AND status IN ('Scheduled', 'Called - Callback Requested')")
     active_count = await _count(" AND status = 'Calling'")
     failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
@@ -655,8 +693,14 @@ async def batch_status(
     return {
         "status": "success",
         "is_complete": pending_count == 0,                  # boolean kept under a non-clashing key
-        "message": "All calls completed" if pending_count == 0 else f"{pending_count} calls remaining",
+        "message": (
+            "All calls completed" if pending_count == 0
+            else f"Idle — {callbacks_due_count} callback(s) scheduled for later" if dialable_count == 0
+            else f"{dialable_count} calls to dial"
+        ),
         "pending": pending_count,
+        "dialable": dialable_count,          # dials NOW (Pending + live Calling) — drives the Start button
+        "callbacks_due": callbacks_due_count,  # parked for later; never freezes the button
         "active_calls": active_count,
         "failed": failed_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation

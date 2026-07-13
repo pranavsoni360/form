@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp, CheckCircle2 } from "lucide-react";
+import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp, CheckCircle2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 import { getLRSScore, rescoreLRS } from "@/lib/api/bank";
@@ -75,10 +75,69 @@ function PillarBar({ p }: { p: any }) {
   );
 }
 
+function PillarParamTable({ pillar }: { pillar: any }) {
+  const [open, setOpen] = React.useState(false);
+  const params = Object.entries(pillar.children || {}) as [string, any][];
+  const ew = pillar.effective_weight ?? pillar.weight;
+
+  return (
+    <div className="rounded-lg border border-slate-100 dark:border-gray-700/60">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-gray-700 hover:bg-slate-50 dark:text-gray-300 dark:hover:bg-gray-800/50 rounded-lg"
+      >
+        <span>{pillar.title} <span className="text-slate-400">· {ew}%</span></span>
+        <span className="flex items-center gap-2">
+          <span className="font-semibold text-gray-900 dark:text-white">{Math.round(pillar.score ?? 0)}/100</span>
+          <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 px-3 pb-3 pt-2 dark:border-gray-700/60">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-left text-[9px] uppercase tracking-wider text-slate-400">
+                <th className="pb-1.5 font-medium">Parameter</th>
+                <th className="pb-1.5 text-right font-medium">Value</th>
+                <th className="pb-1.5 text-right font-medium">Score</th>
+                <th className="pb-1.5 text-right font-medium">Weight</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-gray-800">
+              {params.map(([key, param]) => (
+                <tr key={key} className={param.present ? "text-gray-700 dark:text-gray-300" : "text-slate-400 dark:text-gray-500"}>
+                  <td className="py-1.5 pr-2">
+                    {param.title ?? key}
+                    {param.children && <span className="ml-1 text-[9px] text-slate-400">(composite)</span>}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {param.value != null
+                      ? String(param.value)
+                      : param.rating
+                      ? param.rating
+                      : "—"}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {param.present && param.score != null ? Math.round(param.score) : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-slate-500 dark:text-gray-400">{param.weight}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LRSScorePanel({
   token, applicationId, canRescore = false,
 }: { token: string; applicationId: string; canRescore?: boolean }) {
   const qc = useQueryClient();
+
+  const [showFormula, setShowFormula] = React.useState(false);
 
   const q = useQuery({
     queryKey: ["lrs", applicationId],
@@ -231,6 +290,67 @@ export function LRSScorePanel({
       <div className="mt-5 border-t border-slate-100 pt-4 dark:border-gray-700/50">
         <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Pillar breakdown</div>
         {pillars.map((p, i) => <PillarBar key={i} p={p} />)}
+      </div>
+
+      {/* Score Formulation */}
+      <div className="mt-4 border-t border-slate-100 pt-3 dark:border-gray-700/50">
+        <button
+          onClick={() => setShowFormula((v) => !v)}
+          className="flex w-full items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+        >
+          <span>Score Formulation</span>
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showFormula ? "rotate-180" : ""}`} />
+        </button>
+
+        {showFormula && (
+          <div className="mt-3 space-y-3">
+            {/* Formula */}
+            <p className="rounded-md bg-slate-50 px-3 py-2 font-mono text-[11px] text-slate-600 dark:bg-gray-800 dark:text-slate-300">
+              Total Score = Σ ( pillar_score × effective_weight / 100 )
+            </p>
+
+            {/* Contribution table */}
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wider text-slate-400">
+                  <th className="pb-1.5 font-medium">Pillar</th>
+                  <th className="pb-1.5 text-right font-medium">Score</th>
+                  <th className="pb-1.5 text-right font-medium">Weight</th>
+                  <th className="pb-1.5 text-right font-medium">Contribution</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-gray-700/50">
+                {pillars.filter((p) => p.present).map((p, i) => {
+                  const ew = p.effective_weight ?? p.weight;
+                  const contrib = ((p.score ?? 0) * ew) / 100;
+                  return (
+                    <tr key={i} className="text-gray-700 dark:text-gray-300">
+                      <td className="py-1.5">{p.title}</td>
+                      <td className="py-1.5 text-right">{Math.round(p.score ?? 0)}</td>
+                      <td className="py-1.5 text-right">{ew}%</td>
+                      <td className="py-1.5 text-right font-medium text-indigo-600 dark:text-indigo-400">
+                        +{contrib.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-slate-200 font-semibold text-gray-900 dark:border-gray-600 dark:text-white">
+                  <td className="pt-2" colSpan={3}>Total Score</td>
+                  <td className="pt-2 text-right text-indigo-600 dark:text-indigo-400">{data.total_score.toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </table>
+
+            {/* Per-pillar parameter drill-down */}
+            <div className="space-y-2">
+              {pillars.filter((p) => p.present && p.children).map((p, i) => (
+                <PillarParamTable key={i} pillar={p} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </Card>
   );

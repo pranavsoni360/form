@@ -47,7 +47,10 @@ async def score_application(
     result = engine.score(inputs, config=config)
 
     dinp = normalize.decision_inputs(app, inputs)
-    d = decision.decide(result.total_score, scorecard_cfg=config, **dinp)
+    d = decision.decide(
+        result.total_score, scorecard_cfg=config,
+        missing_pillars=result.missing_pillars, **dinp,
+    )
 
     reasons = explain.build_reasons(
         result.pillar_scores, d.decision, result.rating, result.total_score

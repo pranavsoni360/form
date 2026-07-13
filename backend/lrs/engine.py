@@ -157,10 +157,17 @@ def score(inputs: dict, config: dict | None = None) -> EngineResult:
 
     total = _weighted_average(present_pillars)
     total_present_w = sum(r.weight for r in present_pillars.values())
-    effective = {
-        k: round(r.weight / total_present_w * 100, 2)
-        for k, r in present_pillars.items()
-    }
+    if total_present_w > 0:
+        effective = {
+            k: round(r.weight / total_present_w * 100, 2)
+            for k, r in present_pillars.items()
+        }
+    else:
+        # All present pillars carry zero configured weight (a bank can set a
+        # pillar weight to 0 yet leave it enabled). Fall back to equal effective
+        # weights so we never divide by zero.
+        n = len(present_pillars)
+        effective = {k: round(100.0 / n, 2) for k in present_pillars}
     # Annotate the breakdown with effective (re-weighted) pillar weights.
     for k in present_pillars:
         breakdown[k]["effective_weight"] = effective[k]

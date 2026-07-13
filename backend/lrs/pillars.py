@@ -28,6 +28,24 @@ class NodeResult:
     children: dict[str, "NodeResult"] = field(default_factory=dict)
 
 
+def _to_number(v: Any) -> Optional[float]:
+    """Coerce a provider/input value to a finite float, or None if it cannot be.
+
+    Booleans, non-numeric strings, None, and NaN/inf all return None so the node
+    is treated as ABSENT (and re-weighted) rather than crashing scoring. Real
+    provider adapters parse messy vendor payloads, so this must never raise.
+    """
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
+        return None
+    return f
+
+
 def _match_band(value: float, bands: list[dict]) -> dict:
     """Return the band whose [from,to] contains value; if none, the nearest band."""
     for b in bands:
@@ -64,10 +82,10 @@ def score_node(node: dict, inputs: dict) -> NodeResult:
     weight = float(node.get("weight", 0.0))
 
     if ntype == "range":
-        val = inputs.get(node["input_key"])
+        val = _to_number(inputs.get(node["input_key"]))
         if val is None:
+            # Missing OR non-numeric → treat as absent so the pillar re-weights.
             return NodeResult(present=False, weight=weight)
-        val = float(val)
         band = _match_band(val, node["bands"])
         s = _doc_cap(float(band["score"]), node, inputs)
         return NodeResult(

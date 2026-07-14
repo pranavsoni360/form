@@ -222,9 +222,6 @@ function CategoryEditor({ cats, onChange }: {
                 <span className="text-[11px] font-medium" style={{ color: '#1E293B' }}>
                   {CATEGORY_LABEL_MAP[key] ?? key}
                 </span>
-                {CATEGORY_LABEL_MAP[key] && (
-                  <div className="font-mono text-[9px]" style={{ color: '#94A3B8' }}>{key}</div>
-                )}
               </td>
               <td className="pr-2 pb-1">
                 <input type="number" value={cat.score}

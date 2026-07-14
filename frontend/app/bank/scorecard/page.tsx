@@ -96,6 +96,51 @@ function effectiveWeight(param: ScoreParam, pillar: Pillar): number {
   return Math.round((param.weight / sum) * pillar.weight * 10) / 10;
 }
 
+const CATEGORY_LABEL_MAP: Record<string, string> = {
+  // public records
+  'none':                       'No Public Records',
+  '__default__':                'Default / Unknown',
+  'civil_judgment_gt5':         'Civil Judgment (> 5 yrs)',
+  'civil_judgment_lt5':         'Civil Judgment (< 5 yrs)',
+  'tax_lien_gt5':               'Tax Lien (> 5 yrs)',
+  'tax_lien_lt5':               'Tax Lien (< 5 yrs)',
+  'foreclosure_lt5':            'Foreclosure (< 5 yrs)',
+  'bankruptcy_lt7':             'Bankruptcy (< 7 yrs)',
+  // employment type
+  'salaried_govt_psu':          'Govt / PSU Salaried',
+  'salaried_private_mnc':       'Private MNC Salaried',
+  'salaried_private_small':     'Private SME Salaried',
+  'self_employed_stable':       'Self-Employed (Stable)',
+  'self_employed_irregular':    'Self-Employed (Irregular)',
+  'freelancer':                 'Freelancer',
+  // industry risk
+  'govt_health_it_banking':     'Govt / Health / IT / Banking',
+  'retail_manufacturing':       'Retail / Manufacturing',
+  'construction_tourism':       'Construction / Tourism',
+  // employer reputation
+  'govt_psu':                   'Government / PSU',
+  'mnc':                        'MNC',
+  'large_corporate':            'Large Corporate',
+  'sme':                        'SME',
+  'startup':                    'Startup',
+  'self_employed_professional': 'Self-Employed Professional',
+  'self_employed_business':     'Self-Employed Business',
+  'contract_parttime':          'Contract / Part-time',
+  'unemployed':                 'Unemployed',
+  // education
+  'postgraduate_professional':  'Postgraduate / Professional',
+  'graduate_diploma':           'Graduate / Diploma',
+  'highschool_or_below':        'High School or Below',
+  // residential
+  'owned_no_mortgage':          'Owned (No Mortgage)',
+  'owned_with_mortgage':        'Owned (With Mortgage)',
+  'living_with_family':         'Living with Family',
+  'rented_long_term':           'Rented (Long-term)',
+  'rented_short_term':          'Rented (Short-term)',
+  'pg_hostel_temporary':        'PG / Hostel / Temporary',
+  'homeless_unknown':           'Homeless / Unknown',
+};
+
 const DOC_FIELDS = [
   { value: 'bank_statement_url',  label: 'Bank Statement' },
   { value: 'income_proof_url',    label: 'Income Proof' },
@@ -165,7 +210,7 @@ function CategoryEditor({ cats, onChange }: {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left" style={{ color: '#64748B' }}>
-            <th className="pb-1 pr-3 font-medium">Category key</th>
+            <th className="pb-1 pr-3 font-medium">Category</th>
             <th className="pb-1 pr-3 font-medium">Score</th>
             <th className="pb-1 font-medium">Rating</th>
           </tr>
@@ -174,7 +219,12 @@ function CategoryEditor({ cats, onChange }: {
           {Object.entries(cats).map(([key, cat]) => (
             <tr key={key}>
               <td className="pr-2 pb-1">
-                <span className="font-mono text-[11px]" style={{ color: '#475569' }}>{key}</span>
+                <span className="text-[11px] font-medium" style={{ color: '#1E293B' }}>
+                  {CATEGORY_LABEL_MAP[key] ?? key}
+                </span>
+                {CATEGORY_LABEL_MAP[key] && (
+                  <div className="font-mono text-[9px]" style={{ color: '#94A3B8' }}>{key}</div>
+                )}
               </td>
               <td className="pr-2 pb-1">
                 <input type="number" value={cat.score}

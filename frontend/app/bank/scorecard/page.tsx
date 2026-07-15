@@ -286,8 +286,8 @@ function ParamRow({
         </span>
 
         {/* Weight + effective share */}
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-28">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          <div className="hidden sm:block w-28">
             <div className="sc-eff-bar">
               <div className="sc-eff-fill" style={{
                 width: `${disabled ? 0 : effPct}%`,
@@ -303,16 +303,16 @@ function ParamRow({
             value={param.weight}
             disabled={disabled}
             onChange={e => set({ weight: parseFloat(e.target.value) || 0 })}
-            className="sc-num w-16 text-xs"
+            className="sc-num w-14 text-xs"
           />
         </div>
       </div>
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="px-4 py-3" style={{ background: 'var(--raised)', borderTop: '1px solid var(--line)' }}>
+        <div className="px-3 sm:px-4 py-3" style={{ background: 'var(--raised)', borderTop: '1px solid var(--line)' }}>
           {/* Doc required */}
-          <div className="flex items-center gap-4 mb-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 mb-3">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={!!param.doc_required}
                 onChange={e => set({ doc_required: e.target.checked })}
@@ -384,7 +384,7 @@ function ParamRow({
                         onChange={e => setChild(ck, { weight: parseFloat(e.target.value) || 0 })}
                         className="w-14 px-2 py-1 rounded text-xs text-right outline-none"
                         style={{ border: '1px solid #CBD5E1', background: cDisabled ? '#F1F5F9' : '#fff', color: '#0F172A' }} />
-                      <span className="w-24 text-right text-[10px]"
+                      <span className="hidden sm:inline w-24 text-right text-[10px]"
                         style={{ color: cDisabled ? '#94A3B8' : '#2563EB' }}>
                         {cDisabled ? '(excluded)' : `→ ${cEff.toFixed(1)}% of group`}
                       </span>
@@ -444,8 +444,8 @@ function PillarCard({
             style={{ color: 'rgba(255,255,255,0.55)' }}>excluded</span>}
         </button>
 
-        <div className="flex items-center gap-3">
-          <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.55)', fontVariantNumeric: 'tabular-nums' }}>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="hidden sm:inline text-[11px]" style={{ color: 'rgba(255,255,255,0.55)', fontVariantNumeric: 'tabular-nums' }}>
             {activeCount}/{totalCount} active
           </span>
           <div className="flex items-center gap-1.5">
@@ -461,7 +461,7 @@ function PillarCard({
       </div>
 
       {open && (
-        <div className="p-4" style={{ background: 'var(--raised)' }}>
+        <div className="p-2 sm:p-4" style={{ background: 'var(--raised)' }}>
           {Object.entries(pillar.parameters).map(([ppk, param]) => (
             <ParamRow key={ppk}
               pillarKey={pillarKey} paramKey={ppk}
@@ -662,16 +662,20 @@ export default function ScorecardPage() {
       ` }} />
 
       {/* Top bar */}
-      <div className="sticky top-0 z-20 flex items-center gap-3 px-6 py-3"
+      <div className="sticky top-0 z-20 flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3"
         style={{ background: '#071A38', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <button onClick={() => router.push('/bank/dashboard')}
-          className="flex items-center gap-1.5 text-sm"
+          className="flex items-center gap-1.5 text-sm flex-shrink-0"
           style={{ color: 'rgba(255,255,255,0.55)' }}>
-          <ArrowLeft className="w-4 h-4" /> Dashboard
+          <ArrowLeft className="w-4 h-4" />
+          <span className="hidden sm:inline">Dashboard</span>
         </button>
-        <span style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
-        <span className="text-sm font-semibold text-white">Scorecard Configuration</span>
-        <span className="text-xs px-2 py-0.5 rounded font-mono"
+        <span className="hidden sm:inline" style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
+        <span className="text-sm font-semibold text-white truncate">
+          <span className="hidden sm:inline">Scorecard Configuration</span>
+          <span className="sm:hidden">Scorecard</span>
+        </span>
+        <span className="hidden sm:inline text-xs px-2 py-0.5 rounded font-mono"
           style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}>
           {config.config_version}
         </span>
@@ -680,16 +684,17 @@ export default function ScorecardPage() {
 
         {isDirty && (
           <button onClick={handleReset}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm"
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded text-sm flex-shrink-0"
             style={{ color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.07)' }}>
-            <RotateCcw className="w-3.5 h-3.5" /> Discard
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Discard</span>
           </button>
         )}
         <button onClick={handleSave} disabled={!isDirty || saving || !pillarWeightOk}
-          className="flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-semibold disabled:opacity-40"
+          className="flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded text-sm font-semibold disabled:opacity-40 flex-shrink-0"
           style={{ background: '#2563EB', color: '#fff' }}>
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-          {saving ? 'Saving…' : 'Save Changes'}
+          <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save Changes'}</span>
         </button>
       </div>
 
@@ -702,7 +707,7 @@ export default function ScorecardPage() {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto px-6 py-6">
+      <div className="max-w-4xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
 
         {/* Pillar weight total warning */}
         {!pillarWeightOk && (
@@ -714,10 +719,10 @@ export default function ScorecardPage() {
         )}
 
         {/* ── Decision thresholds ── */}
-        <section className="sc-card mb-5" style={{ padding: '1.25rem 1.35rem' }}>
-          <div className="flex items-baseline justify-between mb-1">
+        <section className="sc-card mb-5" style={{ padding: '1rem' }}>
+          <div className="flex flex-wrap items-baseline justify-between gap-1 mb-1">
             <h2 className="sc-eyebrow">Decision Thresholds</h2>
-            <span className="sc-hint">how the score maps to an outcome</span>
+            <span className="sc-hint hidden sm:inline">how the score maps to an outcome</span>
           </div>
 
           {/* Visual score track: reject | refer | approve zones */}
@@ -733,7 +738,7 @@ export default function ScorecardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
             {(['approve', 'refer'] as const).map(key => (
               <div key={key}>
                 <label className="sc-field-label" style={{ color: key === 'approve' ? 'var(--approve)' : 'var(--refer)' }}>
@@ -769,7 +774,7 @@ export default function ScorecardPage() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="sc-eyebrow">Pillars &amp; Parameters</h2>
           <div className="flex items-center gap-2.5">
-            <div className="sc-meter" title={`${totalPillarWeight.toFixed(1)} of 100`}>
+            <div className="sc-meter hidden sm:block" title={`${totalPillarWeight.toFixed(1)} of 100`}>
               <div className="sc-meter-fill"
                 style={{
                   width: `${Math.min(100, totalPillarWeight)}%`,

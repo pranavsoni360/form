@@ -876,10 +876,15 @@ export default function ScorecardPage() {
         }
         .sc-info-btn:hover { color: var(--accent); background: rgba(29,78,216,0.08); }
         .sc-info-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(29,78,216,0.3); }
+        /* NOTE: the popover renders in a document.body portal, OUTSIDE .sc-root,
+           so CSS custom properties (--navy etc.) are undefined here. Use literal
+           colours only — a var() here resolves to transparent. */
         .sc-popover {
           position: fixed; z-index: 9999; display: flex; flex-direction: column; gap: 3px;
-          padding: 12px 13px; border-radius: 10px; background: var(--navy); color: #fff;
-          box-shadow: 0 12px 34px rgba(11,30,59,0.34); text-align: left;
+          padding: 12px 13px; border-radius: 10px;
+          background: #071A38; color: #ffffff; opacity: 1;
+          border: 1px solid #1E3A5F;
+          box-shadow: 0 12px 34px rgba(7,26,56,0.45); text-align: left;
           font-weight: 400; text-transform: none; letter-spacing: normal;
           animation: sc-pop-in .12s ease-out;
         }
@@ -888,12 +893,12 @@ export default function ScorecardPage() {
           to   { opacity: 1; transform: translateY(0); }
         }
         @media (prefers-reduced-motion: reduce) { .sc-popover { animation: none; } }
-        .sc-pop-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; color: #fff; }
+        .sc-pop-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; color: #ffffff; }
         .sc-pop-label {
           font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
           color: #93C5FD; margin-top: 5px;
         }
-        .sc-pop-body { font-size: 11.5px; line-height: 1.5; color: rgba(255,255,255,0.85); white-space: pre-line; }
+        .sc-pop-body { font-size: 11.5px; line-height: 1.5; color: rgba(255,255,255,0.92); white-space: pre-line; }
         .sc-pop-note { font-size: 10.5px; line-height: 1.45; color: rgba(255,255,255,0.6); margin-top: 6px; font-style: italic; }
       ` }} />
 

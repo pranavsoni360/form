@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
@@ -145,25 +146,68 @@ const FORMULAS: Record<string, FormulaDoc> = {
 // ── Info popover ─────────────────────────────────────────────────────────────
 function InfoButton({ inputKey, title, doc: docProp }: { inputKey?: string; title: string; doc?: FormulaDoc }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const doc = docProp ?? (inputKey ? FORMULAS[inputKey] : undefined);
+
+  const POP_W = 288;
+
+  const place = useCallback(() => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Anchor below the button, centered, clamped to the viewport.
+    let left = r.left + r.width / 2 - POP_W / 2;
+    left = Math.max(10, Math.min(left, window.innerWidth - POP_W - 10));
+    setPos({ top: r.bottom + 8, left });
+  }, []);
+
+  const toggle = useCallback(() => {
+    setOpen(v => {
+      const next = !v;
+      if (next) place();
+      return next;
+    });
+  }, [place]);
+
+  // Reposition on scroll/resize while open, and close on outside interaction.
+  useEffect(() => {
+    if (!open) return;
+    const onScrollResize = () => place();
+    const onDown = (e: MouseEvent) => {
+      if (btnRef.current && !btnRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('scroll', onScrollResize, true);
+    window.addEventListener('resize', onScrollResize);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('scroll', onScrollResize, true);
+      window.removeEventListener('resize', onScrollResize);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open, place]);
+
   if (!doc) return null;
+
   return (
     <span className="sc-info-wrap" onClick={e => e.stopPropagation()}>
-      <button type="button" className="sc-info-btn" aria-label={`How ${title} is calculated`}
-        aria-expanded={open}
-        onClick={() => setOpen(v => !v)}
-        onBlur={() => setOpen(false)}>
+      <button ref={btnRef} type="button" className="sc-info-btn"
+        aria-label={`How ${title} is calculated`} aria-expanded={open}
+        onClick={toggle}>
         <Info className="w-3.5 h-3.5" />
       </button>
-      {open && (
-        <span className="sc-popover" role="tooltip">
+      {open && pos && typeof document !== 'undefined' && createPortal(
+        <div className="sc-popover" role="tooltip"
+          style={{ top: pos.top, left: pos.left, width: POP_W }}
+          onClick={e => e.stopPropagation()}>
           <span className="sc-pop-title">{title}</span>
           <span className="sc-pop-label">Formula</span>
           <span className="sc-pop-body">{doc.formula}</span>
           <span className="sc-pop-label">Scoring</span>
           <span className="sc-pop-body">{doc.scoring}</span>
           {doc.note && <span className="sc-pop-note">{doc.note}</span>}
-        </span>
+        </div>,
+        document.body,
       )}
     </span>
   );
@@ -833,16 +877,17 @@ export default function ScorecardPage() {
         .sc-info-btn:hover { color: var(--accent); background: rgba(29,78,216,0.08); }
         .sc-info-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(29,78,216,0.3); }
         .sc-popover {
-          position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
-          z-index: 40; width: 288px; max-width: 78vw; display: flex; flex-direction: column; gap: 3px;
+          position: fixed; z-index: 9999; display: flex; flex-direction: column; gap: 3px;
           padding: 12px 13px; border-radius: 10px; background: var(--navy); color: #fff;
-          box-shadow: 0 10px 30px rgba(11,30,59,0.28); text-align: left;
+          box-shadow: 0 12px 34px rgba(11,30,59,0.34); text-align: left;
           font-weight: 400; text-transform: none; letter-spacing: normal;
+          animation: sc-pop-in .12s ease-out;
         }
-        .sc-popover::before {
-          content: ''; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
-          border: 6px solid transparent; border-bottom-color: var(--navy);
+        @keyframes sc-pop-in {
+          from { opacity: 0; transform: translateY(-4px); }
+          to   { opacity: 1; transform: translateY(0); }
         }
+        @media (prefers-reduced-motion: reduce) { .sc-popover { animation: none; } }
         .sc-pop-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; color: #fff; }
         .sc-pop-label {
           font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;

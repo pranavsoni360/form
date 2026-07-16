@@ -181,10 +181,15 @@ async def process_analytics_batch():
                  AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested',
                                'Called - Callback Requested')
                  AND NOT EXISTS (
-                     -- Avoid re-enqueueing if a pending/running/failed job already exists
+                     -- ANY prior analyze job counts — including done/dead. A call
+                     -- that was analyzed and STILL came back 'Uncategorized'
+                     -- (Gemini's fallback on error/odd transcript) used to be
+                     -- re-enqueued every cron tick forever: 48 such calls were
+                     -- generating ~33k jobs/day (941k rows, 244MB table). The
+                     -- same transcript re-analyzed gives the same result — once
+                     -- is enough; the transcript webhook enqueues fresh calls.
                      SELECT 1 FROM call_processing_jobs j
                      WHERE j.job_type = 'transcript_analyze'
-                       AND j.status IN ('pending', 'running', 'failed')
                        AND (j.payload->>'call_id') = agent_calls.id::text
                  )
                ORDER BY created_at ASC

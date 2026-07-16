@@ -24,6 +24,19 @@ try:
 except ImportError:
     _BACKGROUND_AUDIO_AVAILABLE = False
 
+# Semantic end-of-utterance model (multilingual, Hindi supported). VAD alone
+# treats any pause as end-of-turn — on a real QA call the agent barged in on
+# "नहीं नहीं नहीं मुझे" (customer mid-sentence; EOU prob 0.2% per the model)
+# and closed the call. With the model, incomplete sentences hold the turn
+# (waits up to max_endpointing_delay) while complete ones stay fast at
+# min_endpointing_delay. Inference ~20ms in the worker's inference process.
+# Graceful fallback: without the plugin/model files, behaviour is unchanged.
+try:
+    from livekit.plugins.turn_detector.multilingual import MultilingualModel
+    _TURN_DETECTOR_AVAILABLE = True
+except ImportError:
+    _TURN_DETECTOR_AVAILABLE = False
+
 from config import IST, BACKEND_URL, LANG_CONFIG, GENDER_CONFIG
 from session import LoanEnquirySession, CustomerType
 from tools import send_form_link, end_call, schedule_callback, collect_all_data, record_guarantor_consent
@@ -158,7 +171,13 @@ async def entrypoint(ctx: JobContext):
         except TimeoutError:
             logger.error("No participant, exiting")
             if session:
+                session.call_ended = True
                 await session._send_transcript()
+                # Without this the finally-block below waits forever on an
+                # event nobody will set — every unanswered call (the most
+                # common outbound outcome) parked its job until LiveKit
+                # force-killed it.
+                session.shutdown_event.set()
             return
 
         @ctx.room.on("participant_disconnected")
@@ -261,6 +280,9 @@ async def entrypoint(ctx: JobContext):
                 ]
             ),
             vad=vad,
+            # Semantic turn detection (see import note above); "vad" = the
+            # exact pre-turn-detector behaviour if the plugin/model is absent.
+            turn_detection=MultilingualModel() if _TURN_DETECTOR_AVAILABLE else "vad",
             preemptive_generation=True,
             min_endpointing_delay=0.13,
             max_endpointing_delay=2.5,
@@ -454,12 +476,29 @@ async def entrypoint(ctx: JobContext):
                 await session._send_transcript()
             except Exception as e2:
                 logger.error(f"Emergency save failed: {e2}")
+        if session:
+            session.shutdown_event.set()
+        # Job cancellation (worker shutdown/drain) must propagate — swallowing
+        # it here left jobs "stuck draining" during deploys.
+        if isinstance(e, asyncio.CancelledError):
+            raise
 
     finally:
         if session:
-            logger.info("Waiting for transcript save to complete...")
+            logger.info("Waiting for call to finish (shutdown_event)...")
             try:
-                await session.shutdown_event.wait()
+                # ⚠️ This wait is the CALL'S LIFETIME ANCHOR, not a post-teardown
+                # flush: the entrypoint reaches this finally right after setup,
+                # and returning from it ends the LiveKit job (agent leaves the
+                # room). It must block for the entire live conversation until
+                # save_and_disconnect completes and sets shutdown_event.
+                # A 60s bound here force-killed every call at the 60s mark.
+                # 600s is a pure backstop: safety_timeout force-ends any call at
+                # 360s and worst-case teardown (transcript retries + egress) is
+                # ~60s more, so a healthy call ALWAYS finishes well under this.
+                await asyncio.wait_for(session.shutdown_event.wait(), timeout=600)
                 logger.info("Agent shutdown complete")
+            except asyncio.TimeoutError:
+                logger.error("Shutdown wait timed out after 600s — exiting anyway")
             except Exception as e:
                 logger.error(f"Error waiting for shutdown: {e}")

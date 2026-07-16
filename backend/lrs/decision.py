@@ -74,6 +74,7 @@ def decide(
     foir: float = DEFAULT_FOIR,
     scorecard_cfg: dict | None = None,
     risk_cfg: dict | None = None,
+    missing_pillars: list[str] | None = None,
 ) -> DecisionResult:
     sc = scorecard_cfg or scorecard.load_scorecard()
     rc = risk_cfg or scorecard.load_risk_premium()
@@ -92,11 +93,19 @@ def decide(
     else:
         decision = "reject"
 
+    # Thin-file guard: never AUTO-APPROVE when the credit-bureau signal (the
+    # dominant risk pillar) is absent. With no bureau data the score can be
+    # driven entirely by weak/derived signals (e.g. a defaulted-to-zero DTI
+    # scoring 100), so route these to manual review instead of auto-approval.
+    if decision == "approve" and missing_pillars and "credit_bureau" in missing_pillars:
+        decision = "refer"
+
     tenure = int(min(requested_tenure_months or 0, product["max_tenure_months"]))
     if tenure <= 0:
         tenure = int(product["max_tenure_months"])
 
-    max_emi = max(0.0, net_monthly_income * foir - (existing_emi or 0.0))
+    # Clamp existing EMI to ≥0 so a stray negative can't inflate repayment capacity.
+    max_emi = max(0.0, net_monthly_income * foir - max(0.0, existing_emi or 0.0))
     capacity = principal_for_emi(max_emi, roi, tenure)
 
     rec_amount = min(float(requested_amount or 0), capacity)

@@ -2,8 +2,9 @@
 import json
 import logging
 import uuid
+from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 logger = logging.getLogger("lrs-routes")
 
@@ -49,7 +50,7 @@ async def get_score(application_id: str):
 
 @router.post("/rescore/{application_id}")
 async def rescore(application_id: str):
-    """Force a re-score (officer-triggered). Runs inline and returns the result."""
+    """Force a re-score against the latest active config (officer-triggered)."""
     from agent import state as _state
     db_pool = _state.db_pool
     try:
@@ -64,3 +65,30 @@ async def rescore(application_id: str):
     if result is None:
         raise HTTPException(status_code=404, detail="application not found")
     return {"ok": True, "total_score": result["total_score"], "decision": result["decision"]}
+
+
+# ── Scorecard config endpoints (bank-configurable) ────────────────────────────
+
+@router.get("/config")
+async def get_config():
+    """Return the active scorecard config (bank-editable)."""
+    from agent import state as _state
+    from lrs import scorecard as sc_module
+    cfg = await sc_module.get_db_config(_state.db_pool)
+    return cfg
+
+
+@router.put("/config")
+async def put_config(request: Request):
+    """Validate and persist a new scorecard config. Takes effect immediately."""
+    from agent import state as _state
+    from lrs import scorecard as sc_module
+    try:
+        body: dict[str, Any] = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    try:
+        await sc_module.save_db_config(_state.db_pool, body)
+    except sc_module.ScorecardConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True, "config_version": body.get("config_version", "")}

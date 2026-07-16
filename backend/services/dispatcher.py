@@ -345,6 +345,23 @@ class Dispatcher:
             "Dispatcher batch=%s done | %s",
             self.batch_id_uuid, self.counts,
         )
+        # Ops acknowledgement — one Telegram ping per finished batch so the
+        # operator doesn't have to babysit the dashboard.
+        try:
+            from lib.notifier import notify
+            await notify(
+                severity="info",
+                title="Batch complete",
+                body=(
+                    f"Batch {self.batch_id_uuid}: "
+                    f"{self.counts.get('successful', 0)} successful, "
+                    f"{self.counts.get('failed', 0)} failed, "
+                    f"{self.counts.get('completed', 0)} total."
+                ),
+                dedupe_key=f"batch_done_{self.batch_id_uuid}",
+            )
+        except Exception:
+            pass
         _emit("batches", {
             "type": "batch_progress",
             "status": "done",
@@ -380,6 +397,46 @@ class Dispatcher:
                 pass
 
         return self.counts
+
+    async def _wait_for_cooldown_and_retry(self, call_uuid) -> Optional[dict]:
+        """All trunks busy? Distinguish 'cooling down' (temporary) from
+        'none configured' (permanent). Single-number pools hit the temporary
+        case after EVERY successful call (180-300s cooldown) — failing the
+        call there meant a re-uploaded batch never rang. Wait for the
+        earliest cooldown to expire (bounded), then re-acquire.
+        Returns a trunk dict or None (caller falls through to the fail path)."""
+        deadline = asyncio.get_event_loop().time() + 420  # > max cooldown (300s)
+        while not self._stopped:
+            # Seconds until the earliest eligible trunk frees up (DB clock, no skew).
+            q = """SELECT EXTRACT(EPOCH FROM (MIN(pn.cooldown_until) - NOW()))
+                     FROM phone_numbers pn
+                     JOIN phone_pools pp ON pp.id = pn.pool_id
+                    WHERE pn.status = 'active'
+                      AND pn.cooldown_until > NOW()
+                      AND pn.active_calls < pp.capacity"""
+            args: list = []
+            if self.preferred_phone_id:
+                q += " AND pn.id = $1"
+                args.append(uuid.UUID(self.preferred_phone_id))
+            wait_s = await self.db_pool.fetchval(q, *args)
+            if wait_s is None:
+                return None  # nothing is merely cooling down — genuinely no trunk
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                logger.error("Trunk cooldown wait exceeded 420s for call %s — giving up", call_uuid)
+                return None
+            sleep_s = min(max(float(wait_s) + 1.0, 2.0), remaining)
+            logger.info(
+                "All trunks cooling down — waiting %.0fs for the pool to free up (call %s)",
+                sleep_s, call_uuid,
+            )
+            await asyncio.sleep(sleep_s)
+            trunk = await _acquire_trunk_from_db(
+                self.db_pool, preferred_phone_id=self.preferred_phone_id
+            )
+            if trunk is not None:
+                return trunk
+        return None
 
     async def _dispatch_one(self, call: dict) -> None:
         async with self.semaphore:
@@ -435,6 +492,8 @@ class Dispatcher:
             )
             if trunk is None and not self.preferred_phone_id:
                 trunk = _env_fallback_trunk(self.sip_trunk_id_fallback)
+            if trunk is None:
+                trunk = await self._wait_for_cooldown_and_retry(call_uuid)
             if trunk is None:
                 logger.error(
                     "No outbound trunk available for call %s — neither phone_numbers nor SIP_TRUNK_ID env",

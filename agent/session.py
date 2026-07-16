@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 
 import aiohttp
 from livekit.api import DeleteRoomRequest, LiveKitAPI
@@ -198,51 +200,79 @@ class LoanEnquirySession:
             return
         self.call_ended = True
 
-        if self.safety_timeout_task:
-            try: self.safety_timeout_task.cancel()
-            except: pass
-        if self.silence_monitor_task:
-            try: self.silence_monitor_task.cancel()
-            except: pass
-        if self.bg_audio:
-            try:
-                await self.bg_audio.aclose()
-                logger.info("Office ambience stopped")
-            except Exception as e:
-                logger.warning(f"Background audio close failed: {e}")
-
-        logger.info(f"Ending call in {delay}s...")
-        await asyncio.sleep(delay)
-
-        await self._send_transcript()
-
-        if self.egress_id:
-            try:
-                lk_api = LiveKitAPI(
-                    url=os.environ.get("LIVEKIT_URL"),
-                    api_key=os.environ["LIVEKIT_API_KEY"],
-                    api_secret=os.environ["LIVEKIT_API_SECRET"],
-                )
-                try:
-                    await asyncio.wait_for(
-                        lk_api.egress.stop_egress(StopEgressRequest(egress_id=self.egress_id)),
-                        timeout=5.0,
-                    )
-                    logger.info("Recording stopped")
-                except asyncio.TimeoutError:
-                    logger.warning("Egress stop timed out (5s)")
-                finally:
-                    await lk_api.aclose()
-            except Exception as e:
-                logger.warning(f"Recording stop failed: {e}")
-
         try:
-            await self.job_ctx.api.room.delete_room(DeleteRoomRequest(room=self.room_name))
-            logger.info("Room deleted")
-        except Exception as e:
-            logger.error(f"Room delete failed: {e}")
+            # Never cancel the task we are currently running in. silence_monitor
+            # and safety_timeout await this method from INSIDE their own task —
+            # a blind .cancel() here self-cancelled the teardown mid-flight
+            # (CancelledError at the next await), skipping transcript save,
+            # egress stop and room delete, and leaving the PSTN leg up with
+            # call_ended already True so no other path could retry.
+            cur = asyncio.current_task()
+            if self.safety_timeout_task and self.safety_timeout_task is not cur:
+                try: self.safety_timeout_task.cancel()
+                except Exception: pass
+            if self.silence_monitor_task and self.silence_monitor_task is not cur:
+                try: self.silence_monitor_task.cancel()
+                except Exception: pass
+            if self.bg_audio:
+                try:
+                    await self.bg_audio.aclose()
+                    logger.info("Office ambience stopped")
+                except Exception as e:
+                    logger.warning(f"Background audio close failed: {e}")
+
+            logger.info(f"Ending call in {delay}s...")
+            await asyncio.sleep(delay)
+
+            await self._send_transcript()
+
+            if self.egress_id:
+                try:
+                    lk_api = LiveKitAPI(
+                        url=os.environ.get("LIVEKIT_URL"),
+                        api_key=os.environ["LIVEKIT_API_KEY"],
+                        api_secret=os.environ["LIVEKIT_API_SECRET"],
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            lk_api.egress.stop_egress(StopEgressRequest(egress_id=self.egress_id)),
+                            timeout=5.0,
+                        )
+                        logger.info("Recording stopped")
+                    except asyncio.TimeoutError:
+                        logger.warning("Egress stop timed out (5s)")
+                    finally:
+                        await lk_api.aclose()
+                except Exception as e:
+                    logger.warning(f"Recording stop failed: {e}")
+
+            try:
+                await self.job_ctx.api.room.delete_room(DeleteRoomRequest(room=self.room_name))
+                logger.info("Room deleted")
+            except Exception as e:
+                logger.error(f"Room delete failed: {e}")
         finally:
+            # Release the entrypoint's shutdown wait on EVERY path out of
+            # teardown — normal, exception, or cancellation.
             self.shutdown_event.set()
+
+    def _spool_failed_transcript(self, endpoint: str, payload: dict) -> None:
+        """Last-resort local spill when all transcript POSTs fail (backend down).
+        For a lending business the transcript / guarantor consent is a compliance
+        artifact — losing it because the backend restarted mid-call is not
+        acceptable. A file in the spool dir converts permanent loss into delayed
+        delivery (replay manually or via a sweeper)."""
+        try:
+            spool = Path("/recordings/failed_transcripts")
+            spool.mkdir(parents=True, exist_ok=True)
+            path = spool / f"{self.room_name}.json"
+            path.write_text(
+                json.dumps({"endpoint": endpoint, "payload": payload}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.error(f"Transcript spooled to {path} — replay once backend is up")
+        except Exception as e:
+            logger.error(f"Transcript spool ALSO failed ({e}) — data is lost")
 
     # ===================================================================
     # Transcript save (idempotent)
@@ -282,6 +312,7 @@ class LoanEnquirySession:
                     if attempt < 2:
                         await asyncio.sleep(1.0)
             logger.error(f"CRITICAL: guarantor transcript save failed for {self.room_name}")
+            self._spool_failed_transcript("/api/guarantor/transcript", payload)
             return
 
         recording_path = f"/recordings/{self.room_name}.ogg" if self.egress_id else None
@@ -316,6 +347,10 @@ class LoanEnquirySession:
             "initial_deposit": self.initial_deposit or "",
             "is_salaried": self.is_salaried,
             "individual_purpose": self.individual_purpose,
+            # Why the call ended (interested/not_interested/wrong_number/user_busy/
+            # silence_timeout/safety_timeout/...) — set by end_call and the
+            # watchdogs; without it the CRM can't pick retry behaviour.
+            "call_outcome": self.call_outcome,
         }
 
         logger.info(
@@ -347,3 +382,4 @@ class LoanEnquirySession:
                     await asyncio.sleep(1.0)
 
         logger.error(f"CRITICAL: All 3 transcript save attempts failed for {self.room_name}")
+        self._spool_failed_transcript("/api/agent/transcript", payload)

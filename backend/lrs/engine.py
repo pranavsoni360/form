@@ -12,6 +12,7 @@ parameters are renormalised inside `pillars.score_node`).
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 
 from lrs import scorecard
@@ -59,9 +60,66 @@ def _node_to_dict(name: str, r: NodeResult) -> dict:
     return d
 
 
+def _rescale_children(node: dict) -> None:
+    """Drop disabled composite children and rescale the enabled siblings so their
+    relative weights are preserved. Recurses into nested composites."""
+    if node.get("type") != "composite":
+        return
+    children = node.get("children", {})
+    active = {k: c for k, c in children.items() if c.get("enabled", True)}
+    node["children"] = active
+    total = sum(float(c["weight"]) for c in active.values())
+    if total > 0:
+        # Renormalise children to sum to 100 (composite weights are relative,
+        # % of the composite — matches the file convention).
+        scale = 100.0 / total
+        for c in active.values():
+            c["weight"] = round(float(c["weight"]) * scale, 6)
+    for c in active.values():
+        _rescale_children(c)
+
+
+def _prepare_config(cfg: dict) -> dict:
+    """Return a scoring-ready config with disabled pillars/parameters/sub-params
+    removed and the remaining weights rescaled proportionally at every level:
+      - disabled pillars dropped, remaining pillars rescaled to sum 100
+      - disabled parameters dropped, remaining rescaled to the pillar weight
+      - disabled composite children dropped, remaining rescaled to sum 100
+    Weights are RELATIVE at every level, so any enable/disable or re-weight
+    proportionally rebalances the siblings."""
+    cfg = copy.deepcopy(cfg)
+
+    # 1. Pillars: drop disabled, rescale the rest to sum 100.
+    pillars = {k: p for k, p in cfg["pillars"].items() if p.get("enabled", True)}
+    pillar_total = sum(float(p["weight"]) for p in pillars.values())
+    if pillar_total > 0:
+        pscale = 100.0 / pillar_total
+        for p in pillars.values():
+            p["weight"] = round(float(p["weight"]) * pscale, 6)
+    cfg["pillars"] = pillars
+
+    # 2. Parameters + 3. composite children.
+    for pillar in pillars.values():
+        params = {k: v for k, v in pillar["parameters"].items() if v.get("enabled", True)}
+        if not params:
+            pillar["parameters"] = {}
+            continue
+        pillar_w = float(pillar["weight"])
+        active_w = sum(float(p["weight"]) for p in params.values())
+        if active_w > 0:
+            scale = pillar_w / active_w
+            for p in params.values():
+                p["weight"] = round(float(p["weight"]) * scale, 6)
+        for p in params.values():
+            _rescale_children(p)
+        pillar["parameters"] = params
+    return cfg
+
+
 def score(inputs: dict, config: dict | None = None) -> EngineResult:
     """Compute the final LRS score from canonical inputs."""
-    cfg = config or scorecard.load_scorecard()
+    raw_cfg = config or scorecard.load_scorecard()
+    cfg = _prepare_config(raw_cfg)
     pillars = cfg["pillars"]
 
     pillar_results: dict[str, NodeResult] = {}
@@ -99,10 +157,17 @@ def score(inputs: dict, config: dict | None = None) -> EngineResult:
 
     total = _weighted_average(present_pillars)
     total_present_w = sum(r.weight for r in present_pillars.values())
-    effective = {
-        k: round(r.weight / total_present_w * 100, 2)
-        for k, r in present_pillars.items()
-    }
+    if total_present_w > 0:
+        effective = {
+            k: round(r.weight / total_present_w * 100, 2)
+            for k, r in present_pillars.items()
+        }
+    else:
+        # All present pillars carry zero configured weight (a bank can set a
+        # pillar weight to 0 yet leave it enabled). Fall back to equal effective
+        # weights so we never divide by zero.
+        n = len(present_pillars)
+        effective = {k: round(100.0 / n, 2) for k in present_pillars}
     # Annotate the breakdown with effective (re-weighted) pillar weights.
     for k in present_pillars:
         breakdown[k]["effective_weight"] = effective[k]

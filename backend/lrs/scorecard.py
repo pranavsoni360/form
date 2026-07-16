@@ -33,15 +33,19 @@ def _validate_node(node: dict, path: str) -> None:
         children = node.get("children")
         if not children:
             raise ScorecardConfigError(f"{path}: composite node has no children")
-        total = 0.0
+        # Composite child weights are RELATIVE (rescaled to 100 at scoring time,
+        # see engine._rescale_children). Require at least one enabled child with
+        # weight > 0 so the composite can still produce a score.
+        enabled_w = 0.0
         for name, child in children.items():
             if "weight" not in child:
                 raise ScorecardConfigError(f"{path}.{name}: missing weight")
-            total += float(child["weight"])
+            if child.get("enabled", True):
+                enabled_w += float(child["weight"])
             _validate_node(child, f"{path}.{name}")
-        if not _approx_100(total):
+        if enabled_w <= 0:
             raise ScorecardConfigError(
-                f"{path}: child weights sum to {total}, expected 100"
+                f"{path}: needs at least one enabled sub-parameter with weight > 0"
             )
     elif ntype == "range":
         bands = node.get("bands")
@@ -70,32 +74,36 @@ def _validate_scorecard(cfg: dict) -> None:
     pillars = cfg.get("pillars")
     if not pillars:
         raise ScorecardConfigError("scorecard: no pillars")
-    total_w = 0.0
+    enabled_pillar_w = 0.0
     for pkey, pillar in pillars.items():
         if "weight" not in pillar:
             raise ScorecardConfigError(f"pillar {pkey}: missing weight")
-        total_w += float(pillar["weight"])
+        if pillar.get("enabled", True):
+            enabled_pillar_w += float(pillar["weight"])
         params = pillar.get("parameters")
         if not params:
             raise ScorecardConfigError(f"pillar {pkey}: no parameters")
-        pw = 0.0
+        enabled_w = 0.0
         for name, node in params.items():
             if "weight" not in node:
                 raise ScorecardConfigError(f"{pkey}.{name}: missing weight")
-            pw += float(node["weight"])
+            if node.get("enabled", True):
+                enabled_w += float(node["weight"])
             _validate_node(node, f"{pkey}.{name}")
-        # Parameter weights are ABSOLUTE (share of the total 100), so within a
-        # pillar they sum to that pillar's weight — not to 100. This matches the
-        # reference xlsx ("Credit Score 15%") and makes missing-pillar
-        # re-weighting a simple renormalisation of remaining absolute weights.
-        if abs(pw - float(pillar["weight"])) > _WEIGHT_TOLERANCE:
+        # Parameter weights are RELATIVE proportions within a pillar — the engine
+        # renormalises the enabled ones to fill the pillar weight at scoring time
+        # (see engine._prepare_config). So they need not sum to the pillar weight;
+        # we only require at least one enabled parameter with positive weight — but
+        # only for ENABLED pillars (a disabled pillar is dropped entirely).
+        if pillar.get("enabled", True) and enabled_w <= 0:
             raise ScorecardConfigError(
-                f"pillar {pkey}: parameter weights sum to {pw}, "
-                f"expected {pillar['weight']} (pillar weight)"
+                f"pillar {pkey}: needs at least one enabled parameter with weight > 0"
             )
-    if not _approx_100(total_w):
+    # ENABLED pillar weights must sum to 100 (disabled pillars are excluded and
+    # the bank keeps their weight for reference until re-enabled).
+    if not _approx_100(enabled_pillar_w):
         raise ScorecardConfigError(
-            f"scorecard: pillar weights sum to {total_w}, expected 100"
+            f"scorecard: enabled pillar weights sum to {enabled_pillar_w}, expected 100"
         )
     th = cfg.get("decision_thresholds", {})
     if "approve" not in th or "refer" not in th:
@@ -139,3 +147,39 @@ def load_risk_premium() -> dict:
 
 def config_version() -> str:
     return load_scorecard().get("config_version", "unknown")
+
+
+# ── DB-backed config (bank-configurable, mutable) ─────────────────────────────
+
+_live_config: dict | None = None  # in-process cache; invalidated on PUT /api/lrs/config
+
+
+async def get_db_config(pool) -> dict:
+    """Return active scorecard config from DB; seeds from file on first call."""
+    global _live_config
+    if _live_config is not None:
+        return _live_config
+    row = await pool.fetchrow("SELECT config FROM lrs_scorecard_config WHERE id = 1")
+    if not row:
+        cfg = load_scorecard()
+        await save_db_config(pool, cfg)
+        return cfg
+    # asyncpg returns JSONB as a str unless a codec is registered on the pool;
+    # accept either a str (json) or an already-decoded dict.
+    raw = row["config"]
+    cfg = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    _live_config = cfg
+    return cfg
+
+
+async def save_db_config(pool, config: dict) -> None:
+    """Validate, persist to DB, and refresh in-process cache."""
+    global _live_config
+    _validate_scorecard(config)
+    await pool.execute(
+        "INSERT INTO lrs_scorecard_config(id, config, updated_at) "
+        "VALUES(1, $1::jsonb, NOW()) "
+        "ON CONFLICT (id) DO UPDATE SET config = $1::jsonb, updated_at = NOW()",
+        json.dumps(config),
+    )
+    _live_config = config

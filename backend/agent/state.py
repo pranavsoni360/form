@@ -157,6 +157,12 @@ async def acquire_batch_lock() -> bool:
     return True
 
 
+def is_batch_lock_held() -> bool:
+    """Non-mutating peek at the batch lock — lets /batch-call return an
+    explicit 409 instead of silently no-oping in the background task."""
+    return _batch_locked
+
+
 async def release_batch_lock():
     global _batch_locked
     _batch_locked = False
@@ -416,6 +422,10 @@ class TranscriptPayload(BaseModel):
     # Eligibility flags (loan-enquiry agent) — "yes"/"no" confirmed up-front
     is_salaried: Optional[str] = None
     individual_purpose: Optional[str] = None
+    # Why the call ended (interested/not_interested/wrong_number/user_busy/
+    # silence_timeout/safety_timeout/...) — set by the agent's end_call tool
+    # and watchdogs; stored in call_analysis for retry/disposition logic.
+    call_outcome: Optional[str] = None
     # Account opening fields (Union Bank agent)
     account_type: str = ""
     initial_deposit: str = ""

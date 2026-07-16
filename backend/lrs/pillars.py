@@ -28,6 +28,24 @@ class NodeResult:
     children: dict[str, "NodeResult"] = field(default_factory=dict)
 
 
+def _to_number(v: Any) -> Optional[float]:
+    """Coerce a provider/input value to a finite float, or None if it cannot be.
+
+    Booleans, non-numeric strings, None, and NaN/inf all return None so the node
+    is treated as ABSENT (and re-weighted) rather than crashing scoring. Real
+    provider adapters parse messy vendor payloads, so this must never raise.
+    """
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
+        return None
+    return f
+
+
 def _match_band(value: float, bands: list[dict]) -> dict:
     """Return the band whose [from,to] contains value; if none, the nearest band."""
     for b in bands:
@@ -42,19 +60,36 @@ def _match_band(value: float, bands: list[dict]) -> dict:
     return min(bands, key=dist)
 
 
+def _doc_cap(raw_score: float, node: dict, inputs: dict) -> float:
+    """If the parameter requires a supporting document and it is absent, cap the
+    score at `no_doc_max_score` (default 95). The doc flag is injected into
+    `inputs` as `_doc_<doc_field>` (bool) by normalize.to_canonical_inputs."""
+    if not node.get("doc_required"):
+        return raw_score
+    doc_field = node.get("doc_field")
+    if not doc_field:
+        return raw_score
+    has_doc = inputs.get(f"_doc_{doc_field}", True)  # permissive if flag absent
+    if not has_doc:
+        cap = float(node.get("no_doc_max_score", 95))
+        return min(raw_score, cap)
+    return raw_score
+
+
 def score_node(node: dict, inputs: dict) -> NodeResult:
     """Evaluate one scorecard node against canonical inputs."""
     ntype = node["type"]
     weight = float(node.get("weight", 0.0))
 
     if ntype == "range":
-        val = inputs.get(node["input_key"])
+        val = _to_number(inputs.get(node["input_key"]))
         if val is None:
+            # Missing OR non-numeric → treat as absent so the pillar re-weights.
             return NodeResult(present=False, weight=weight)
-        val = float(val)
         band = _match_band(val, node["bands"])
+        s = _doc_cap(float(band["score"]), node, inputs)
         return NodeResult(
-            present=True, score=float(band["score"]), raw_value=val,
+            present=True, score=s, raw_value=val,
             rating=band.get("rating"), approval=band.get("approval"), weight=weight,
         )
 
@@ -64,8 +99,9 @@ def score_node(node: dict, inputs: dict) -> NodeResult:
             return NodeResult(present=False, weight=weight)
         cats = node["categories"]
         entry = cats.get(str(val), cats["__default__"])
+        s = _doc_cap(float(entry["score"]), node, inputs)
         return NodeResult(
-            present=True, score=float(entry["score"]), raw_value=val,
+            present=True, score=s, raw_value=val,
             rating=entry.get("rating"), approval=entry.get("approval"), weight=weight,
         )
 

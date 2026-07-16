@@ -19,8 +19,13 @@ from lrs.providers.base import FetchContext, Provider  # noqa: F401
 def use_mock() -> bool:
     if os.getenv("VG_MOCK_MODE", "").lower() in ("1", "true", "yes"):
         return True
-    # No Perfios/Karza credentials configured → fall back to mock.
-    return not (os.getenv("LRS_PERFIOS_API_KEY") or os.getenv("LRS_KARZA_API_KEY"))
+    # No live-provider config → fall back to mock. VG Docverify (real adapters)
+    # is considered configured when VG_DOCVERIFY_BASE_URL is set.
+    return not (
+        os.getenv("VG_DOCVERIFY_BASE_URL")
+        or os.getenv("LRS_PERFIOS_API_KEY")
+        or os.getenv("LRS_KARZA_API_KEY")
+    )
 
 
 def get_providers() -> list[Provider]:
@@ -28,7 +33,8 @@ def get_providers() -> list[Provider]:
     if use_mock():
         from lrs.providers.mock import get_mock_providers
         return get_mock_providers()
-    # Phase C: real adapters. Until implemented, fall back to mock so the
-    # pipeline stays functional rather than failing hard.
-    from lrs.providers.mock import get_mock_providers
-    return get_mock_providers()
+    # Real mode: VG Document Verification adapters (Experian / ITR / PAN+KYC),
+    # with mock filling the banking_behaviour pillar until a live bank-statement
+    # API is wired. Same 4-provider / 4-pillar shape as the mock bundle.
+    from lrs.providers.vg_docverify import get_vg_providers
+    return get_vg_providers()

@@ -63,6 +63,12 @@ interface BatchStatus {
   is_complete: boolean;
   message: string;
   pending: number;
+  /** Dials NOW (Pending + live Calling). Drives the Start button — unlike
+   *  `pending` it excludes scheduled callbacks and zombie Calling rows,
+   *  which used to freeze the button for hours. */
+  dialable?: number;
+  /** Parked for later (Scheduled / Callback Requested) — informational only. */
+  callbacks_due?: number;
   active_calls: number;
   failed: number;
   completed: number;
@@ -179,7 +185,9 @@ export default function OpsBatchPage() {
       // Poll fast while calls are in flight, slow once everything is at rest.
       const d = q.state.data;
       if (!d) return 5_000;
-      return d.active_calls > 0 || d.pending > 0 ? 5_000 : 30_000;
+      // dialable excludes parked callbacks/zombies — otherwise one scheduled
+      // callback kept the page on the fast 5s poll all day.
+      return d.active_calls > 0 || (d.dialable ?? d.pending) > 0 ? 5_000 : 30_000;
     },
   });
 
@@ -288,7 +296,25 @@ export default function OpsBatchPage() {
   /* ─── Render ───────────────────────────────────────────────────────── */
 
   const s = status.data;
-  const live = s ? s.active_calls > 0 || s.pending > 0 : false;
+  // `dialable` (Pending + live Calling) is the truth for "is a batch running".
+  // Fall back to the old pending-based logic only if the backend predates it.
+  const dialsNow = s ? (s.dialable ?? s.pending) : 0;
+  const live = s ? dialsNow > 0 || s.active_calls > 0 : false;
+
+  // Completion acknowledgement: when the batch transitions live → idle,
+  // tell the operator instead of letting the button silently re-enable.
+  const wasLive = React.useRef(false);
+  React.useEffect(() => {
+    if (wasLive.current && !live && s) {
+      toast.success(
+        `Batch complete — ${s.completed} completed, ${s.failed} failed` +
+        ((s.callbacks_due ?? 0) > 0 ? ` · ${s.callbacks_due} callback${s.callbacks_due === 1 ? "" : "s"} scheduled for later` : ""),
+        { duration: 8000 },
+      );
+      refreshBatchViews();
+    }
+    wasLive.current = live;
+  }, [live, s, refreshBatchViews]);
 
   return (
     <AppShell
@@ -300,7 +326,7 @@ export default function OpsBatchPage() {
         <LiveStatusBanner s={s} loading={status.isLoading} live={live} />
 
         {/* KPI strip */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
           <StatCard
             label="ACTIVE NOW"
             value={s?.active_calls ?? 0}
@@ -308,10 +334,16 @@ export default function OpsBatchPage() {
             tone={(s?.active_calls ?? 0) > 0 ? "info" : "neutral"}
           />
           <StatCard
-            label="PENDING"
-            value={s?.pending ?? 0}
+            label="TO DIAL"
+            value={dialsNow}
             icon={Activity}
-            tone={(s?.pending ?? 0) > 0 ? "warning" : "neutral"}
+            tone={dialsNow > 0 ? "warning" : "neutral"}
+          />
+          <StatCard
+            label="CALLBACKS LATER"
+            value={s?.callbacks_due ?? 0}
+            icon={Activity}
+            tone="neutral"
           />
           <StatCard
             label="COMPLETED"
@@ -443,7 +475,7 @@ export default function OpsBatchPage() {
                 {start.isPending
                   ? "Starting…"
                   : live
-                  ? `Running — ${s?.pending ?? 0} pending`
+                  ? `Running — ${dialsNow} to dial`
                   : "Start batch"}
               </Button>
               <Button

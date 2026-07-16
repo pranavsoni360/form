@@ -1,0 +1,39 @@
+name: Deploy to QA
+
+# Auto-deploy the QA environment on every push to the `qa` branch.
+# Mirrors deploy.yml (prod) but runs deploy-qa.sh → https://finix.vgipl.com:8445
+# Manual runs available via the "Run workflow" button (workflow_dispatch).
+on:
+  push:
+    branches: [qa]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+# QA deploys serialise among themselves, but never block the prod deploy queue.
+concurrency:
+  group: gpu-deploy-qa
+  cancel-in-progress: false
+
+jobs:
+  deploy-qa:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy QA over SSH (pull qa → migrate los_form_qa → rebuild → restart)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GPU_HOST }}
+          username: ${{ secrets.GPU_USER }}
+          port: ${{ secrets.GPU_PORT }}
+          key: ${{ secrets.GPU_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -e
+            # Run the qa-branch copy of the deploy script (prod's copy is stale and
+            # only moves on a master deploy). Refresh the QA worktree, then exec its
+            # deploy-qa.sh so script changes on `qa` take effect immediately.
+            cd /root/vaani_los_form_qa
+            git fetch origin qa
+            git reset --hard origin/qa
+            bash scripts/deploy-qa.sh

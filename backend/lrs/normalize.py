@@ -48,7 +48,15 @@ def to_canonical_inputs(app: dict, payloads: list[dict]) -> dict[str, Any]:
         if p:
             inputs.update(p)
 
+    # Document availability flags consumed by pillars._doc_cap.
+    # A parameter with doc_required=true and no matching doc is capped at no_doc_max_score.
     app = app or {}
+    for _doc_field in (
+        "aadhaar_front_url", "aadhaar_back_url", "pan_card_url",
+        "photo_url", "income_proof_url", "bank_statement_url",
+    ):
+        inputs[f"_doc_{_doc_field}"] = bool(app.get(_doc_field))
+
     requested_amount = _f(app.get("loan_amount_requested")) or 0.0
     nmi = _f(inputs.get("net_monthly_income")) \
         or _f(app.get("monthly_net_income")) \

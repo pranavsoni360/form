@@ -23,9 +23,15 @@ async def send_whatsapp_form(request: Request):
     """Triggered by the AI voice agent's send_form_link tool.
     Creates a loan_application from call data (so OTP flow works),
     saves field_sources for 'Voice Call' badges, and sends WhatsApp."""
+    return await send_whatsapp_form_impl(await request.json())
+
+
+async def send_whatsapp_form_impl(data: dict) -> dict:
+    """Core of /send-whatsapp-form, callable in-process (e.g. the transcript
+    handler's post-call safety net for interested customers who hung up
+    before the agent could fire send_form_link)."""
     from main import save_field_sources
 
-    data = await request.json()
     phone = data.get("phone")
     customer_name = data.get("customer_name")
     loan_type = data.get("loan_type", "")

@@ -9,6 +9,166 @@ import {
   CheckCircle2, Loader2, ArrowLeft, Info,
 } from 'lucide-react';
 
+// ── Formula registry ────────────────────────────────────────────────────────
+// Keyed by input_key. `formula` is how the raw metric is derived (mirrors the
+// backend in normalize.py / decision.py / fn_lrs_*); `scoring` is how the raw
+// value maps to a 0–100 sub-score (band/category lookup from this config).
+interface FormulaDoc { formula: string; scoring: string; note?: string }
+
+const FORMULAS: Record<string, FormulaDoc> = {
+  // ── Credit bureau ──
+  credit_score: {
+    formula: 'Bureau credit score (CIBIL / Experian), 300–900, taken as reported.',
+    scoring: 'Banded: 800–900 → 100, 750–799 → 80, 700–749 → 60, 650–699 → 40, 300–649 → 20.',
+  },
+  on_time_payment_pct: {
+    formula: 'On-time payments ÷ total payments due × 100, from bureau tradeline history.',
+    scoring: 'Higher is better: ≥99% → 100, 95–99% → 80, 90–95% → 60, 80–90% → 40, <80% → 20.',
+  },
+  credit_utilization_pct: {
+    formula: 'Total balances ÷ total revolving credit limit × 100.',
+    scoring: 'Lower is better: ≤10% → 100, 10–30% → 80, 30–50% → 60, 50–70% → 40, >70% → 20.',
+  },
+  hard_inquiries_12m: {
+    formula: 'Count of hard credit inquiries in the last 12 months.',
+    scoring: 'Fewer is better: 0–1 → 100, 2–3 → 80, 4–5 → 60, 6–8 → 40, ≥9 → 20.',
+  },
+  credit_history_years: {
+    formula: 'Age of the oldest active credit account, in years.',
+    scoring: 'Longer is better: ≥7y → 100, 4–7y → 80, 2–4y → 60, 1–2y → 40, <1y → 20.',
+  },
+  public_record_type: {
+    formula: 'Worst adverse public record on file (judgment / lien / foreclosure / bankruptcy).',
+    scoring: 'Category lookup — none → 100, down to bankruptcy < 7y → 20.',
+  },
+  // ── Income & affordability ──
+  net_monthly_income: {
+    formula: 'Net (take-home) monthly income after statutory deductions.',
+    scoring: 'Higher is better: >₹60k → 100, ₹40–60k → 80, ₹25–40k → 60, ₹15–25k → 40, <₹15k → 20.',
+  },
+  new_loan_emi_to_income_pct: {
+    formula: 'EMI(requested amount, nominal ROI, tenure) ÷ net monthly income × 100.\nEMI = P·r / (1 − (1+r)⁻ⁿ), r = ROI/1200, n = tenure months.',
+    scoring: 'Lower is better: <15% → 100, 15–25% → 80, 25–35% → 60, 35–50% → 40, >50% → 20.',
+  },
+  employment_type: {
+    formula: 'Employment category as declared / verified.',
+    scoring: 'Govt/PSU → 100, private MNC → 90, private SME → 70, self-employed stable → 60, irregular → 40, freelancer → 20.',
+  },
+  job_tenure_years: {
+    formula: 'Years in the current job / business.',
+    scoring: '>5y → 100, 3–5y → 80, 1–3y → 60, <1y → 40.',
+  },
+  income_volatility_pct: {
+    formula: 'Std deviation of monthly income ÷ mean monthly income × 100 (from bank statements).',
+    scoring: 'Lower is better: <10% → 100, 10–25% → 60, >25% → 40.',
+  },
+  industry_risk_class: {
+    formula: 'Risk class of the employer / business industry.',
+    scoring: 'Govt/Health/IT/Banking → 100, retail/manufacturing → 70, construction/tourism → 40.',
+  },
+  // ── Banking behaviour ──
+  amb_pct_of_nmi: {
+    formula: 'Average monthly balance ÷ net monthly income × 100 (from bank statements).',
+    scoring: 'Higher is better: >50% → 100, 30–50% → 80, 20–30% → 60, 10–20% → 40, <10% → 20.',
+  },
+  otp_ratio_pct: {
+    formula: 'On-time loan/EMI payments ÷ total scheduled payments × 100 (statement-derived).',
+    scoring: '≥95% → 100, 90–95% → 80, 80–90% → 50, <80% → 20.',
+  },
+  missed_payment_ratio: {
+    formula: 'Missed payments ÷ total scheduled payments.',
+    scoring: '0 → 100, ≤0.1 → 60, >0.1 → 20.',
+  },
+  penalty_count: {
+    formula: 'Count of late-payment / cheque-bounce penalties in the statement window.',
+    scoring: '0 → 100, 1 → 60, 2–3 → 40, >3 → 20.',
+  },
+  net_cash_flow: {
+    formula: 'Total monthly credits − total monthly debits (avg over statement window).',
+    scoring: 'Positive → 100, zero → 60, negative → 20.',
+  },
+  surplus_income_ratio: {
+    formula: '(Net monthly income − total monthly obligations) ÷ net monthly income × 100.',
+    scoring: '≥30% → 100, 15–30% → 60, <15% → 20.',
+  },
+  // ── Profile & identity ──
+  employer_reputation_class: {
+    formula: 'Reputation tier of the employer.',
+    scoring: 'Govt/PSU → 100, MNC → 90, large corporate → 85, SME → 70, startup → 60, … unemployed → 0.',
+  },
+  job_tenure_stability_pct: {
+    formula: 'Current job tenure ÷ total work experience × 100.',
+    scoring: '≥50% → 100, <50% → 50.',
+  },
+  income_cv_pct: {
+    formula: 'Coefficient of variation of income = std dev ÷ mean × 100.',
+    scoring: 'Lower is better: ≤2% → 100, 2–5% → 80, 5–10% → 60, 10–20% → 40, >20% → 20.',
+  },
+  age_years: {
+    formula: 'Applicant age in years (from date of birth).',
+    scoring: 'Prime band 25–55 → 80, 18–24 or 55–65 → 40, outside → 20.',
+  },
+  education_class: {
+    formula: 'Highest education level attained.',
+    scoring: 'Postgraduate/professional → 100, graduate/diploma → 70, high-school or below → 40.',
+  },
+  ownership_class: {
+    formula: 'Residence ownership status.',
+    scoring: 'Owned (no mortgage) → 100, … PG/hostel → 50, homeless/unknown → 20.',
+  },
+  years_at_address: {
+    formula: 'Years living at the current address.',
+    scoring: '>3y → 100, 1–3y → 75, <1y → 50.',
+  },
+  housing_burden_pct: {
+    formula: 'Monthly rent / housing cost ÷ net monthly income × 100.',
+    scoring: 'Lower is better: <30% → 100, 30–50% → 70, ≥50% → 40.',
+  },
+  total_emi_pct_income: {
+    formula: 'Existing EMIs ÷ net monthly income × 100.',
+    scoring: 'Lower is better: <20% → 100, 20–40% → 75, >40% → 50.',
+  },
+  active_loans_count: {
+    formula: 'Number of currently active loan accounts.',
+    scoring: '0–1 → 100, 2–3 → 75, ≥4 → 40.',
+  },
+  cc_utilization_pct: {
+    formula: 'Credit-card balances ÷ credit-card limits × 100.',
+    scoring: 'Lower is better: <10% → 100, 10–30% → 75, >30% → 40.',
+  },
+  dti_pct: {
+    formula: 'Debt-to-income = total monthly debt obligations ÷ net monthly income × 100.',
+    scoring: 'Lower is better: <30% → 100, 30–50% → 75, >50% → 40.',
+  },
+};
+
+// ── Info popover ─────────────────────────────────────────────────────────────
+function InfoButton({ inputKey, title, doc: docProp }: { inputKey?: string; title: string; doc?: FormulaDoc }) {
+  const [open, setOpen] = useState(false);
+  const doc = docProp ?? (inputKey ? FORMULAS[inputKey] : undefined);
+  if (!doc) return null;
+  return (
+    <span className="sc-info-wrap" onClick={e => e.stopPropagation()}>
+      <button type="button" className="sc-info-btn" aria-label={`How ${title} is calculated`}
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        onBlur={() => setOpen(false)}>
+        <Info className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <span className="sc-popover" role="tooltip">
+          <span className="sc-pop-title">{title}</span>
+          <span className="sc-pop-label">Formula</span>
+          <span className="sc-pop-body">{doc.formula}</span>
+          <span className="sc-pop-label">Scoring</span>
+          <span className="sc-pop-body">{doc.scoring}</span>
+          {doc.note && <span className="sc-pop-note">{doc.note}</span>}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ── Toggle switch (pill style) ──────────────────────────────────────────────
 function Toggle({ on, onChange, size = 'md', onColor = '#2563EB' }: {
   on: boolean;
@@ -279,10 +439,11 @@ function ParamRow({
         {/* Toggle enable/disable */}
         <Toggle on={!disabled} onChange={next => set({ enabled: next })} />
 
-        <span className="flex-1 text-sm font-semibold truncate" style={{ color: 'var(--ink)' }}>
-          {param.title}
-          <span className="ml-2 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+        <span className="flex-1 min-w-0 flex items-center gap-1.5">
+          <span className="text-sm font-semibold truncate" style={{ color: 'var(--ink)' }}>{param.title}</span>
+          <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded flex-shrink-0"
             style={{ background: 'var(--ground)', color: 'var(--ink-muted)' }}>{param.type}</span>
+          <InfoButton inputKey={param.input_key} title={param.title} />
         </span>
 
         {/* Weight + effective share */}
@@ -378,7 +539,10 @@ function ParamRow({
                       style={{ opacity: cDisabled ? 0.5 : 1 }}>
                       <Toggle size="sm" on={!cDisabled}
                         onChange={next => setChild(ck, { enabled: next })} />
-                      <span className="flex-1 truncate" style={{ color: '#475569' }}>{child.title}</span>
+                      <span className="flex-1 min-w-0 flex items-center gap-1.5">
+                        <span className="truncate" style={{ color: '#475569' }}>{child.title}</span>
+                        <InfoButton inputKey={child.input_key} title={child.title} />
+                      </span>
                       <input type="number" min="0" step="1"
                         value={child.weight} disabled={cDisabled}
                         onChange={e => setChild(ck, { weight: parseFloat(e.target.value) || 0 })}
@@ -659,6 +823,33 @@ export default function ScorecardPage() {
         @media (prefers-reduced-motion: reduce) {
           .sc-toggle-knob, .sc-track-zone, .sc-meter-fill, .sc-eff-fill { transition: none; }
         }
+        /* Info popover */
+        .sc-info-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+        .sc-info-btn {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
+          background: transparent; color: var(--ink-faint); transition: color .15s, background .15s;
+        }
+        .sc-info-btn:hover { color: var(--accent); background: rgba(29,78,216,0.08); }
+        .sc-info-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(29,78,216,0.3); }
+        .sc-popover {
+          position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+          z-index: 40; width: 288px; max-width: 78vw; display: flex; flex-direction: column; gap: 3px;
+          padding: 12px 13px; border-radius: 10px; background: var(--navy); color: #fff;
+          box-shadow: 0 10px 30px rgba(11,30,59,0.28); text-align: left;
+          font-weight: 400; text-transform: none; letter-spacing: normal;
+        }
+        .sc-popover::before {
+          content: ''; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+          border: 6px solid transparent; border-bottom-color: var(--navy);
+        }
+        .sc-pop-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; color: #fff; }
+        .sc-pop-label {
+          font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+          color: #93C5FD; margin-top: 5px;
+        }
+        .sc-pop-body { font-size: 11.5px; line-height: 1.5; color: rgba(255,255,255,0.85); white-space: pre-line; }
+        .sc-pop-note { font-size: 10.5px; line-height: 1.45; color: rgba(255,255,255,0.6); margin-top: 6px; font-style: italic; }
       ` }} />
 
       {/* Top bar */}
@@ -772,7 +963,20 @@ export default function ScorecardPage() {
 
         {/* ── Pillars ── */}
         <div className="flex items-center justify-between mb-3">
-          <h2 className="sc-eyebrow">Pillars &amp; Parameters</h2>
+          <span className="flex items-center gap-1.5">
+            <h2 className="sc-eyebrow">Pillars &amp; Parameters</h2>
+            <InfoButton title="How the final score is built"
+              doc={{
+                formula:
+                  'Each parameter → 0–100 sub-score via its band/category.\n' +
+                  'Pillar score = Σ(param sub-score × param weight) ÷ Σ(param weight).\n' +
+                  'Final score = Σ(pillar score × pillar weight) ÷ Σ(pillar weight).',
+                scoring:
+                  'Only enabled items count; weights of the rest are rescaled proportionally. ' +
+                  'Missing-data pillars are dropped and remaining pillar weights renormalise to 100.',
+                note: 'A parameter needing a document but missing it is capped at its no-doc max (default 95).',
+              }} />
+          </span>
           <div className="flex items-center gap-2.5">
             <div className="sc-meter hidden sm:block" title={`${totalPillarWeight.toFixed(1)} of 100`}>
               <div className="sc-meter-fill"

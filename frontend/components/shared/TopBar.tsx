@@ -1,10 +1,11 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { Bell, ChevronRight, Moon, Sun } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Bell, ChevronRight, LogOut, Moon, Sun } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
+import { logout } from "@/lib/auth";
 import { ConnectionDot } from "./ConnectionDot";
 
 /**
@@ -14,7 +15,12 @@ import { ConnectionDot } from "./ConnectionDot";
  * Right: SSE connection dot · theme toggle · notification bell · user avatar pill
  */
 function UserPill() {
+  const router = useRouter();
   const [name, setName] = React.useState("Admin");
+  const [email, setEmail] = React.useState("");
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     try {
       const u = localStorage.getItem("los_admin_user");
@@ -22,17 +28,80 @@ function UserPill() {
         const parsed = JSON.parse(u);
         const display = parsed?.username || parsed?.email?.split("@")[0] || "Admin";
         setName(display.charAt(0).toUpperCase() + display.slice(1));
+        setEmail(parsed?.email || "");
       }
     } catch {}
   }, []);
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleLogout = async () => {
+    setOpen(false);
+    await logout("admin");
+    router.replace("/admin/login");
+  };
+
   const initials = name.slice(0, 2).toUpperCase();
+
   return (
-    <div className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-2 py-1.5 pr-3">
-      <span className="grid h-7 w-7 place-items-center rounded-lg text-xs font-bold text-white ring-1 ring-blue-300/30"
-        style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)' }}>
-        {initials}
-      </span>
-      <span className="text-xs font-semibold hidden sm:block">{name}</span>
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-2 py-1.5 pr-3 transition-colors hover:bg-muted"
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
+        <span
+          className="grid h-7 w-7 place-items-center rounded-lg text-xs font-bold text-white ring-1 ring-blue-300/30"
+          style={{ background: "linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)" }}
+        >
+          {initials}
+        </span>
+        <span className="text-xs font-semibold hidden sm:block">{name}</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-52 rounded-xl border border-border bg-card shadow-lg ring-1 ring-black/5">
+          {/* User info header */}
+          <div className="px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-2.5">
+              <span
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold text-white"
+                style={{ background: "linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)" }}
+              >
+                {initials}
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-foreground truncate">{name}</p>
+                {email && (
+                  <p className="text-[10px] text-muted-foreground truncate">{email}</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Logout */}
+          <div className="p-1.5">
+            <button
+              onClick={handleLogout}
+              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Log out
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1266,6 +1266,33 @@ async def auth_refresh(request: Request):
     )
     return {"token": access_token}
 
+@app.post("/api/auth/admin-change-password")
+async def admin_change_password(
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Change the logged-in admin's password. Requires current password verification."""
+    body = await request.json()
+    current_password = body.get("current_password", "")
+    new_password = body.get("new_password", "")
+
+    if not current_password or not new_password:
+        raise HTTPException(status_code=400, detail="current_password and new_password are required")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    row = await db_pool.fetchrow("SELECT password_hash FROM admin_users WHERE id = $1", uuid.UUID(admin["id"]))
+    if not row or not bcrypt.checkpw(current_password.encode("utf-8"), row["password_hash"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    new_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    await db_pool.execute(
+        "UPDATE admin_users SET password_hash = $1 WHERE id = $2",
+        new_hash, uuid.UUID(admin["id"]),
+    )
+    return {"status": "ok", "message": "Password updated successfully"}
+
+
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request):
     """Revoke refresh token and clear cookie."""

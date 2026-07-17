@@ -12,7 +12,6 @@ import {
   Download,
   FileText,
   ListChecks,
-  LogOut,
   Mic,
   PhoneCall,
   Radio,
@@ -22,7 +21,6 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { clearAuth } from "@/lib/auth";
 
 /**
  * VirtualVaani-style sidebar.
@@ -92,10 +90,6 @@ const NAV_GROUPS: ReadonlyArray<NavGroup> = [
 
 export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
-  const handleLogout = () => {
-    clearAuth("admin");
-    window.location.href = "/admin/login";
-  };
   return (
     <aside
       className={cn(
@@ -166,28 +160,6 @@ export function Sidebar({ className }: { className?: string }) {
         </nav>
       </div>
 
-      {/* Footer: user pill */}
-      <div className="mx-3 mb-4 mt-2 rounded-xl border border-border bg-muted/40 p-3">
-        <div className="flex items-center gap-3">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/15 text-xs font-bold text-primary ring-1 ring-primary/30">
-            A
-          </span>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-xs font-semibold">Admin Portal</div>
-            <div className="text-[10px] text-muted-foreground">
-              VirtualVaani LOS v1.0
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            aria-label="Sign out"
-            className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-card hover:text-destructive"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
     </aside>
   );
 }

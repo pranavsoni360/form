@@ -141,12 +141,18 @@ async def _acquire_trunk_from_db(
                     uuid.UUID(preferred_phone_id),
                 )
             else:
+                # Automatic least-loaded pick. auto_dial_eligible gates this
+                # path only — a number flagged FALSE (e.g. the Twilio US
+                # caller-ID) is never auto-dialled to Indian customers, but
+                # stays selectable via the operator's "From number" dropdown
+                # (the preferred_phone_id branch above ignores this flag).
                 row = await conn.fetchrow(
                     """SELECT pn.id, pn.phone_number, pn.livekit_trunk_id,
                               pp.cooldown_seconds_min, pp.cooldown_seconds_max
                          FROM phone_numbers pn
                          JOIN phone_pools pp ON pp.id = pn.pool_id
                         WHERE pn.status = 'active'
+                          AND pn.auto_dial_eligible = TRUE
                           AND (pn.cooldown_until IS NULL OR pn.cooldown_until <= NOW())
                           AND pn.active_calls < pp.capacity
                         ORDER BY pn.active_calls ASC, pn.total_calls ASC, pn.id

@@ -1,7 +1,7 @@
-"use client";
+﻿"use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronRight, Eye, EyeOff, KeyRound, LogOut, Moon, Sun, X } from "lucide-react";
+import { AlertTriangle, Bell, CheckCircle2, ChevronRight, Eye, EyeOff, Info, KeyRound, LogOut, Moon, Sun, X } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -186,6 +186,153 @@ function PasswordField({
   );
 }
 
+/* ─── Notification panel ─────────────────────────────────────────────────── */
+
+type NotifItem = {
+  id: string;
+  level: string;
+  source: string;
+  message: string;
+  ts: number;
+};
+
+function timeAgo(ts: number): string {
+  const diff = Math.floor(Date.now() / 1000 - ts);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function NotifIcon({ level }: { level: string }) {
+  if (level === "critical" || level === "error")
+    return <AlertTriangle className="h-3.5 w-3.5 text-red-500" />;
+  if (level === "warning")
+    return <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />;
+  if (level === "info")
+    return <Info className="h-3.5 w-3.5 text-blue-500" />;
+  return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />;
+}
+
+function levelBadgeClass(level: string): string {
+  if (level === "critical" || level === "error") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+  if (level === "warning") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+  if (level === "info") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+  return "bg-muted text-muted-foreground";
+}
+
+function NotificationBell() {
+  const [open, setOpen] = React.useState(false);
+  const [items, setItems] = React.useState<NotifItem[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [hasNew, setHasNew] = React.useState(true);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  const fetchNotifs = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/ops/errors?limit=15`);
+      if (res.ok) {
+        const data = await res.json();
+        setItems((data.errors || []).slice(0, 15));
+      }
+    } catch {}
+    finally { setLoading(false); }
+  }, []);
+
+  const handleOpen = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) { setHasNew(false); fetchNotifs(); }
+  };
+
+  // Close on outside click
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative hidden sm:block">
+      <button
+        onClick={handleOpen}
+        aria-label="Notifications"
+        aria-expanded={open}
+        className="relative grid h-9 w-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Bell className="h-4 w-4" />
+        {hasNew && (
+          <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-card" aria-hidden />
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border border-border bg-card shadow-xl ring-1 ring-black/5 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Bell className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold text-foreground">Notifications</span>
+            </div>
+            <a href="/ops/errors" className="text-[10px] font-medium text-primary hover:underline">
+              View all errors →
+            </a>
+          </div>
+
+          {/* Body */}
+          <div className="max-h-[400px] overflow-y-auto divide-y divide-border">
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground text-xs gap-2">
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4l-3 3-3-3h4z" />
+                </svg>
+                Loading…
+              </div>
+            ) : items.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+                <CheckCircle2 className="h-8 w-8 opacity-30" />
+                <p className="text-xs">No recent system errors</p>
+              </div>
+            ) : (
+              items.map((item) => (
+                <div key={item.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors">
+                  <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-muted">
+                    <NotifIcon level={item.level} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${levelBadgeClass(item.level)}`}>
+                        {item.level}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">{item.source}</span>
+                    </div>
+                    <p className="text-xs text-foreground line-clamp-2 leading-relaxed">{item.message}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{timeAgo(item.ts)}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Footer */}
+          {items.length > 0 && (
+            <div className="border-t border-border px-4 py-2.5 text-center">
+              <a href="/ops/errors" className="text-xs font-medium text-primary hover:underline">
+                Open Errors page →
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── User pill ──────────────────────────────────────────────────────────── */
 
 function UserPill() {
@@ -329,16 +476,7 @@ export function TopBar({ title }: { title?: string }) {
 
         <ThemeToggle />
 
-        <button
-          aria-label="Notifications"
-          className="relative hidden sm:grid h-9 w-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <Bell className="h-4 w-4" />
-          <span
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-card"
-            aria-hidden
-          />
-        </button>
+        <NotificationBell />
 
         {/* User avatar pill */}
         <UserPill />

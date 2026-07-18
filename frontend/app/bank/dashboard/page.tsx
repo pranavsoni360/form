@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getBankApplications, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate } from '@/lib/api';
-import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle, Search, SlidersHorizontal } from 'lucide-react';
+import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle, Search, PenLine } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 
@@ -26,8 +26,8 @@ interface Application {
   form_status?: string | null;
 }
 
-const OFFICER_FILTERS    = ['all', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
-const SUPERVISOR_FILTERS = ['all', 'officer_approved', 'documents_submitted', 'approved', 'supervisor_rejected'];
+const OFFICER_FILTERS    = ['all', 'draft', 'submitted', 'system_reviewed', 'officer_approved', 'officer_rejected'];
+const SUPERVISOR_FILTERS = ['all', 'draft', 'officer_approved', 'documents_submitted', 'approved', 'supervisor_rejected'];
 
 export default function BankDashboardPage() {
   const router = useRouter();
@@ -74,16 +74,18 @@ export default function BankDashboardPage() {
 
   const stats = {
     total:    applications.length,
+    draft:    applications.filter(a => a.status === 'draft').length,
     pending:  applications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
     approved: applications.filter(a => ['officer_approved', 'approved'].includes(a.status)).length,
     rejected: applications.filter(a => a.status.includes('rejected')).length,
   };
 
   const statItems = [
-    { label: 'Total',    value: stats.total,    icon: FileText,     accent: 'border-l-blue-500 bg-blue-50 dark:bg-blue-950/30' },
-    { label: 'Pending',  value: stats.pending,  icon: Clock,        accent: 'border-l-amber-500 bg-amber-50 dark:bg-amber-950/30' },
-    { label: 'Approved', value: stats.approved, icon: CheckCircle2, accent: 'border-l-emerald-500 bg-emerald-50 dark:bg-emerald-950/30' },
-    { label: 'Rejected', value: stats.rejected, icon: XCircle,      accent: 'border-l-red-500 bg-red-50 dark:bg-red-950/30' },
+    { label: 'Total',    value: stats.total,    icon: FileText,     accent: 'border-l-blue-500 bg-blue-50 dark:bg-blue-950/30',     onClick: () => setFilter('all') },
+    { label: 'Draft',    value: stats.draft,    icon: PenLine,      accent: 'border-l-gray-400 bg-gray-50 dark:bg-gray-900/40',     onClick: () => setFilter('draft') },
+    { label: 'Pending',  value: stats.pending,  icon: Clock,        accent: 'border-l-amber-500 bg-amber-50 dark:bg-amber-950/30',   onClick: () => setFilter('submitted') },
+    { label: 'Approved', value: stats.approved, icon: CheckCircle2, accent: 'border-l-emerald-500 bg-emerald-50 dark:bg-emerald-950/30', onClick: () => setFilter('officer_approved') },
+    { label: 'Rejected', value: stats.rejected, icon: XCircle,      accent: 'border-l-red-500 bg-red-50 dark:bg-red-950/30',        onClick: () => setFilter('officer_rejected') },
   ];
 
   return (
@@ -115,7 +117,6 @@ export default function BankDashboardPage() {
               {[
                 { label: 'Calls', icon: <Phone className="w-4 h-4" />, path: '/bank/calls' },
                 { label: 'Batch', icon: <Upload className="w-4 h-4" />, path: '/bank/batch' },
-                { label: 'Scorecard', icon: <SlidersHorizontal className="w-4 h-4" />, path: '/bank/scorecard' },
               ].map(({ label, icon, path }) => (
                 <button key={label} onClick={() => router.push(path)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
@@ -135,15 +136,16 @@ export default function BankDashboardPage() {
       <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 space-y-5">
 
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {statItems.map(({ label, value, icon: Icon, accent }) => (
-            <div key={label} className={`rounded-xl p-4 border-l-4 border border-slate-200 dark:border-slate-800 shadow-sm ${accent}`}>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          {statItems.map(({ label, value, icon: Icon, accent, onClick }) => (
+            <button key={label} onClick={onClick}
+              className={`rounded-xl p-4 border-l-4 border border-slate-200 dark:border-slate-800 shadow-sm text-left transition hover:shadow-md hover:scale-[1.02] ${accent}`}>
               <div className="flex items-center gap-2 mb-2">
                 <Icon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</span>
               </div>
               <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
-            </div>
+            </button>
           ))}
         </div>
 

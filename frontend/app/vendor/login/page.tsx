@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2, AlertTriangle, User, Lock, Banknote, CheckCircle2, TrendingUp } from "lucide-react";
+import { Loader2, AlertTriangle, User, Lock, Banknote, CheckCircle2, TrendingUp, Eye, EyeOff } from "lucide-react";
 import { vendorLogin } from "@/lib/api/vendor";
 import { setAccessToken, setCurrentUser } from "@/lib/auth";
 
@@ -24,6 +24,7 @@ function VendorLoginForm() {
   const redirectTo = params.get("redirect") || "/vendor/dashboard";
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
 
@@ -138,11 +139,16 @@ function VendorLoginForm() {
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
+                  className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all"
                   style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
                   {...focusStyle('#059669')}
                   placeholder="••••••••" />
+                <button type="button" onClick={() => setShowPassword(v => !v)} tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 

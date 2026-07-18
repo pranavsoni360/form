@@ -4,12 +4,13 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { bankLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
-import { Loader2, AlertTriangle, User, Lock, FileText, CheckCircle2, Clock } from 'lucide-react';
+import { Loader2, AlertTriangle, User, Lock, FileText, CheckCircle2, Clock, Eye, EyeOff } from 'lucide-react';
 
 export default function BankLoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -126,12 +127,17 @@ export default function BankLoginPage() {
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
+                  className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
                   style={{ fontFamily: 'var(--font-body)' }}
                   onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}
                   onBlur={e => { e.target.style.borderColor = ''; e.target.style.boxShadow = 'none'; }}
                   placeholder="••••••••" />
+                <button type="button" onClick={() => setShowPassword(v => !v)} tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 

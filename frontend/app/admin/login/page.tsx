@@ -4,7 +4,7 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
-import { Loader2, AlertTriangle, User, Lock, Shield, BarChart3, Settings } from 'lucide-react';
+import { Loader2, AlertTriangle, User, Lock, Shield, BarChart3, Settings, Eye, EyeOff } from 'lucide-react';
 
 export default function AdminLoginPage() {
   return <Suspense><AdminLoginInner /></Suspense>;
@@ -15,6 +15,7 @@ function AdminLoginInner() {
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -129,12 +130,17 @@ function AdminLoginInner() {
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
+                  className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all"
                   style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
                   onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
                   onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
                   placeholder="••••••••" />
+                <button type="button" onClick={() => setShowPassword(v => !v)} tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 

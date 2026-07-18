@@ -1,10 +1,47 @@
-'use client';
+﻿'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { bankLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
-import { Loader2, AlertTriangle, User, Lock, FileText, CheckCircle2, Clock, Eye, EyeOff } from 'lucide-react';
+import { Loader2, AlertTriangle, User, Lock, FileText, CheckCircle2, Clock, Eye, EyeOff, X, Info } from 'lucide-react';
+
+function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-50">
+              <Info className="h-4 w-4 text-blue-600" />
+            </span>
+            <h2 className="text-sm font-semibold text-slate-800">Forgot Password</h2>
+          </div>
+          <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="px-5 py-5 space-y-3">
+          <p className="text-sm text-slate-600" style={{ fontFamily: 'var(--font-body)' }}>
+            To reset your password, please contact your system administrator.
+          </p>
+          <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
+            <p className="text-xs font-medium text-blue-800" style={{ fontFamily: 'var(--font-body)' }}>
+              Your administrator can reset your password from the Admin Portal.
+            </p>
+          </div>
+          <button onClick={onClose}
+            className="w-full py-2.5 rounded-xl font-semibold text-white text-sm transition-all"
+            style={{ background: '#1D4ED8', fontFamily: 'var(--font-heading)' }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#1E40AF')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#1D4ED8')}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function BankLoginPage() {
   const router = useRouter();
@@ -13,6 +50,7 @@ export default function BankLoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showForgot, setShowForgot] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +69,7 @@ export default function BankLoginPage() {
   };
 
   return (
+    <>
     <div className="min-h-screen flex">
 
       {/* ── LEFT PANEL ── */}
@@ -139,6 +178,15 @@ export default function BankLoginPage() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              <div className="flex justify-end mt-1.5">
+                <button type="button" onClick={() => setShowForgot(true)}
+                  className="text-xs font-medium transition-colors"
+                  style={{ color: '#3b82f6', fontFamily: 'var(--font-body)' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#1D4ED8')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#3b82f6')}>
+                  Forgot password?
+                </button>
+              </div>
             </div>
 
             {error && (
@@ -163,5 +211,8 @@ export default function BankLoginPage() {
         </div>
       </div>
     </div>
+
+    {showForgot && <ForgotPasswordModal onClose={() => setShowForgot(false)} />}
+    </>
   );
 }

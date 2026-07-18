@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
@@ -73,6 +73,7 @@ export default function LoanApplication() {
   const [nameMatchError, setNameMatchError] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
   const [nameMatchDetail, setNameMatchDetail] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
   const [nameMatchLocked, setNameMatchLocked] = useState(false);
+  const [panMismatchWarning, setPanMismatchWarning] = useState<{callName: string; verifiedName: string; attemptsRemaining: number} | null>(null);
 
   const handleVerifyPAN = async () => {
     const pan = formData.pan_number || '';
@@ -84,6 +85,13 @@ export default function LoanApplication() {
     try {
       const session = sessionStorage.getItem('loan_session');
       const res = await fetch(`${API_URL}/api/verify-pan-session?session_token=${session}&pan_number=${pan}`, { method: 'POST' });
+      if (res.status === 423) {
+        // Already locked by a previous session
+        setNameMatchLocked(true);
+        setPanMismatchWarning(null);
+        setErrors((p: any) => ({ ...p, pan_number: '' }));
+        return;
+      }
       if (!res.ok) throw new Error('Verification failed');
       const data = await res.json();
       onChange('pan_verified', true);
@@ -114,10 +122,26 @@ export default function LoanApplication() {
         if (callName && data.name) {
           const score = calcNameSimilarity(callName, data.name);
           if (score < 85) {
-            const err = { source: 'PAN Card', callName, verifiedName: data.name, score };
-            setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+            // Report mismatch to backend — it will track attempts and lock if needed
+            const mismatchRes = await fetch(`${API_URL}/api/pan-mismatch?session_token=${session}`, { method: 'POST' });
+            const mismatchData = mismatchRes.ok ? await mismatchRes.json() : { locked: true, attempts_remaining: 0 };
+            // Reset pan_verified in local state so the field is editable again
+            onChange('pan_verified', false);
+            if (mismatchData.locked) {
+              // Max retries exceeded — hard lock
+              const err = { source: 'PAN Card', callName, verifiedName: data.name, score };
+              setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+              setPanMismatchWarning(null);
+            } else {
+              // First mismatch — show retryable warning, keep field editable
+              setPanMismatchWarning({ callName, verifiedName: data.name, attemptsRemaining: mismatchData.attempts_remaining });
+              setNameMatchLocked(false);
+              setNameMatchError(null);
+            }
+            return;
           } else {
             setNameMatchError(null); setNameMatchDetail(null); setNameMatchLocked(false);
+            setPanMismatchWarning(null);
           }
         }
       }
@@ -381,9 +405,16 @@ export default function LoanApplication() {
         setAppData(d);
         setFormData(d);
         const savedStep = d.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, d.highest_step || 1));
-        // On-load name match check for already-verified applications
+        // On-load: restore PAN mismatch lock/warning state from DB
         const callName = d.customer_name || '';
-        if (callName) {
+        if (d.pan_mismatch_locked) {
+          // Hard lock persisted in DB — restore immediately
+          const err = { source: 'PAN Card', callName, verifiedName: d.pan_name || '', score: 0 };
+          setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+        } else if ((d.pan_verification_attempts || 0) > 0) {
+          // Had a mismatch but not yet locked — restore the retryable warning
+          setPanMismatchWarning({ callName, verifiedName: d.pan_name || '', attemptsRemaining: Math.max(0, 2 - (d.pan_verification_attempts || 0)) });
+        } else if (callName) {
           if (d.pan_verified && d.pan_name) {
             const score = calcNameSimilarity(callName, d.pan_name);
             if (score < 85) {
@@ -795,12 +826,31 @@ export default function LoanApplication() {
           {currentStep === 1 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="KYC" color="#2563EB" title="KYC & Personal Details" />
+              {/* PAN mismatch — retryable warning (first failure) */}
+              {!nameMatchLocked && panMismatchWarning && (
+                <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: '#FFFBEB', border: '1px solid #FCD34D' }}>
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#D97706' }} />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>PAN verification failed — name mismatch</p>
+                      <p className="text-xs mt-0.5" style={{ color: '#B45309', fontFamily: 'var(--font-body)' }}>
+                        The name on your PAN card (<strong>{panMismatchWarning.verifiedName}</strong>) does not match the name on file (<strong>{panMismatchWarning.callName}</strong>).
+                        Please verify the PAN number entered and try again.
+                      </p>
+                      <p className="text-xs mt-1 font-medium" style={{ color: '#D97706', fontFamily: 'var(--font-body)' }}>
+                        {panMismatchWarning.attemptsRemaining} retry attempt{panMismatchWarning.attemptsRemaining !== 1 ? 's' : ''} remaining.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* PAN mismatch — hard lock (max retries exceeded) */}
               {nameMatchLocked && (
                 <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
                   <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: '#DC2626' }} />
                   <div className="flex-1">
-                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>Form locked — name mismatch</p>
-                    <p className="text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Contact your bank branch to resolve the identity mismatch before proceeding.</p>
+                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>Application locked — identity verification failed</p>
+                    <p className="text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Identity verification failed after maximum retry attempts. Please contact your bank branch to resolve this.</p>
                   </div>
                   <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs underline whitespace-nowrap" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>View details</button>
                 </div>
@@ -823,10 +873,10 @@ export default function LoanApplication() {
                         }
                         onChange={e => onChange('pan_number', e.target.value.toUpperCase())}
                         onClick={() => { if (!formData.pan_verified && !showPan) setShowPan(true); }}
-                        disabled={formData.pan_verified}
+                        disabled={formData.pan_verified || nameMatchLocked}
                         readOnly={false}
                         className={`w-full pr-16 ${formData.pan_verified ? '' : 'cursor-text'} ${inp(errors.pan_number)}`}
-                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? '#F0FDF4' : undefined, borderColor: formData.pan_verified ? '#059669' : undefined }}
+                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? '#F0FDF4' : nameMatchLocked ? '#FEF2F2' : undefined, borderColor: formData.pan_verified ? '#059669' : nameMatchLocked ? '#FECACA' : panMismatchWarning ? '#FCD34D' : undefined }}
                         placeholder="ABCDE1234F" maxLength={10} />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         {!formData.pan_verified && (
@@ -843,15 +893,15 @@ export default function LoanApplication() {
                         )}
                       </div>
                     </div>
-                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying}
+                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying || nameMatchLocked}
                       className="px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition flex items-center justify-center gap-1 sm:gap-2 min-w-[76px] sm:min-w-[100px] disabled:opacity-70"
                       style={{
-                        background: formData.pan_verified ? '#059669' : '#1A1A2E',
+                        background: formData.pan_verified ? '#059669' : nameMatchLocked ? '#DC2626' : '#1A1A2E',
                         color: '#fff',
                         fontFamily: 'var(--font-heading)',
-                        cursor: formData.pan_verified ? 'default' : 'pointer',
+                        cursor: (formData.pan_verified || nameMatchLocked) ? 'default' : 'pointer',
                       }}>
-                      {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? '✓ Verified' : 'Verify'}
+                      {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? '✓ Verified' : nameMatchLocked ? '🔒 Locked' : 'Verify'}
                     </button>
                   </div>
                   {formData.pan_verified && <p className="text-[10px] sm:text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3 flex-shrink-0" /><span>PAN verified{formData.pan_name ? ` — ${formData.pan_name}` : ''}{formData.pan_verification_timestamp ? ` on ${new Date(formData.pan_verification_timestamp).toLocaleString()}` : ''}</span></p>}

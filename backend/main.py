@@ -1,4 +1,4 @@
-# main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
+﻿# main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
 from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -3180,6 +3180,16 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
         raise HTTPException(status_code=401, detail="Invalid or unverified session")
     if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
         raise HTTPException(status_code=400, detail="Invalid PAN format")
+    # Block if already locked due to repeated mismatches
+    app_row = await db_pool.fetchrow(
+        "SELECT pan_mismatch_locked, pan_verification_attempts FROM loan_applications WHERE id = $1",
+        session["application_id"]
+    )
+    if app_row and app_row["pan_mismatch_locked"]:
+        raise HTTPException(
+            status_code=423,
+            detail="Application is locked due to repeated PAN identity mismatches. Please contact your bank branch."
+        )
     # Call VG API for real PAN verification
     pan_name = ""
     if not VG_MOCK_MODE:
@@ -3203,6 +3213,45 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
     if pan_name:
         result["name"] = pan_name
     return result
+
+
+PAN_MAX_ATTEMPTS = 2  # Lock after this many name-mismatch events
+
+@app.post("/api/pan-mismatch")
+async def report_pan_mismatch(session_token: str, request: Request):
+    """Called by the frontend when PAN name-similarity check fails.
+    Increments the mismatch counter and locks the application after PAN_MAX_ATTEMPTS."""
+    session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
+    if not session or not session["otp_verified"]:
+        raise HTTPException(status_code=401, detail="Invalid or unverified session")
+    app_id = session["application_id"]
+    row = await db_pool.fetchrow(
+        "SELECT pan_verification_attempts, pan_mismatch_locked FROM loan_applications WHERE id = $1", app_id
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if row["pan_mismatch_locked"]:
+        return {"locked": True, "attempts": row["pan_verification_attempts"], "max_attempts": PAN_MAX_ATTEMPTS, "attempts_remaining": 0}
+
+    new_attempts = (row["pan_verification_attempts"] or 0) + 1
+    locked = new_attempts >= PAN_MAX_ATTEMPTS
+    # Reset pan_verified so the applicant can re-enter PAN on the next attempt;
+    # if locking, leave pan_verified=false so the field stays blocked by the lock banner.
+    await db_pool.execute(
+        """UPDATE loan_applications
+           SET pan_verification_attempts = $1,
+               pan_mismatch_locked       = $2,
+               pan_verified              = false
+           WHERE id = $3""",
+        new_attempts, locked, app_id
+    )
+    print(f"[PAN Mismatch] app={app_id} attempts={new_attempts} locked={locked}")
+    return {
+        "locked": locked,
+        "attempts": new_attempts,
+        "max_attempts": PAN_MAX_ATTEMPTS,
+        "attempts_remaining": max(0, PAN_MAX_ATTEMPTS - new_attempts),
+    }
 
 @app.post("/api/verify-aadhaar-session")
 async def verify_aadhaar_session(session_token: str, aadhaar_number: str, request: Request):

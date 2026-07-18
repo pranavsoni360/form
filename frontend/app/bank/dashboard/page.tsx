@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -32,6 +32,7 @@ const SUPERVISOR_FILTERS = ['all', 'draft', 'officer_approved', 'documents_submi
 export default function BankDashboardPage() {
   const router = useRouter();
   const [applications, setApplications] = useState<Application[]>([]);
+  const [allApplications, setAllApplications] = useState<Application[]>([]);
   const [loading, setLoading]     = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [filter, setFilter]       = useState('all');
@@ -46,6 +47,15 @@ export default function BankDashboardPage() {
     setToken(t); setUser(u);
   }, []);
 
+  // Always fetch ALL apps for stat cards (independent of filter)
+  useEffect(() => {
+    if (!token) return;
+    getBankApplications(token, undefined)
+      .then(d => setAllApplications(d.applications || []))
+      .catch(() => {});
+  }, [token]);
+
+  // Fetch filtered apps for the table
   useEffect(() => { if (token) fetchApplications(); }, [token, filter]);
 
   const fetchApplications = async () => {
@@ -53,6 +63,8 @@ export default function BankDashboardPage() {
     try {
       const data = await getBankApplications(token, filter === 'all' ? undefined : filter);
       setApplications(data.applications || []);
+      // Keep allApplications in sync when viewing all
+      if (filter === 'all') setAllApplications(data.applications || []);
     } catch (error: any) {
       const msg = error.message || '';
       if (msg.includes('401') || msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('token')) {
@@ -72,12 +84,13 @@ export default function BankDashboardPage() {
       })
     : applications;
 
+  // Stats always computed from ALL applications so counts stay accurate regardless of active filter
   const stats = {
-    total:    applications.length,
-    draft:    applications.filter(a => a.status === 'draft').length,
-    pending:  applications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
-    approved: applications.filter(a => ['officer_approved', 'approved'].includes(a.status)).length,
-    rejected: applications.filter(a => a.status.includes('rejected')).length,
+    total:    allApplications.length,
+    draft:    allApplications.filter(a => a.status === 'draft').length,
+    pending:  allApplications.filter(a => ['submitted', 'system_reviewed'].includes(a.status)).length,
+    approved: allApplications.filter(a => ['officer_approved', 'approved'].includes(a.status)).length,
+    rejected: allApplications.filter(a => a.status.includes('rejected')).length,
   };
 
   const statItems = [

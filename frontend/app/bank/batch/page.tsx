@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -477,8 +477,8 @@ export default function BatchPage() {
                                   <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                                     <Clock className="w-3 h-3" />{call.call_duration ? `${call.call_duration}s` : '—'}
                                   </span>
-                                  <span className={`text-xs font-medium ${call.interested === true ? 'text-emerald-600 dark:text-emerald-400' : call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
-                                    {call.interested === true ? 'Yes' : call.interested === false ? 'No' : '—'}
+                                  <span className={`text-xs font-medium ${call.interested === true ? 'text-emerald-600 dark:text-emerald-400' : ['Calling', 'Pending', 'Connecting'].includes(call.status || '') ? 'text-slate-400' : call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
+                                    {call.interested === true ? 'Yes' : ['Calling', 'Pending', 'Connecting'].includes(call.status || '') ? '—' : call.interested === false ? 'No' : '—'}
                                   </span>
                                   <span className={`text-xs font-medium ${call.form_sent ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
                                     {call.form_sent ? 'Sent' : '—'}

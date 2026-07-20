@@ -782,7 +782,10 @@ function BatchDetailDialog({
                     {fmtDuration(c.call_duration ?? 0)}
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={cn("inline-block h-2 w-2 rounded-full", c.interested ? "bg-success" : "bg-muted-foreground/30")} />
+                    {['Calling', 'Pending', 'Connecting'].includes(c.status || '')
+                      ? <span className="text-xs text-muted-foreground">—</span>
+                      : <span className={cn("inline-block h-2 w-2 rounded-full", c.interested ? "bg-success" : "bg-muted-foreground/30")} />
+                    }
                   </td>
                   <td className="px-3 py-2 text-center">
                     <span className={cn("inline-block h-2 w-2 rounded-full", c.form_sent ? "bg-success" : "bg-muted-foreground/30")} />

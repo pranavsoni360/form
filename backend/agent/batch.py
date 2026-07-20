@@ -1,4 +1,4 @@
-# backend/agent/batch.py
+﻿# backend/agent/batch.py
 import os
 import io
 import secrets
@@ -11,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
+import csv
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from livekit import api
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -800,6 +802,67 @@ async def get_upload_detail(batch_id: str):
         call_batch_id,
     )
     return {"calls": _rows_to_list(rows), "batch_id": call_batch_id, "total": len(rows)}
+
+@router.get("/upload/{batch_id}/download")
+async def download_batch_csv(batch_id: str):
+    """Stream a CSV of all calls in the batch for download."""
+    # Resolve UUID → string batch_id used in agent_calls
+    call_batch_id = batch_id
+    batch_filename = batch_id[:8]
+    try:
+        batch_uuid = uuid.UUID(batch_id)
+        row = await _state.db_pool.fetchrow(
+            "SELECT batch_id, filename FROM agent_batches WHERE id = $1", batch_uuid
+        )
+        if row:
+            if row["batch_id"]:
+                call_batch_id = row["batch_id"]
+            if row["filename"]:
+                batch_filename = row["filename"].rsplit(".", 1)[0]
+    except ValueError:
+        pass
+
+    rows = await _state.db_pool.fetch(
+        """SELECT customer_name, phone, status, call_duration, interested,
+                  form_sent, form_link, started_at, ended_at, loan_type, loan_amount
+           FROM agent_calls WHERE batch_id = $1 ORDER BY created_at ASC""",
+        call_batch_id,
+    )
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "Customer Name", "Phone", "Loan Type", "Loan Amount",
+            "Status", "Duration (s)", "Interested", "Form Sent", "Form Link",
+            "Call Started", "Call Ended",
+        ])
+        yield buf.getvalue()
+        for r in rows:
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow([
+                r["customer_name"] or "",
+                r["phone"] or "",
+                r["loan_type"] or "",
+                r["loan_amount"] or "",
+                r["status"] or "",
+                r["call_duration"] or 0,
+                "Yes" if r["interested"] else "No",
+                "Yes" if r["form_sent"] else "No",
+                r["form_link"] or "",
+                r["started_at"].isoformat() if r["started_at"] else "",
+                r["ended_at"].isoformat() if r["ended_at"] else "",
+            ])
+            yield buf.getvalue()
+
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in batch_filename)
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_results.csv"'},
+    )
+
 
 @router.get("/recent_calls")
 async def recent_calls(limit: int = Query(10, ge=1, le=50)):

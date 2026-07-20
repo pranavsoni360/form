@@ -3192,17 +3192,32 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
         )
     # Call VG API for real PAN verification
     pan_name = ""
-    if not VG_MOCK_MODE:
+    if VG_MOCK_MODE:
+        # Mock mode: accept any correctly-formatted PAN for local dev/testing
+        pan_name = "MOCK USER"
+    else:
         try:
             pan_payload = {"obj": [{**vg_base_obj("pancard"), "PanNo": pan_number}]}
             async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
                 response = await client.post(f"{VG_API_BASE}/Pan", json=pan_payload, headers={"Content-Type": "application/json"})
             api_data = parse_vg_response(response.text)
-            print(f"[PAN API] {pan_number} -> {api_data.get('status-code', api_data.get('statusCode', '?'))}")
-            if str(api_data.get("status-code", api_data.get("statusCode", ""))) == "101":
+            status_code = str(api_data.get("status-code", api_data.get("statusCode", "")))
+            print(f"[PAN API] {pan_number} -> status={status_code}")
+            if status_code == "101":
                 pan_name = api_data.get("result", {}).get("name", "")
+                if not pan_name:
+                    # API returned 101 but no name — treat as unverified
+                    raise HTTPException(status_code=422, detail="PAN verified but no name returned. Please try again.")
+            else:
+                # Non-101: PAN not found in government records
+                print(f"[PAN API] Rejected {pan_number} — status={status_code} body={api_data}")
+                raise HTTPException(status_code=422, detail="PAN not found in government records. Please check the number and try again.")
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"[PAN API] Error: {e} — falling back to format-only verification")
+            print(f"[PAN API] Error: {e}")
+            raise HTTPException(status_code=503, detail="PAN verification service is temporarily unavailable. Please try again in a moment.")
+
     await db_pool.execute(
         "UPDATE loan_applications SET pan_number = $1, pan_verified = true, pan_verification_timestamp = $2, pan_name = $3 WHERE id = $4",
         pan_number, now_utc(), pan_name or None, session["application_id"]

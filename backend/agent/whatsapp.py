@@ -17,6 +17,26 @@ from .state import (
 logger = logging.getLogger("agent-whatsapp")
 router = APIRouter()
 
+# QA-only behavior toggle, gated purely by the database name (same mechanism as
+# migration_v21_twilio_phone.sql — zero config, deploy-by-push, prod-safe).
+# On the QA database each voice call starts a FRESH loan_applications row instead
+# of reusing an existing in-progress draft, so the testing team can re-test from
+# one mobile number repeatedly and always see the latest call reflected. Prod
+# (los_form) is completely unaffected. The DB name is fixed for a process, so we
+# cache it after the first lookup.
+_IS_QA_DB: "bool | None" = None
+
+
+async def _is_qa_db() -> bool:
+    global _IS_QA_DB
+    if _IS_QA_DB is None:
+        try:
+            db = await _state.db_pool.fetchval("SELECT current_database()")
+            _IS_QA_DB = (db == "los_form_qa")
+        except Exception:
+            _IS_QA_DB = False  # fail safe → behave like prod (reuse)
+    return _IS_QA_DB
+
 
 @router.post("/send-whatsapp-form")
 async def send_whatsapp_form(request: Request):
@@ -93,11 +113,16 @@ async def send_whatsapp_form(request: Request):
         form_url = f"{FORM_BASE_URL}/?phone={bare_phone}" if bare_phone else f"{FORM_BASE_URL}/"
 
     if phone_norm and agent_type != "account_opening":
-        # Check if application already exists for this phone
-        existing_app = await _state.db_pool.fetchrow(
-            "SELECT id FROM loan_applications WHERE phone = $1 AND status != 'submitted' ORDER BY created_at DESC LIMIT 1",
-            phone_norm,
-        )
+        # Reuse an existing in-progress application for this phone — EXCEPT on QA,
+        # where every call starts a fresh application so the testing team can
+        # re-test the same number repeatedly and always get the latest call's
+        # data. (Rows accumulate on QA by design; prod behaviour is unchanged.)
+        existing_app = None
+        if not await _is_qa_db():
+            existing_app = await _state.db_pool.fetchrow(
+                "SELECT id FROM loan_applications WHERE phone = $1 AND status != 'submitted' ORDER BY created_at DESC LIMIT 1",
+                phone_norm,
+            )
 
         if existing_app:
             app_id = existing_app["id"]

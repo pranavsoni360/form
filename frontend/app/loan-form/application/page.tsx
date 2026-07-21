@@ -74,6 +74,8 @@ export default function LoanApplication() {
   const [nameMatchDetail, setNameMatchDetail] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
   const [nameMatchLocked, setNameMatchLocked] = useState(false);
   const [panMismatchWarning, setPanMismatchWarning] = useState<{callName: string; verifiedName: string; attemptsRemaining: number} | null>(null);
+  const [pincodeLookingUp, setPincodeLookingUp] = useState<{ current: boolean; permanent: boolean }>({ current: false, permanent: false });
+  const [pincodeValid, setPincodeValid] = useState<{ current: boolean; permanent: boolean }>({ current: true, permanent: true });
 
   const handleVerifyPAN = async () => {
     const pan = formData.pan_number || '';
@@ -376,6 +378,51 @@ export default function LoanApplication() {
     } catch {}
   };
 
+  const lookupPincode = async (pincode: string, type: 'current' | 'permanent') => {
+    if (pincode.length !== 6) return;
+    setPincodeLookingUp(p => ({ ...p, [type]: true }));
+    setPincodeValid(p => ({ ...p, [type]: false }));
+    setErrors((p: any) => ({ ...p, [`${type}_pincode`]: '' }));
+    try {
+      const res = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
+      const data = await res.json();
+      if (!data?.[0] || data[0].Status !== 'Success' || !data[0].PostOffice?.length) {
+        setErrors((p: any) => ({ ...p, [`${type}_pincode`]: 'Invalid pincode — no location found' }));
+        return;
+      }
+      const po = data[0].PostOffice[0];
+      const stateName: string = (po.State || '').toLowerCase();
+      const districtName: string = (po.District || '').toLowerCase();
+
+      const states = codeLists[5] || [];
+      const matchedState = states.find(s =>
+        s.code_desc.toLowerCase() === stateName ||
+        s.code_desc.toLowerCase().includes(stateName) ||
+        stateName.includes(s.code_desc.toLowerCase())
+      );
+      if (!matchedState) { setPincodeValid(p => ({ ...p, [type]: true })); return; }
+
+      onChange(`${type}_state_code`, matchedState.code_mst_id);
+      onChange(`${type}_city_code`, '');
+      const cityRes = await getCodeList(6, matchedState.code_mst_id);
+      const cities: { code_mst_id: string; code_desc: string }[] = cityRes?.data || [];
+      if (type === 'current') setCityOptions(cities);
+      else setPermCityOptions(cities);
+
+      const matchedCity = cities.find(c =>
+        c.code_desc.toLowerCase() === districtName ||
+        c.code_desc.toLowerCase().includes(districtName) ||
+        districtName.includes(c.code_desc.toLowerCase())
+      );
+      if (matchedCity) onChange(`${type}_city_code`, matchedCity.code_mst_id);
+      setPincodeValid(p => ({ ...p, [type]: true }));
+    } catch {
+      setPincodeValid(p => ({ ...p, [type]: true })); // network error — don't block user
+    } finally {
+      setPincodeLookingUp(p => ({ ...p, [type]: false }));
+    }
+  };
+
   // Helper: resolve code_desc from code_mst_id for review display
   const codeLabel = (sqlMstId: number, code: string) => {
     if (!code) return '—';
@@ -584,8 +631,14 @@ export default function LoanApplication() {
     if (ok && formData.permanent_pincode && !/^\d{6}$/.test(formData.permanent_pincode)) {
       setErrors((p: any) => ({ ...p, permanent_pincode: 'Enter valid 6-digit pincode' })); return false;
     }
+    if (ok && !pincodeValid.permanent) {
+      setErrors((p: any) => ({ ...p, permanent_pincode: 'Invalid pincode — no location found' })); return false;
+    }
     if (ok && !formData.same_as_current && formData.current_pincode && !/^\d{6}$/.test(formData.current_pincode)) {
       setErrors((p: any) => ({ ...p, current_pincode: 'Enter valid 6-digit pincode' })); return false;
+    }
+    if (ok && !formData.same_as_current && !pincodeValid.current) {
+      setErrors((p: any) => ({ ...p, current_pincode: 'Invalid pincode — no location found' })); return false;
     }
     return ok;
   };
@@ -1025,7 +1078,10 @@ export default function LoanApplication() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <F label="Pincode" required error={errors.current_pincode}>
-                    <input type="text" value={formData.current_pincode || ''} onChange={e => onChange('current_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.current_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                    <div className="relative">
+                      <input type="text" value={formData.current_pincode || ''} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); onChange('current_pincode', v); if (v.length === 6) lookupPincode(v, 'current'); }} className={inp(errors.current_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                      {pincodeLookingUp.current && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-blue-500" />}
+                    </div>
                   </F>
                   <F label="State" required error={errors.current_state_code}>
                     <select value={formData.current_state_code || ''} onChange={e => { onChange('current_state_code', e.target.value); onChange('current_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'current'); else setCityOptions([]); }} className={inp(errors.current_state_code)}>
@@ -1066,7 +1122,10 @@ export default function LoanApplication() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <F label="Pincode" required error={errors.permanent_pincode} fieldName="permanent_pincode" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.permanent_pincode || ''} onChange={e => onChange('permanent_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.permanent_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                    <div className="relative">
+                      <input type="text" value={formData.permanent_pincode || ''} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); onChange('permanent_pincode', v); if (v.length === 6) lookupPincode(v, 'permanent'); }} className={inp(errors.permanent_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                      {pincodeLookingUp.permanent && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-blue-500" />}
+                    </div>
                   </F>
                   <F label="State" required error={errors.permanent_state_code} fieldName="permanent_state_code" fieldSources={formData.field_sources}>
                     <select value={formData.permanent_state_code || ''} onChange={e => { onChange('permanent_state_code', e.target.value); onChange('permanent_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'permanent'); else setPermCityOptions([]); }} className={inp(errors.permanent_state_code)}>

@@ -561,7 +561,17 @@ export default function LoanApplication() {
     return Object.keys(e).length === 0;
   };
 
-  const step1Valid = () => validate({ pan_number: 'Required', full_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+  const step1Valid = () => {
+    if (!formData.pan_verified) {
+      setErrors((p: any) => ({ ...p, pan_number: 'Please verify your PAN before proceeding' }));
+      return false;
+    }
+    if (!formData.aadhaar_verified) {
+      setErrors((p: any) => ({ ...p, aadhaar_number: 'Please complete Aadhaar verification before proceeding' }));
+      return false;
+    }
+    return validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+  };
   const step2Valid = () => {
     // Permanent address is always required (Aadhaar-sourced). Current address
     // is required only when the user doesn't check "Same as permanent".
@@ -915,6 +925,12 @@ export default function LoanApplication() {
                       </p>
                       {formData.aadhaar_verification_timestamp && <p className="text-[10px] sm:text-xs text-green-600 dark:text-green-400 mt-1 ml-6">Verified on {new Date(formData.aadhaar_verification_timestamp).toLocaleString()}</p>}
                     </div>
+                  ) : !formData.pan_verified ? (
+                    <div className="w-full rounded-xl flex items-center justify-center gap-3 opacity-60 cursor-not-allowed"
+                      style={{ background: '#E2E8F0', color: '#64748B', fontFamily: 'var(--font-heading)', height: '52px' }}>
+                      <Lock className="w-4 h-4" />
+                      <span className="text-sm font-semibold">Verify PAN first to unlock Aadhaar</span>
+                    </div>
                   ) : (
                     <button type="button" onClick={handleVerifyAadhaar} disabled={aadhaarVerifying}
                       className="w-full rounded-xl font-semibold transition disabled:opacity-50 flex items-center justify-center gap-3 active:scale-[0.99]"
@@ -940,7 +956,15 @@ export default function LoanApplication() {
               </div>{/* end identity card */}
 
               {/* Personal Details card */}
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+              <div className="rounded-2xl overflow-hidden relative" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                {!formData.aadhaar_verified && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl" style={{ background: 'rgba(248,250,252,0.92)', backdropFilter: 'blur(2px)' }}>
+                    <Lock className="w-6 h-6" style={{ color: '#94A3B8' }} />
+                    <p className="text-sm font-medium text-center px-6" style={{ color: '#64748B', fontFamily: 'var(--font-body)' }}>
+                      Complete Aadhaar Verification to fill Personal Details
+                    </p>
+                  </div>
+                )}
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
                   <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
                     <User className="w-3.5 h-3.5" style={{ color: '#2563EB' }} />

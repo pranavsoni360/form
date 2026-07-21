@@ -1,10 +1,10 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_URL, formatDate, formatDateTime } from '@/lib/api';
-import { getAccessToken, getCurrentUser } from '@/lib/auth';
-import { ArrowLeft, Phone, PhoneOff, Clock, ChevronRight, Search, Filter, Loader2, Building2 } from 'lucide-react';
+import { API_URL, formatDateTime } from '@/lib/api';
+import { getAccessToken } from '@/lib/auth';
+import { ArrowLeft, Phone, Search, Loader2 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 interface Call {
@@ -125,15 +125,13 @@ export default function CallsPage() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Language</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Interest</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
-                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
                 {filtered.map(call => {
                   const st = STATUS_MAP[call.status] || { label: call.status, color: 'bg-gray-100 text-gray-700' };
                   return (
-                    <tr key={call._id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition"
-                      onClick={() => router.push(`/bank/calls/${call._id}`)}>
+                    <tr key={call._id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition">
                       <td className="px-4 py-3">
                         <div className="text-sm font-medium text-gray-900 dark:text-white">{call.customer_name || 'Unknown'}</div>
                         <div className="text-xs text-gray-500 dark:text-gray-400">{call.phone}</div>
@@ -151,7 +149,6 @@ export default function CallsPage() {
                          <span className="text-gray-400 text-xs">--</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(call.created_at || '')}</td>
-                      <td className="px-4 py-3"><ChevronRight className="w-4 h-4 text-gray-400" /></td>
                     </tr>
                   );
                 })}

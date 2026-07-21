@@ -956,15 +956,7 @@ export default function LoanApplication() {
               </div>{/* end identity card */}
 
               {/* Personal Details card */}
-              <div className="rounded-2xl overflow-hidden relative" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                {!formData.aadhaar_verified && (
-                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl" style={{ background: 'rgba(248,250,252,0.92)', backdropFilter: 'blur(2px)' }}>
-                    <Lock className="w-6 h-6" style={{ color: '#94A3B8' }} />
-                    <p className="text-sm font-medium text-center px-6" style={{ color: '#64748B', fontFamily: 'var(--font-body)' }}>
-                      Complete Aadhaar Verification to fill Personal Details
-                    </p>
-                  </div>
-                )}
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
                   <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
                     <User className="w-3.5 h-3.5" style={{ color: '#2563EB' }} />

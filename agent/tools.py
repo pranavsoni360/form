@@ -126,7 +126,11 @@ async def _auto_end_after_form_send(session: LoanEnquirySession, grace: float = 
         await asyncio.sleep(grace)
     except asyncio.CancelledError:
         return
-    if session.call_ended:
+    # call_ended → teardown already ran; ending → end_call is in flight and owns
+    # the goodbye (it may still be awaiting its farewell say(), so call_ended is
+    # not True yet). Either way this backstop must stay silent to avoid a
+    # double / cut-off goodbye.
+    if session.call_ended or getattr(session, "ending", False):
         return
     logger.warning(
         "Auto-end: LLM never called end_call within %.0fs of form send — "
@@ -168,18 +172,55 @@ async def _auto_end_after_form_send(session: LoanEnquirySession, grace: float = 
         logger.error(f"auto-end save_and_disconnect failed: {e}")
 
 
+def _farewell_text(session, reason: str) -> str:
+    """Deterministic, language- + reason-aware closing line spoken by end_call so
+    the customer ALWAYS hears a goodbye (the LLM sometimes drops the farewell text
+    when it emits the tool call). This is the single closing line — the prompt
+    tells the LLM not to speak its own goodbye."""
+    lang = getattr(session, "language", "hindi") or "hindi"
+    name = (getattr(session, "customer_name", "") or "").strip()
+    n = f" {name}" if name else ""
+    if reason in ("user_busy", "callback_requested"):
+        return {
+            "hindi": f"ठीक है{n} जी, मैं आपको उसी समय call कर लूँगा। धन्यवाद, आपका दिन शुभ हो।",
+            "marathi": f"ठीक आहे{n}, मी तुम्हाला त्याच वेळी call करेन. धन्यवाद, तुमचा दिवस चांगला जावो.",
+            "english": f"Sure{n}, I'll call you back at that time. Thank you, have a good day.",
+        }.get(lang, "Thank you, have a good day.")
+    if reason == "wrong_number":
+        return {
+            "hindi": "माफ़ कीजिए, गलती से call हो गई। आपका दिन शुभ हो।",
+            "marathi": "माफ करा, चुकून call झाला. तुमचा दिवस चांगला जावो.",
+            "english": "Apologies for the wrong call. Have a good day.",
+        }.get(lang, "Apologies, have a good day.")
+    # interested / not_interested / completed / no_response → warm generic close
+    return {
+        "hindi": f"धन्यवाद{n} जी, आपके समय के लिए। आपका दिन शुभ हो।",
+        "marathi": f"धन्यवाद{n}, तुमच्या वेळेबद्दल. तुमचा दिवस चांगला जावो.",
+        "english": f"Thank you{n} for your time. Have a good day.",
+    }.get(lang, "Thank you for your time. Have a good day.")
+
+
 @function_tool(
     name="end_call",
     description=(
-        "End the call AFTER speaking goodbye. "
-        "reason in {interested, not_interested, wrong_number, user_busy, callback_requested, no_response, completed}. "
-        "DO NOT speak anything after calling this tool."
+        "End the call. This tool SPEAKS a short closing line itself, so you do NOT "
+        "need to say goodbye — just call it. Do NOT speak anything before or after calling it. "
+        "reason in {interested, not_interested, wrong_number, user_busy, callback_requested, no_response, completed}."
     ),
 )
 async def end_call(context: RunContext, reason: str) -> str:
     session: LoanEnquirySession = context.userdata["session"]
     session.call_outcome = reason
     logger.info(f"END CALL: {reason}")
+
+    # Claim the goodbye: end_call now speaks the closing line itself (below), and
+    # that say() is awaited (up to ~10s) BEFORE save_and_disconnect flips
+    # call_ended. Without this flag the _auto_end_after_form_send backstop (fires
+    # 10s after form send) could wake mid-farewell — its call_ended guard would
+    # still be False — force-interrupt our goodbye and speak its own → a
+    # double/cut-off goodbye. Setting this the instant end_call runs makes the
+    # backstop a no-op whenever the LLM did call end_call.
+    session.ending = True
 
     # Loan-enquiry only: this fallback sends a LOAN form. end_call is shared by
     # all three agent purposes, and "interested" is a natural reason on a
@@ -227,19 +268,26 @@ async def end_call(context: RunContext, reason: str) -> str:
         except Exception as e:
             logger.error(f"WhatsApp send failed: {e}")
 
-    # Guarantee silence after the farewell. The LLM emits farewell text + this
-    # tool call in the same response stream, so by the time we get here, the
-    # TTS for the farewell has already started rendering. We:
-    #   1. Wait a short grace period (~5s) for the farewell audio to finish.
-    #   2. Force-interrupt anything still pending (kills any tail speech the
-    #      LLM might emit after the tool result).
-    #   3. Disable the mic input so customer noise can't re-trigger the LLM
-    #      during the remaining ~3s before save_and_disconnect tears down.
-    # Net effect: customer hears the goodbye and then complete silence until
-    # the room is closed — no robotic word salad, no Gemini cancel-mid-stream
-    # errors leaking into the logs.
-    asyncio.create_task(_silence_after_farewell(session, grace=5.0))
-    asyncio.create_task(session.save_and_disconnect(delay=8.0))
+    # Deterministically SPEAK the closing line here (awaited) so the customer
+    # always hears a goodbye before we tear down — even if the LLM dropped the
+    # farewell text when it emitted this tool call. We await the say() we control
+    # so it can't be cut off by the disconnect race.
+    agent_session = getattr(session, "agent_session", None)
+    if agent_session is not None and not session.call_ended:
+        try:
+            fut = agent_session.say(_farewell_text(session, reason), allow_interruptions=False)
+            if fut is not None:
+                try:
+                    await asyncio.wait_for(fut, timeout=10.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+        except Exception as e:
+            logger.debug(f"end_call farewell say failed (non-fatal): {e}")
+
+    # Then silence + tear down. Grace/delay are short now because the farewell
+    # above was already awaited to completion.
+    asyncio.create_task(_silence_after_farewell(session, grace=1.0))
+    asyncio.create_task(session.save_and_disconnect(delay=3.0))
     return "SUCCESS: User hanging up. Stop generating anything."
 
 
@@ -354,6 +402,25 @@ async def collect_all_data(
             session.update_collected_data(f, v)
             saved += 1
     logger.info(f"collect_all_data: saved {saved} fields")
+
+    # Plausibility backstop (Issue: age 25 + 25 yrs experience is impossible).
+    # A person can't have more work experience than (age - ~18). The prompt is
+    # expected to catch and re-ask this live; this is a logged safety net that
+    # flags the record and returns a hint so the LLM can still correct it.
+    def _num(s: str):
+        try:
+            return float("".join(c for c in str(s) if c.isdigit() or c == "."))
+        except (ValueError, TypeError):
+            return None
+    a, exp = _num(age), _num(working_experience)
+    if a and exp and exp > a - 15:
+        logger.warning(f"Implausible age/experience: age={a}, experience={exp}")
+        session.update_collected_data("data_flags", f"experience_{exp}_exceeds_age_{a}_minus_15")
+        return (
+            f"WARNING: work experience ({exp}) is not plausible for age ({a}) — a person "
+            f"cannot have worked more than (age - 18) years. Politely point this out to the "
+            f"customer and re-ask their correct work experience before proceeding."
+        )
     return "ok"
 
 

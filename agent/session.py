@@ -41,6 +41,10 @@ class LoanEnquirySession:
         self.job_ctx = job_ctx
         self.room_name = job_ctx.room.name
         self.call_ended = False
+        # True while end_call is in flight (owns the goodbye). Suppresses the
+        # _auto_end_after_form_send backstop so it can't speak a second, cut-off
+        # farewell before save_and_disconnect flips call_ended.
+        self.ending = False
         self.transcript = []
         self.egress_id = None
         self.agent_session = None

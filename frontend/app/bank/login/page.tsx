@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { bankLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
@@ -46,18 +46,72 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
 export default function BankLoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showForgot, setShowForgot] = useState(false);
+
+  // ── Masked-value password handling ──────────────────────────────────────
+  // The real password is NEVER written into the <input>'s DOM value. The field
+  // is uncontrolled and, while hidden, holds only bullet chars (•) — so
+  // DevTools/Inspect shows "••••", never the plaintext. The real value lives
+  // only in `pwRef` (JS memory) and is what we submit. Clicking the eye toggle
+  // reveals the real value (that is the toggle's explicit purpose).
+  // Trade-offs (accepted): breaks browser password-managers, autofill, and is
+  // not screen-reader-friendly for the revealed value.
+  const MASK = '•'; // •
+  const pwRef = useRef('');                            // authoritative real password
+  const pwInputRef = useRef<HTMLInputElement>(null);
+  const selRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+
+  // Snapshot the selection BEFORE the browser mutates the field. For a collapsed
+  // Backspace/Delete we widen the range so the diff below knows what was removed.
+  const snapSelection = (key?: string) => {
+    const el = pwInputRef.current;
+    if (!el) return;
+    let start = el.selectionStart ?? 0;
+    let end = el.selectionEnd ?? 0;
+    if (start === end && key) {
+      if (key === 'Backspace' && start > 0) start -= 1;
+      else if (key === 'Delete') end += 1;
+    }
+    selRef.current = { start, end };
+  };
+
+  // Reconstruct the real value from the pre-edit selection + whatever the browser
+  // just placed into the field, then immediately re-mask and restore the caret.
+  const handlePasswordInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const el = e.target;
+    const display = el.value;                          // post-edit (bullets + any typed chars)
+    const { start, end } = selRef.current;             // pre-edit selection into the real string
+    const real = pwRef.current;
+    const selCount = end - start;
+    const insertedCount = display.length - (real.length - selCount);
+    const inserted = insertedCount > 0 ? display.slice(start, start + insertedCount) : '';
+    const next = real.slice(0, start) + inserted + real.slice(end);
+
+    pwRef.current = next;
+    const caret = start + (insertedCount > 0 ? insertedCount : 0);
+    el.value = showPassword ? next : MASK.repeat(next.length);
+    el.setSelectionRange(caret, caret);
+    selRef.current = { start: caret, end: caret };
+  };
+
+  // Re-render the display when the show/hide toggle flips (length is 1:1 → keep caret).
+  useEffect(() => {
+    const el = pwInputRef.current;
+    if (!el) return;
+    const s = el.selectionStart, en = el.selectionEnd;
+    el.value = showPassword ? pwRef.current : MASK.repeat(pwRef.current.length);
+    if (s != null && en != null) el.setSelectionRange(s, en);
+  }, [showPassword]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const response = await bankLogin(username, password);
+      const response = await bankLogin(username, pwRef.current);
       setAccessToken('bank', response.token);
       setCurrentUser('bank', response.user);
       router.push('/bank/dashboard');
@@ -65,10 +119,10 @@ export default function BankLoginPage() {
       setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
-      // Security: never leave the password sitting in the input/DOM after a submit
-      // attempt. Clearing state resets the input's live value so it cannot be read
-      // back via DevTools/Inspect once the credentials have been sent.
-      setPassword('');
+      // Security: wipe the real password from memory AND the input after every
+      // submit attempt, so nothing lingers in JS state or the DOM.
+      pwRef.current = '';
+      if (pwInputRef.current) pwInputRef.current.value = '';
     }
   };
 
@@ -171,8 +225,12 @@ export default function BankLoginPage() {
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
-                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
+                <input type={showPassword ? 'text' : 'password'} ref={pwInputRef} defaultValue="" required
                   autoComplete="off" spellCheck={false} autoCorrect="off" autoCapitalize="off"
+                  onKeyDown={e => snapSelection(e.key)}
+                  onPaste={() => snapSelection()}
+                  onCut={() => snapSelection()}
+                  onChange={handlePasswordInput}
                   className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
                   style={{ fontFamily: 'var(--font-body)' }}
                   onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}

@@ -1101,6 +1101,13 @@ DECIMAL_COLUMNS = {
 }
 INTEGER_COLUMNS = {"repayment_period_years", "current_step", "highest_step"}
 
+# DB range guards. The DECIMAL columns above are DECIMAL(15,2) => max magnitude
+# 9_999_999_999_999.99; the INTEGER columns are int4 => max 2_147_483_647.
+# Clamping here prevents a fat-fingered / pasted oversized number from reaching
+# Postgres and raising an unhandled NumericValueOutOfRangeError (500) on autosave.
+DECIMAL_MAX = 9_999_999_999_999.99
+INT4_MAX = 2_147_483_647
+
 def _coerce_value(key: str, val):
     """Convert frontend string values to proper Python types for asyncpg."""
     if val is None or val == '':
@@ -1120,14 +1127,26 @@ def _coerce_value(key: str, val):
         return bool(val)
     if key in DECIMAL_COLUMNS:
         try:
-            return float(val)
+            num = float(val)
         except (ValueError, TypeError):
             return None
+        if num != num or num in (float('inf'), float('-inf')):  # NaN/inf
+            return None
+        if abs(num) > DECIMAL_MAX:
+            clamped = DECIMAL_MAX if num > 0 else -DECIMAL_MAX
+            print(f"[autosave] {key}={num} exceeds DECIMAL(15,2) range; clamped to {clamped}")
+            return clamped
+        return num
     if key in INTEGER_COLUMNS:
         try:
-            return int(val)
+            num = int(val)
         except (ValueError, TypeError):
             return None
+        if abs(num) > INT4_MAX:
+            clamped = INT4_MAX if num > 0 else -INT4_MAX
+            print(f"[autosave] {key}={num} exceeds int4 range; clamped to {clamped}")
+            return clamped
+        return num
     return val
 
 # ============================================

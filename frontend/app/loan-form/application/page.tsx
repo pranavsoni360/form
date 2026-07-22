@@ -2,7 +2,7 @@
 import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
@@ -200,6 +200,9 @@ export default function LoanApplication() {
   const [agreed, setAgreed] = useState(false);
   const [errors, setErrors] = useState<any>({});
   const [inactivityWarning, setInactivityWarning] = useState(false);
+  // Loan amount cap (₹1 lakh) — shows a small popup above the field when exceeded
+  const [loanCapWarn, setLoanCapWarn] = useState(false);
+  const loanCapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   let inactivityTimer: any = null;
   let warningTimer: any = null;
 
@@ -1363,7 +1366,36 @@ export default function LoanApplication() {
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Loan Amount (₹)" required error={errors.loan_amount_requested} fieldName="loan_amount_requested" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.loan_amount_requested || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
+                    <div className="relative">
+                      {loanCapWarn && (
+                        <div className="absolute bottom-full left-0 mb-1.5 z-50 animate-[fadeIn_0.15s]">
+                          <div className="relative bg-red-600 text-white text-[11px] font-medium px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+                            Maximum limit is ₹1,00,000 (1 lakh)
+                            <span className="absolute left-4 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-red-600" />
+                          </div>
+                        </div>
+                      )}
+                      <input
+                        type="number"
+                        max={100000}
+                        value={formData.loan_amount_requested || ''}
+                        onChange={e => {
+                          const raw = e.target.value.slice(0, 16);
+                          const num = parseFloat(raw);
+                          if (!isNaN(num) && num > 100000) {
+                            onChange('loan_amount_requested', '100000');
+                            setLoanCapWarn(true);
+                            if (loanCapTimer.current) clearTimeout(loanCapTimer.current);
+                            loanCapTimer.current = setTimeout(() => setLoanCapWarn(false), 3000);
+                          } else {
+                            onChange('loan_amount_requested', raw);
+                            setLoanCapWarn(false);
+                          }
+                        }}
+                        className={inp(errors.loan_amount_requested)}
+                        placeholder="Max ₹1,00,000"
+                      />
+                    </div>
                   </F>
                   <F label="Repayment Period (Years)">
                     <select value={formData.repayment_period_years || ''} onChange={e => onChange('repayment_period_years', e.target.value)} className={inp('')}>
@@ -1387,15 +1419,15 @@ export default function LoanApplication() {
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income} fieldName="monthly_gross_income" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
+                    <input type="number" max={9999999999999} value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value.slice(0, 16); setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
                   </F>
                   <F label="Monthly Deductions (₹)">
-                    <input type="number" value={formData.monthly_deductions || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_deductions: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(v) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp('')} placeholder="Tax, PF etc." />
+                    <input type="number" max={9999999999999} value={formData.monthly_deductions || ''} onChange={e => { const v = e.target.value.slice(0, 16); setFormData((p: any) => ({ ...p, monthly_deductions: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(v) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp('')} placeholder="Tax, PF etc." />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Existing Monthly EMIs (₹)" fieldName="monthly_emi_existing" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_emi_existing: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(v) || 0))) })); }} className={inp('')} placeholder="0 if none" />
+                    <input type="number" max={9999999999999} value={formData.monthly_emi_existing || ''} onChange={e => { const v = e.target.value.slice(0, 16); setFormData((p: any) => ({ ...p, monthly_emi_existing: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(v) || 0))) })); }} className={inp('')} placeholder="0 if none" />
                   </F>
                   <F label="Monthly Net Income (₹)" required error={errors.monthly_net_income}>
                     <input type="number" value={formData.monthly_net_income || ''} readOnly className={`${inp(errors.monthly_net_income)} bg-gray-100 dark:bg-gray-800 cursor-not-allowed`} placeholder="Auto: Gross − Deductions − EMIs" title="Auto-calculated from Gross − Deductions − Existing EMIs" />

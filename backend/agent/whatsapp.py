@@ -261,23 +261,19 @@ async def send_whatsapp_form(request: Request):
             wa_phone = f"91{wa_phone}"
 
         first_name = customer_name.strip().split()[0] if customer_name else "Customer"
+        # Match the LIVE AiSensy 'form_link' template exactly (same as production,
+        # which delivers reliably): ONE body param (first name), no dynamic button.
+        # The template supplies the link itself. Sending a 2nd param or a URL
+        # button that the template does not define returns HTTP 400
+        # "Template params does not match the campaign" and nothing is delivered.
         payload = {
             "apiKey": AISENSY_API_KEY,
             "campaignName": AISENSY_CAMPAIGN_NAME,
             "destination": wa_phone,
             "userName": AISENSY_USERNAME,
-            "templateParams": [first_name, form_url],
+            "templateParams": [first_name],
             "source": "new-landing-page form",
-            "media": {},
-            "buttons": [
-                {
-                    "type": "button",
-                    "sub_type": "url",
-                    "index": "0",
-                    "parameters": [{"type": "text", "text": form_url}],
-                }
-            ],
-            "carouselCards": [], "location": {}, "attributes": {},
+            "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
             "paramsFallbackValue": {"FirstName": "Customer"},
         }
         # ── Print the outbound payload (minus the API key) so we can debug in journalctl ──

@@ -35,10 +35,21 @@ def build_loan_enquiry_instructions(session) -> str:
     )
 
     if session.language == "english":
-        return _build_english_prompt(session, memory_block, time_ctx, _tomorrow)
-    if session.language == "marathi":
-        return _build_marathi_prompt(session, memory_block, time_ctx, _tomorrow)
-    return _build_hindi_prompt(session, memory_block, time_ctx, _tomorrow)
+        base = _build_english_prompt(session, memory_block, "", _tomorrow)
+    elif session.language == "marathi":
+        base = _build_marathi_prompt(session, memory_block, "", _tomorrow)
+    else:
+        base = _build_hindi_prompt(session, memory_block, "", _tomorrow)
+
+    # PROMPT-CACHE STABILITY (latency): the volatile minute-level clock (time_ctx)
+    # used to sit at the TOP of the prompt, so the cacheable prefix changed every
+    # minute and Gemini reprocessed the whole ~4k-token prompt (TTFT spiking to
+    # 2-3s). We pass "" to the builders (keeping it out of the prefix) and append
+    # it HERE at the very end, so the large static body stays byte-identical across
+    # turns → Gemini implicit prompt cache hits → consistent ~1s TTFT.
+    # (_tomorrow stays inline in the body: it is constant for the whole day, so it
+    # does not break intra-call caching.)
+    return f"{base}\n\n[CURRENT TIME] {time_ctx}"
 
 
 # ---------------------------------------------------------------------------

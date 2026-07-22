@@ -129,17 +129,34 @@ async def _auto_end_after_form_send(session: LoanEnquirySession, grace: float = 
     if session.call_ended:
         return
     logger.warning(
-        "Auto-end: LLM never called end_call within %.0fs of form send — closing call silently.",
+        "Auto-end: LLM never called end_call within %.0fs of form send — "
+        "speaking a farewell, then closing.",
         grace,
     )
     if not session.call_outcome:
         session.call_outcome = "interested"
     agent_session = getattr(session, "agent_session", None)
     if agent_session is not None:
+        # The LLM finished the form-send turn but forgot to speak a goodbye and
+        # call end_call. Cutting the line silently sounds like a dropped call, so
+        # clear any hanging speech and speak a clean farewell — every successful
+        # form-send now ends on a human note. (end_call ends the call itself when
+        # the LLM does say goodbye, so this backstop only runs when it didn't →
+        # no double-goodbye in the normal path.)
         try:
             agent_session.interrupt(force=True)
         except Exception as e:
             logger.debug(f"auto-end interrupt failed (non-fatal): {e}")
+        try:
+            farewell = {
+                "hindi": "जी धन्यवाद! ABC Bank की ओर से आपका दिन शुभ हो।",
+                "marathi": "धन्यवाद! ABC Bank तर्फे तुमचा दिवस शुभ जावो.",
+                "english": "Thank you! Have a great day from ABC Bank.",
+            }.get(getattr(session, "language", "hindi"), "Thank you! Have a great day.")
+            await agent_session.say(farewell, allow_interruptions=False)
+            await asyncio.sleep(3.0)  # let the goodbye TTS finish before teardown
+        except Exception as e:
+            logger.debug(f"auto-end farewell say failed (non-fatal): {e}")
         try:
             if getattr(agent_session, "input", None) is not None:
                 agent_session.input.audio = None

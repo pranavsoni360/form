@@ -65,6 +65,10 @@ export default function BankLoginPage() {
       setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
+      // Security: never leave the password sitting in the input/DOM after a submit
+      // attempt. Clearing state resets the input's live value so it cannot be read
+      // back via DevTools/Inspect once the credentials have been sent.
+      setPassword('');
     }
   };
 
@@ -152,6 +156,7 @@ export default function BankLoginPage() {
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={username} onChange={e => setUsername(e.target.value)} required autoFocus
+                  autoComplete="off" spellCheck={false} autoCorrect="off" autoCapitalize="off"
                   className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
                   style={{ fontFamily: 'var(--font-body)' }}
                   onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}
@@ -167,6 +172,7 @@ export default function BankLoginPage() {
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: '#9CA3AF' }} />
                 <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
+                  autoComplete="off" spellCheck={false} autoCorrect="off" autoCapitalize="off"
                   className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
                   style={{ fontFamily: 'var(--font-body)' }}
                   onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}

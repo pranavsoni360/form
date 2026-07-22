@@ -150,7 +150,10 @@ async def save_transcript(data: TranscriptPayload):
         now_ist(),
         duration_seconds,
         data.customer_interested,
-        data.whatsapp_form_sent,
+        # Preserve the sender's real result (whatsapp.py writes form_sent/form_status
+        # from the actual AiSensy accept/fail). Do NOT overwrite it with the voice
+        # agent's optimistic self-report (which only means "I called the tool").
+        call.get("form_sent") or False,
         data.loan_type or None,
         _safe_amount(data.loan_amount),
         json.dumps(existing_collected),

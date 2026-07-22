@@ -797,7 +797,7 @@ async def get_upload_detail(batch_id: str):
         pass  # already a string batch_id
 
     rows = await _state.db_pool.fetch(
-        "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, created_at"
+        "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, form_status, created_at"
         " FROM agent_calls WHERE batch_id = $1 ORDER BY created_at DESC LIMIT 200",
         call_batch_id,
     )
@@ -824,7 +824,7 @@ async def download_batch_csv(batch_id: str):
 
     rows = await _state.db_pool.fetch(
         """SELECT customer_name, phone, status, call_duration, interested,
-                  form_sent, form_link, started_at, ended_at, loan_type, loan_amount
+                  form_sent, form_status, form_link, started_at, ended_at, loan_type, loan_amount
            FROM agent_calls WHERE batch_id = $1 ORDER BY created_at ASC""",
         call_batch_id,
     )
@@ -834,7 +834,7 @@ async def download_batch_csv(batch_id: str):
         writer = csv.writer(buf)
         writer.writerow([
             "Customer Name", "Phone", "Loan Type", "Loan Amount",
-            "Status", "Duration (s)", "Interested", "Form Sent", "Form Link",
+            "Status", "Duration (s)", "Interested", "Form Sent", "Form Status", "Form Link",
             "Call Started", "Call Ended",
         ])
         yield buf.getvalue()
@@ -850,6 +850,7 @@ async def download_batch_csv(batch_id: str):
                 r["call_duration"] or 0,
                 "Yes" if r["interested"] else "No",
                 "Yes" if r["form_sent"] else "No",
+                r["form_status"] or "not_sent",
                 r["form_link"] or "",
                 r["started_at"].isoformat() if r["started_at"] else "",
                 r["ended_at"].isoformat() if r["ended_at"] else "",

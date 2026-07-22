@@ -253,6 +253,8 @@ async def send_whatsapp_form(request: Request):
     logger.info(f"Form notification for {customer_name} ({phone_norm}): {form_url}")
 
     aisensy_ok = False
+    aisensy_msg_id = None       # AiSensy submitted_message_id (proof of accept)
+    aisensy_fail_reason = None  # why the send did not succeed (for audit + UI)
     if AISENSY_API_KEY and phone_norm:
         wa_phone = "".join(filter(str.isdigit, phone_norm))
         if len(wa_phone) == 10:
@@ -287,17 +289,40 @@ async def send_whatsapp_form(request: Request):
                     "https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2",
                     json=payload, timeout=aiohttp.ClientTimeout(total=10), ssl=False,
                 ) as resp:
-                    aisensy_ok = resp.status == 200
                     body = await resp.text()
                     print(f"[AiSensy Form] response status={resp.status} body={body}", flush=True)
                     logger.info(f"AiSensy {wa_phone}: {resp.status} | {body}")
+                    # AiSensy returns HTTP 200 even for some errors, and a 200 only
+                    # means "accepted/queued". So trust the BODY, not just the code:
+                    # success looks like {"success":"true","submitted_message_id":"..."}.
+                    parsed = {}
+                    try:
+                        parsed = json.loads(body) if body else {}
+                    except Exception:
+                        parsed = {}
+                    success_flag = str(parsed.get("success", "")).lower() == "true"
+                    aisensy_msg_id = parsed.get("submitted_message_id")
+                    aisensy_ok = resp.status == 200 and success_flag and bool(aisensy_msg_id)
+                    if not aisensy_ok:
+                        aisensy_fail_reason = (
+                            parsed.get("message")
+                            or parsed.get("error")
+                            or f"HTTP {resp.status}: {body[:300]}"
+                        )
         except Exception as e:
+            aisensy_fail_reason = f"{type(e).__name__}: {e}"
             print(f"[AiSensy Form] EXCEPTION: {type(e).__name__}: {e}", flush=True)
             logger.error(f"AiSensy failed: {e}")
     else:
+        aisensy_fail_reason = "aisensy_not_configured_or_no_phone"
         print(f"[AiSensy Form] SKIPPED — api_key_set={bool(AISENSY_API_KEY)} phone_set={bool(phone_norm)}", flush=True)
 
     # ── 5. Update agent_calls ──
+    # form_status is the source of truth for the UI: 'sent' only when AiSensy
+    # actually ACCEPTED the message (success flag + submitted_message_id),
+    # 'failed' otherwise. HTTP 200 alone is NOT enough. The transcript webhook
+    # is not allowed to overwrite this with the agent's optimistic self-report.
+    form_status = "sent" if aisensy_ok else "failed"
     if call_uuid:
         try:
             row = await _state.db_pool.fetchrow("SELECT call_analysis FROM agent_calls WHERE id = $1", call_uuid)
@@ -307,15 +332,40 @@ async def send_whatsapp_form(request: Request):
             analysis["lead_quality"] = "hot"
             analysis["notification_status"] = "sent_via_aisensy" if aisensy_ok else "aisensy_failed"
             analysis["notification_time"] = now_ist().isoformat()
+            if aisensy_msg_id:
+                analysis["aisensy_message_id"] = aisensy_msg_id
+            if aisensy_fail_reason and not aisensy_ok:
+                analysis["notification_error"] = str(aisensy_fail_reason)[:500]
 
-            # form_sent reflects actual WhatsApp delivery, not just app creation.
             await _state.db_pool.execute(
-                """UPDATE agent_calls SET form_sent = $1, form_link = $2,
-                   call_analysis = $3, updated_at = $4 WHERE id = $5""",
-                aisensy_ok, form_url, json.dumps(analysis), now_ist(), call_uuid,
+                """UPDATE agent_calls SET form_sent = $1, form_status = $2, form_link = $3,
+                   call_analysis = $4, updated_at = $5 WHERE id = $6""",
+                aisensy_ok, form_status, form_url, json.dumps(analysis), now_ist(), call_uuid,
             )
         except Exception as e:
             logger.warning(f"Could not update agent_calls: {e}")
+
+    # ── 5b. Audit row in whatsapp_messages ──
+    # Brings the previously-unused delivery-tracking table to life so we keep a
+    # per-attempt record (message id on success, reason on failure). A future
+    # AiSensy delivery-receipt webhook can UPDATE delivered_at on this row.
+    if phone_norm:
+        try:
+            await _state.db_pool.execute(
+                """INSERT INTO whatsapp_messages
+                       (phone, message_type, message_body, status, sent_at,
+                        failed_reason, whatsapp_message_id, application_id)
+                   VALUES ($1, 'form_link', $2, $3, $4, $5, $6, $7)""",
+                phone_norm,
+                notification_message,
+                "sent" if aisensy_ok else "failed",
+                now_ist() if aisensy_ok else None,
+                None if aisensy_ok else str(aisensy_fail_reason or "unknown")[:500],
+                aisensy_msg_id,
+                app_id,
+            )
+        except Exception as e:
+            logger.warning(f"Could not log whatsapp_messages: {e}")
 
     # Caller (voice agent) checks `whatsapp_sent` to know whether to retry / disclose to user.
     return {

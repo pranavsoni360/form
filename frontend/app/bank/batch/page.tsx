@@ -24,6 +24,22 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cls}>{status || 'pending'}</span>;
 }
 
+// Multi-state WhatsApp form-link status. Reads the explicit form_status column
+// (written from the real AiSensy accept/fail) and falls back to the legacy
+// boolean for old rows. "Sent" = AiSensy accepted (queued), "Failed" = rejected.
+const FORM_STATUS_VIEW: Record<string, { label: string; cls: string }> = {
+  sent:      { label: 'Sent',      cls: 'text-emerald-600 dark:text-emerald-400' },
+  delivered: { label: 'Delivered', cls: 'text-emerald-600 dark:text-emerald-400' },
+  sending:   { label: 'Sending',   cls: 'text-blue-500 dark:text-blue-400' },
+  pending:   { label: 'Pending',   cls: 'text-amber-500 dark:text-amber-400' },
+  failed:    { label: 'Failed',    cls: 'text-red-500 dark:text-red-400' },
+  not_sent:  { label: '—',         cls: 'text-slate-400' },
+};
+function formStatusView(call: any) {
+  const s = (call?.form_status as string) || (call?.form_sent ? 'sent' : 'not_sent');
+  return FORM_STATUS_VIEW[s] || FORM_STATUS_VIEW.not_sent;
+}
+
 const selectCls = "w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition";
 
 const btnSecondary = "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-slate-700 bg-gradient-to-b from-white to-slate-50 dark:from-slate-700 dark:to-slate-800 text-slate-700 dark:text-slate-200 hover:from-slate-50 hover:to-slate-100 dark:hover:from-slate-600 dark:hover:to-slate-700 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed";
@@ -480,8 +496,8 @@ export default function BatchPage() {
                                   <span className={`text-xs font-medium ${call.interested === true ? 'text-emerald-600 dark:text-emerald-400' : ['Calling', 'Pending', 'Connecting'].includes(call.status || '') ? 'text-slate-400' : call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
                                     {call.interested === true ? 'Yes' : ['Calling', 'Pending', 'Connecting'].includes(call.status || '') ? '—' : call.interested === false ? 'No' : '—'}
                                   </span>
-                                  <span className={`text-xs font-medium ${call.form_sent ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
-                                    {call.form_sent ? 'Sent' : '—'}
+                                  <span className={`text-xs font-medium ${formStatusView(call).cls}`}>
+                                    {formStatusView(call).label}
                                   </span>
                                 </div>
                               ))}

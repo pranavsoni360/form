@@ -3212,10 +3212,7 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
         )
     # Call VG API for real PAN verification
     pan_name = ""
-    if VG_MOCK_MODE:
-        # Mock mode: accept any correctly-formatted PAN for local dev/testing
-        pan_name = "MOCK USER"
-    else:
+    if not VG_MOCK_MODE:
         try:
             pan_payload = {"obj": [{**vg_base_obj("pancard"), "PanNo": pan_number}]}
             async with httpx.AsyncClient(verify=False, timeout=20.0) as client:

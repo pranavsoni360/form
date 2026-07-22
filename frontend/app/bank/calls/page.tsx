@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -23,17 +23,27 @@ interface Call {
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  completed: { label: 'Completed', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
-  in_progress: { label: 'In Progress', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  failed: { label: 'Failed', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-  not_answered: { label: 'Not Answered', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
-  queued: { label: 'Queued', color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
-  Scheduled: { label: '📅 Scheduled', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+  'Called - Interested':     { label: 'Interested',     color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+  'Called - Not Interested': { label: 'Not Interested', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  'Not Answered':            { label: 'Not Answered',   color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  'Failed':                  { label: 'Failed',         color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
+  'Calling':                 { label: 'Calling',        color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  'Pending':                 { label: 'Pending',        color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
+  'Scheduled':               { label: '📅 Scheduled',   color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
 };
+
+const FILTERS: { key: string; label: string }[] = [
+  { key: 'all',                    label: 'All' },
+  { key: 'Called - Interested',    label: 'Interested' },
+  { key: 'Called - Not Interested',label: 'Not Interested' },
+  { key: 'Not Answered',           label: 'Not Answered' },
+  { key: 'Failed',                 label: 'Failed' },
+  { key: 'Calling',                label: 'Calling' },
+];
 
 export default function CallsPage() {
   const router = useRouter();
-  const [calls, setCalls] = useState<Call[]>([]);
+  const [allCalls, setAllCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -45,26 +55,29 @@ export default function CallsPage() {
     setToken(t);
   }, []);
 
-  useEffect(() => { if (token) fetchCalls(); }, [token, statusFilter]);
+  useEffect(() => { if (token) fetchCalls(); }, [token]);
 
   const fetchCalls = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (statusFilter !== 'all') params.set('status', statusFilter);
-      const res = await fetch(`${API_URL}/api/agent/calls?${params}`, {
+      const res = await fetch(`${API_URL}/api/agent/calls?page_size=200`, {
         headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
       const data = await res.json();
-      setCalls(data.calls || []);
+      setAllCalls(data.calls || []);
     } catch { } finally { setLoading(false); }
   };
 
-  const filtered = calls.filter(c => {
+  const filtered = allCalls.filter(c => {
+    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    if (!matchesStatus) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return c.customer_name?.toLowerCase().includes(q) || c.phone?.includes(q);
   });
+
+  const countFor = (key: string) =>
+    key === 'all' ? allCalls.length : allCalls.filter(c => c.status === key).length;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
@@ -76,7 +89,7 @@ export default function CallsPage() {
             </button>
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">Call Logs</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{calls.length} calls total</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{filtered.length} of {allCalls.length} calls</p>
             </div>
           </div>
           <ThemeToggle />
@@ -85,21 +98,27 @@ export default function CallsPage() {
 
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
         {/* Search + Filter */}
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
+        <div className="flex flex-col gap-3">
+          <div className="relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or phone..."
               className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
           </div>
-          <div className="flex gap-2 overflow-x-auto">
-            {['all', 'completed', 'in_progress', 'failed', 'not_answered'].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                  statusFilter === s ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-dark-section text-gray-700 dark:text-gray-300'
-                }`}>
-                {s === 'all' ? 'All' : STATUS_MAP[s]?.label || s}
-              </button>
-            ))}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {FILTERS.map(f => {
+              const count = countFor(f.key);
+              return (
+                <button key={f.key} onClick={() => setStatusFilter(f.key)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                    statusFilter === f.key ? 'bg-blue-600 text-white' : 'bg-white dark:bg-dark-section border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-400'
+                  }`}>
+                  {f.label}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                    statusFilter === f.key ? 'bg-white/20 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                  }`}>{count}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -144,9 +163,15 @@ export default function CallsPage() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{call.language || '--'}</td>
                       <td className="px-4 py-3">
-                        {call.interested === true ? <span className="text-green-600 text-xs font-medium">Interested</span> :
-                         call.interested === false ? <span className="text-red-600 text-xs font-medium">Not Interested</span> :
-                         <span className="text-gray-400 text-xs">--</span>}
+                        {['Calling', 'Pending'].includes(call.status) ? (
+                          <span className="text-gray-400 text-xs">—</span>
+                        ) : call.interested === true ? (
+                          <span className="text-green-600 text-xs font-medium">Interested</span>
+                        ) : call.interested === false ? (
+                          <span className="text-red-600 text-xs font-medium">Not Interested</span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">--</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(call.created_at || '')}</td>
                     </tr>

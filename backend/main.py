@@ -2961,6 +2961,22 @@ async def resolve_city_code(city_text: str, state_code: str) -> str | None:
 # PHONE-BASED AUTHENTICATION (EXISTING)
 # ============================================
 
+_IS_QA_DB: "bool | None" = None
+
+
+async def _is_qa_db() -> bool:
+    """True when running against the QA database (los_form_qa). Cached — the DB
+    name is fixed for the process. Same mechanism as agent/whatsapp.py."""
+    global _IS_QA_DB
+    if _IS_QA_DB is None:
+        try:
+            db = await db_pool.fetchval("SELECT current_database()")
+            _IS_QA_DB = (db == "los_form_qa")
+        except Exception:
+            _IS_QA_DB = False  # fail safe → behave like prod (enforce limit)
+    return _IS_QA_DB
+
+
 @app.post("/api/request-otp")
 async def request_otp(request: Request):
     data = await request.json()
@@ -2970,31 +2986,35 @@ async def request_otp(request: Request):
     if not phone.startswith('+'):
         phone = '+91' + phone
     # ── Rate limit: max 3 OTPs per phone per hour ──────────────────────────
+    # Prod only. On QA the testing team re-sends OTPs to the same handful of
+    # numbers repeatedly; the cap would block them with a 1-hour lockout, so we
+    # skip it entirely on los_form_qa. Prod keeps the anti-abuse protection.
     otp_key = f"otp:{phone}"
-    rate_row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", otp_key)
-    if rate_row:
-        window_start = now_utc() - timedelta(hours=1)
-        if rate_row["last_attempt"] and rate_row["last_attempt"] > window_start:
-            if rate_row["attempts"] >= 3:
-                raise HTTPException(
-                    status_code=429,
-                    detail="Too many OTP requests. Please wait 1 hour before trying again."
+    if not await _is_qa_db():
+        rate_row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", otp_key)
+        if rate_row:
+            window_start = now_utc() - timedelta(hours=1)
+            if rate_row["last_attempt"] and rate_row["last_attempt"] > window_start:
+                if rate_row["attempts"] >= 3:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Too many OTP requests. Please wait 1 hour before trying again."
+                    )
+                await db_pool.execute(
+                    "UPDATE login_attempts SET attempts = attempts + 1, last_attempt = $1 WHERE username = $2",
+                    now_utc(), otp_key
                 )
-            await db_pool.execute(
-                "UPDATE login_attempts SET attempts = attempts + 1, last_attempt = $1 WHERE username = $2",
-                now_utc(), otp_key
-            )
+            else:
+                # Window expired — reset counter
+                await db_pool.execute(
+                    "UPDATE login_attempts SET attempts = 1, last_attempt = $1 WHERE username = $2",
+                    now_utc(), otp_key
+                )
         else:
-            # Window expired — reset counter
             await db_pool.execute(
-                "UPDATE login_attempts SET attempts = 1, last_attempt = $1 WHERE username = $2",
-                now_utc(), otp_key
+                "INSERT INTO login_attempts (username, attempts, last_attempt) VALUES ($1, 1, $2)",
+                otp_key, now_utc()
             )
-    else:
-        await db_pool.execute(
-            "INSERT INTO login_attempts (username, attempts, last_attempt) VALUES ($1, 1, $2)",
-            otp_key, now_utc()
-        )
     # First check for existing application
     app_row = await db_pool.fetchrow(
         "SELECT * FROM loan_applications WHERE phone = $1 ORDER BY created_at DESC LIMIT 1", phone

@@ -1181,6 +1181,47 @@ AUTOSAVE_COLUMNS = {
 }
 
 # ============================================
+# LOAN AMOUNT LIMITS (server-side guard)
+# ============================================
+# Mirrors the client-side product-wise validation so an out-of-range amount
+# cannot be submitted by bypassing the UI. Both products share the same band
+# for now; kept as a dict so per-product limits can diverge later.
+LOAN_AMOUNT_LIMITS = {
+    "personal": {"min": 20000, "max": 100000, "label": "Personal Loan"},
+    "consumer_durable": {"min": 20000, "max": 100000, "label": "Consumer Durable Loan"},
+}
+
+def _inr(n: int) -> str:
+    """Format an integer with Indian digit grouping (e.g. 100000 -> '1,00,000')
+    so the server message matches the frontend's toLocaleString('en-IN')."""
+    s = str(int(n))
+    if len(s) <= 3:
+        return s
+    head, tail = s[:-3], s[-3:]
+    head = re.sub(r"(?<=\d)(?=(\d\d)+$)", ",", head)
+    return f"{head},{tail}"
+
+def _validate_loan_amount(app: dict) -> None:
+    """Raise HTTP 400 if the application's loan amount is outside the selected
+    product's permitted range. `app` may be an asyncpg Record or a dict — both
+    support .get()."""
+    key = "consumer_durable" if (app.get("consumer_loan_type") or "personal") == "consumer_durable" else "personal"
+    limits = LOAN_AMOUNT_LIMITS[key]
+    raw = app.get("loan_amount_requested")
+    if raw is None or str(raw).strip() == "":
+        raise HTTPException(status_code=400, detail="Loan Amount is required.")
+    try:
+        amt = float(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Enter a valid loan amount.")
+    lo, hi = limits["min"], limits["max"]
+    if amt < lo or amt > hi:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loan Amount must be between ₹{_inr(lo)} and ₹{_inr(hi)} for the selected {limits['label']}.",
+        )
+
+# ============================================
 # API ENDPOINTS
 # ============================================
 
@@ -3326,6 +3367,8 @@ async def submit_form_session(session_token: str, request: Request):
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
+    # Server-side product-wise loan amount guard (mirrors the client validation).
+    _validate_loan_amount(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

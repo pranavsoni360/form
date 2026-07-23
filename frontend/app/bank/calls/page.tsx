@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_URL, formatDateTime } from '@/lib/api';
+import { API_URL } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import { ArrowLeft, Phone, Search, Loader2 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -173,7 +173,7 @@ export default function CallsPage() {
                           <span className="text-gray-400 text-xs">--</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(call.created_at || '')}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{call.created_at || '—'}</td>
                     </tr>
                   );
                 })}

@@ -12,6 +12,7 @@ import {
 import ThemeToggle from '@/components/ThemeToggle';
 import { useEventStream } from '@/lib/realtime/useEventStream';
 import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
+import { BatchPreviewModal, type BatchReport } from '@/components/shared/BatchPreviewModal';
 
 function StatusBadge({ status }: { status: string }) {
   const s = (status || '').toLowerCase();
@@ -37,6 +38,9 @@ export default function BatchPage() {
   const [batchStatus, setBatchStatus] = useState<any>(null);
   const [loading, setLoading]         = useState(true);
   const [uploading, setUploading]     = useState(false);
+  const [preview, setPreview]         = useState<BatchReport | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [confirming, setConfirming]   = useState(false);
   const [language, setLanguage]       = useState('hindi');
   const [gender, setGender]           = useState('male');
   const [agentType, setAgentType]     = useState('loan_enquiry');
@@ -175,6 +179,13 @@ export default function BatchPage() {
     return () => clearInterval(id);
   }, [lastUpdated]);
 
+  const uploadParams = (commit: boolean) => new URLSearchParams({
+    language, gender, agent_type: agentType, commit: String(commit),
+    ...(bankId        ? { bank_id: bankId }                : {}),
+    ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
+  });
+
+  // Step 1 — preview: parse + preprocess the file WITHOUT queuing any calls.
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -183,20 +194,38 @@ export default function BatchPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const params = new URLSearchParams({
-        language, gender, agent_type: agentType,
-        ...(bankId        ? { bank_id: bankId }                : {}),
-        ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
-      });
-      const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${uploadParams(false)}`, {
         method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Upload failed (${res.status})`); }
-      notify(`Uploaded ${(await res.json()).inserted_count ?? '?'} records`);
-      refresh();
+      const report: BatchReport = await res.json();
+      setPendingFile(file);
+      setPreview(report);
     } catch (err: any) { notify(err.message || 'Upload failed', false); }
     finally { setUploading(false); }
   };
+
+  // Step 2 — confirm: re-send the same file with commit=true to queue + call.
+  const confirmUpload = async () => {
+    if (!pendingFile) return;
+    setConfirming(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', pendingFile);
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${uploadParams(true)}`, {
+        method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Upload failed (${res.status})`); }
+      const data = await res.json();
+      notify(data.message || `Queued ${data.inserted_count ?? '?'} records`);
+      setPreview(null);
+      setPendingFile(null);
+      refresh();
+    } catch (err: any) { notify(err.message || 'Upload failed', false); }
+    finally { setConfirming(false); }
+  };
+
+  const cancelPreview = () => { setPreview(null); setPendingFile(null); };
 
   const apiPost = async (path: string) => {
     const res = await fetch(`${API_URL}${path}`, {
@@ -240,6 +269,8 @@ export default function BatchPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 relative">
+
+      <BatchPreviewModal report={preview} confirming={confirming} onConfirm={confirmUpload} onCancel={cancelPreview} />
 
       {/* Ambient background glow */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden -z-10">

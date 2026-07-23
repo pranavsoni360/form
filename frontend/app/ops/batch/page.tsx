@@ -54,6 +54,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { maskPhone, statusVariant, fmtDuration } from "@/components/ops/CallDetailDialog";
+import { BatchPreviewModal, type BatchReport } from "@/components/shared/BatchPreviewModal";
 import { API_URL } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -196,27 +197,51 @@ export default function OpsBatchPage() {
 
   /* ─── Mutations ────────────────────────────────────────────────────── */
 
+  // Preprocessing preview + confirm state. The file is uploaded once with
+  // commit=false to preview (dedupe / invalid / missing name-number), and only
+  // re-sent with commit=true when the operator confirms.
+  const [preview, setPreview] = React.useState<BatchReport | null>(null);
+  const [pendingFile, setPendingFile] = React.useState<File | null>(null);
+
+  const doUpload = async (file: File, commit: boolean) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    // Build query string. Include phone_number_id ONLY when the operator
+    // explicitly picked a number — otherwise leave it off and let the
+    // dispatcher auto-pick least-loaded.
+    const params = new URLSearchParams({ language, gender, agent_type: agentType, commit: String(commit) });
+    if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
+    if (bankId) params.set("bank_id", bankId);
+    const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    return data;
+  };
+
+  // Step 1 — preview (no calls queued).
   const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      // Build query string. Include phone_number_id ONLY when the operator
-      // explicitly picked a number — otherwise leave it off and let the
-      // dispatcher auto-pick least-loaded.
-      const params = new URLSearchParams({ language, gender, agent_type: agentType });
-      if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
-      if (bankId) params.set("bank_id", bankId);
-      const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-      return data;
+    mutationFn: (file: File) => doUpload(file, false),
+    onSuccess: (data: BatchReport, file) => {
+      setPendingFile(file);
+      setPreview(data);
+    },
+    onError: (e: Error) => toast.error(`Upload failed: ${e.message}`),
+  });
+
+  // Step 2 — confirm (queue clean rows + start calling).
+  const confirmUpload = useMutation({
+    mutationFn: () => {
+      if (!pendingFile) throw new Error("No file to confirm");
+      return doUpload(pendingFile, true);
     },
     onSuccess: (data) => {
-      toast.success(`Uploaded ${data?.inserted_count ?? "?"} record${data?.inserted_count === 1 ? "" : "s"}`);
+      toast.success(data?.message || `Queued ${data?.inserted_count ?? "?"} record${data?.inserted_count === 1 ? "" : "s"}`);
+      setPreview(null);
+      setPendingFile(null);
       qc.invalidateQueries({ queryKey: ["uploads"] });
       qc.invalidateQueries({ queryKey: ["batch-status"] });
     },
@@ -296,6 +321,12 @@ export default function OpsBatchPage() {
       title="Batch operations"
       subtitle="Upload CSV/Excel, start dialing, retry failed, emergency stop · operator only"
     >
+      <BatchPreviewModal
+        report={preview}
+        confirming={confirmUpload.isPending}
+        onConfirm={() => confirmUpload.mutate()}
+        onCancel={() => { setPreview(null); setPendingFile(null); }}
+      />
       <div className="space-y-6">
         {/* Live status banner */}
         <LiveStatusBanner s={s} loading={status.isLoading} live={live} />

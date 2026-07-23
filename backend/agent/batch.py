@@ -362,12 +362,107 @@ async def process_batch_run(batch_uuid_str: str = None):
 # BATCH MANAGEMENT ENDPOINTS
 # ============================================================================
 
+def _normalize_phone(raw) -> tuple:
+    """Return (canonical_dialing_phone, digit_count).
+
+    canonical is the +91… form used both for dialing AND as the dedup key, so
+    the same number written as 9876543210 / 919876543210 / 09876543210 collapses
+    to one. digit_count is the raw number of digits (used for the ≥10 validity
+    check). Lenient: a 10-digit national number (after stripping a leading 0 or
+    91) canonicalises to +91<national>; anything else with ≥10 digits is kept
+    as-is; <10 digits is left raw for display in the skipped report.
+    """
+    raw = str(raw or "").strip()
+    if raw.endswith(".0"):  # Excel turns phone cells into floats: 9876543210.0
+        raw = raw[:-2]
+    digits = "".join(filter(str.isdigit, raw))
+    national = digits
+    if len(national) == 11 and national.startswith("0"):
+        national = national[1:]
+    elif len(national) == 12 and national.startswith("91"):
+        national = national[2:]
+    if len(national) == 10:
+        canonical = f"+91{national}"
+    elif len(digits) >= 10:
+        canonical = f"+{digits}"
+    else:
+        canonical = raw
+    return canonical, len(digits)
+
+
+def _preprocess_records(records: list) -> tuple:
+    """Clean a parsed CSV/Excel row list before any call is queued.
+
+    Drops rows in this precedence: missing name → missing number → invalid
+    number (fewer than 10 digits) → duplicate number (same canonical dialing
+    form already seen). Returns (clean_records, report). Each clean record gets
+    `_phone` (canonical) and `_name` (trimmed) attached for the insert loop.
+    Row numbers in the report are 1-based including the header (so the first
+    data row is 2), matching what the operator sees in Excel.
+    """
+    clean: list = []
+    seen: dict = {}
+    dropped = {"missing_name": [], "missing_number": [], "invalid_number": [], "duplicate": []}
+    for idx, r in enumerate(records):
+        row_no = idx + 2
+        name = str(r.get("name", "") or "").strip()
+        raw_phone = str(r.get("phone", "") or "").strip()
+        if raw_phone.endswith(".0"):
+            raw_phone = raw_phone[:-2]
+        entry = {"row": row_no, "name": name, "phone": raw_phone}
+        if not name:
+            dropped["missing_name"].append(entry)
+            continue
+        if not raw_phone:
+            dropped["missing_number"].append(entry)
+            continue
+        canonical, ndigits = _normalize_phone(raw_phone)
+        if ndigits < 10:  # lenient rule: must have at least 10 digits
+            dropped["invalid_number"].append(entry)
+            continue
+        if canonical in seen:
+            dropped["duplicate"].append({**entry, "duplicate_of_row": seen[canonical]})
+            continue
+        seen[canonical] = row_no
+        r["_phone"] = canonical
+        r["_name"] = name
+        clean.append(r)
+    skipped = (
+        [{**x, "reason": "duplicate"} for x in dropped["duplicate"]]
+        + [{**x, "reason": "invalid_number"} for x in dropped["invalid_number"]]
+        + [{**x, "reason": "missing_name"} for x in dropped["missing_name"]]
+        + [{**x, "reason": "missing_number"} for x in dropped["missing_number"]]
+    )
+    report = {
+        "total_rows": len(records),
+        "valid": len(clean),
+        "removed": {
+            "duplicates": len(dropped["duplicate"]),
+            "invalid_numbers": len(dropped["invalid_number"]),
+            "missing_name": len(dropped["missing_name"]),
+            "missing_number": len(dropped["missing_number"]),
+        },
+        "removed_total": sum(len(v) for v in dropped.values()),
+        "skipped": skipped[:200],  # cap the list sent to the UI
+    }
+    return clean, report
+
+
 @router.post("/upload-excel")
 async def upload_excel(
     file: UploadFile = File(...),
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
     agent_type: str = Query("loan_enquiry", description="loan_enquiry | account_opening"),
+    commit: bool = Query(
+        False,
+        description=(
+            "When false (default) the file is parsed + preprocessed and a PREVIEW "
+            "report is returned WITHOUT queuing any calls. When true, the cleaned "
+            "rows are queued and calling starts. The frontend previews first, then "
+            "re-sends the same file with commit=true on operator confirmation."
+        ),
+    ),
     phone_number_id: Optional[str] = Query(
         None,
         description=(
@@ -442,6 +537,35 @@ async def upload_excel(
         if not records:
             raise HTTPException(status_code=400, detail="File is empty")
 
+        # ── Preprocess: dedupe, drop invalid (<10 digits) + rows missing
+        # name/number. Nothing is written or dialed until the operator confirms.
+        clean_records, report = _preprocess_records(records)
+
+        if not commit:
+            # Preview only — no batch row, no calls, no auto-start.
+            return {
+                "status": "preview",
+                "preview": True,
+                "filename": file.filename,
+                **report,
+                "message": (
+                    f"{report['valid']} of {report['total_rows']} rows are ready to call; "
+                    f"{report['removed_total']} will be skipped. Confirm to start."
+                ),
+            }
+
+        if not clean_records:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No valid rows to call after preprocessing — all rows were "
+                    "duplicates, invalid numbers, or missing a name/number."
+                ),
+            )
+
+        # From here we only queue the cleaned rows.
+        records = clean_records
+
         batch_id = f"batch_{secrets.token_hex(8)}_{int(time.time())}"
         upload_time = now_ist()
         bank_id_uuid = uuid.UUID(bank_id) if bank_id else None
@@ -479,16 +603,8 @@ async def upload_excel(
 
         count = 0
         for r in records:
-            raw_phone = str(r.get("phone", "")).strip()
-            if raw_phone.endswith(".0"):
-                raw_phone = raw_phone[:-2]
-            digits = "".join(filter(str.isdigit, raw_phone))
-            if len(digits) == 10:
-                phone = f"+91{digits}"
-            elif len(digits) == 12 and digits.startswith("91"):
-                phone = f"+{digits}"
-            else:
-                phone = raw_phone
+            # Phone was already validated + canonicalised in preprocessing.
+            phone = r.get("_phone") or str(r.get("phone", "")).strip()
 
             call_uuid = uuid.uuid4()
             room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
@@ -508,7 +624,7 @@ async def upload_excel(
                 call_uuid,
                 bank_id_uuid,
                 batch_id,
-                r.get("name", ""),
+                r.get("_name") or r.get("name", ""),
                 phone,
                 r.get("loan_type", "") or None,
                 float(r["loan_amount"]) if r.get("loan_amount") and str(r["loan_amount"]).strip() else None,
@@ -544,10 +660,11 @@ async def upload_excel(
             "batch_uuid": str(batch_uuid),
             "inserted_count": count,
             "message": (
-                f"Uploaded {count} records. Calling started!" if auto_calling
-                else f"Uploaded {count} records. Calls will start at {CALL_START_HOUR} AM IST."
+                f"Queued {count} clean records ({report['removed_total']} skipped). Calling started!" if auto_calling
+                else f"Queued {count} clean records ({report['removed_total']} skipped). Calls will start at {CALL_START_HOUR} AM IST."
             ),
             "auto_calling": auto_calling,
+            **report,
             "calling_hours": {"active": is_within_calling_hours(), "window": f"{CALL_START_HOUR}AM - {CALL_END_HOUR % 24 or 12}AM IST"},
         }
     except HTTPException:

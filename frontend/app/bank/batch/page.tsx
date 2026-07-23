@@ -52,6 +52,7 @@ export default function BatchPage() {
   const [notice, setNotice] = useState<{ msg: string; ok: boolean } | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [secondsAgo, setSecondsAgo]   = useState(0);
+  const [refreshing, setRefreshing]       = useState(false);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const [batchCalls, setBatchCalls]       = useState<Record<string, any[]>>({});
   const [loadingCalls, setLoadingCalls]   = useState<string | null>(null);
@@ -131,7 +132,11 @@ export default function BatchPage() {
     finally { setLoadingCalls(null); }
   };
 
-  const refresh = useCallback(() => { fetchBatches(); fetchStatus(); }, [fetchBatches, fetchStatus]);
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await Promise.all([fetchBatches(), fetchStatus()]); }
+    finally { setRefreshing(false); }
+  }, [fetchBatches, fetchStatus]);
 
   useEffect(() => { if (token) { fetchBatches(token); fetchStatus(token); } }, [token]);
   useEffect(() => {
@@ -291,9 +296,10 @@ export default function BatchPage() {
                     Updated {secondsAgo}s ago
                   </span>
                 )}
-                <button onClick={refresh}
-                  className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1">
-                  <RefreshCw className="w-3 h-3" /> Refresh
+                <button onClick={refresh} disabled={refreshing}
+                  className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1 disabled:opacity-60">
+                  <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+                  {refreshing ? 'Refreshing…' : 'Refresh'}
                 </button>
               </div>
             </div>
@@ -393,7 +399,7 @@ export default function BatchPage() {
             { label: 'Resume',        icon: <Play className="w-4 h-4" />,      busy: resuming, onClick: resumeCalling },
             { label: 'Retry Failed',  icon: <RotateCcw className="w-4 h-4" />, busy: retrying, onClick: retryFailed   },
             { label: 'Cleanup Stuck', icon: <Wrench className="w-4 h-4" />,    busy: cleaning, onClick: cleanupStuck  },
-            { label: 'Refresh',       icon: <RefreshCw className="w-4 h-4" />, busy: false,    onClick: refresh       },
+            { label: 'Refresh',       icon: <RefreshCw className="w-4 h-4" />, busy: refreshing, onClick: refresh     },
           ].map(({ label, icon, busy, onClick }) => (
             <button key={label} onClick={onClick} disabled={busy} className={btnSecondary}>
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}

@@ -646,17 +646,45 @@ export default function LoanApplication() {
     return ok;
   };
   const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+
+  // Product-wise loan amount limits (max also enforced live by the ₹1 lakh cap).
+  const LOAN_LIMITS: Record<string, { min: number; max: number; label: string }> = {
+    personal: { min: 20000, max: 100000, label: 'Personal Loan' },
+    consumer_durable: { min: 20000, max: 100000, label: 'Consumer Durable Loan' },
+  };
+  // Returns a validation message if the entered loan amount is outside the
+  // selected product's permitted range, else '' (empties are left to the
+  // Required check). Used both live (onBlur) and on Continue (step4Valid).
+  const loanAmountError = (): string => {
+    const key = (formData.consumer_loan_type || 'personal') === 'consumer_durable' ? 'consumer_durable' : 'personal';
+    const { min, max, label } = LOAN_LIMITS[key];
+    const raw = formData.loan_amount_requested;
+    if (raw === undefined || raw === null || String(raw).trim() === '') return '';
+    const amt = parseFloat(raw);
+    if (isNaN(amt)) return 'Enter a valid loan amount.';
+    if (amt < min || amt > max) {
+      return `Loan Amount must be between ₹${min.toLocaleString('en-IN')} and ₹${max.toLocaleString('en-IN')} for the selected ${label}.`;
+    }
+    return '';
+  };
+
   const step4Valid = () => {
-    const base = validate({ loan_amount_requested: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+    const isCD = (formData.consumer_loan_type || 'personal') === 'consumer_durable';
+    // Single validate() call so its setErrors doesn't wipe the merged errors below.
+    const reqFields: any = { loan_amount_requested: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' };
+    if (isCD) Object.assign(reqFields, { product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
+    const base = validate(reqFields);
     const loanAmt = parseFloat(formData.loan_amount_requested || '0');
     const guarantorValid = loanAmt > 100000 ? validate({ guarantor_name: 'Required', guarantor_phone: 'Required' }) : true;
+    const amtErr = loanAmountError();
     const criminalValid = formData.criminal_records === true;
-    if (!criminalValid) setErrors((p: any) => ({ ...p, criminal_records: 'You must confirm you have no pending criminal cases to proceed' }));
-    if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
-      const extra = validate({ product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
-      return base && extra && guarantorValid && criminalValid;
-    }
-    return base && guarantorValid && criminalValid;
+    // Merge range + criminal errors on top of the required-field errors.
+    setErrors((p: any) => ({
+      ...p,
+      ...(amtErr ? { loan_amount_requested: amtErr } : {}),
+      ...(!criminalValid ? { criminal_records: 'You must confirm you have no pending criminal cases to proceed' } : {}),
+    }));
+    return base && !amtErr && guarantorValid && criminalValid;
   };
 
   const handleNext = () => {
@@ -1392,8 +1420,9 @@ export default function LoanApplication() {
                             setLoanCapWarn(false);
                           }
                         }}
+                        onBlur={() => setErrors((p: any) => ({ ...p, loan_amount_requested: loanAmountError() }))}
                         className={inp(errors.loan_amount_requested)}
-                        placeholder="Max ₹1,00,000"
+                        placeholder="₹20,000 – ₹1,00,000"
                       />
                     </div>
                   </F>

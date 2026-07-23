@@ -1,4 +1,4 @@
-﻿-- Migration v20: PAN verification retry mechanism
+-- Migration v20: PAN verification retry mechanism
 -- Adds attempt counter and mismatch-lock flag to loan_applications.
 -- The backend increments pan_verification_attempts on each name-mismatch
 -- and sets pan_mismatch_locked = true after the configured maximum (2).

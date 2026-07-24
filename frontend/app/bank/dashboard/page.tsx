@@ -222,7 +222,7 @@ export default function BankDashboardPage() {
             <table className="min-w-full">
               <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
                 <tr>
-                  {['Customer','Loan ID','Type','Amount','Status','Interested','Form','Suggestion','KYC','Date',''].map(h => (
+                  {['Customer','Loan ID','Type','Requested','Status','Interested','Form','Suggestion','KYC','Date',''].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{h}</th>
                   ))}
                 </tr>

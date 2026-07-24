@@ -565,7 +565,7 @@ async def vendor_login(payload: VendorLogin):
         payload.username,
     )
     if not row or not bcrypt.checkpw(payload.password.encode(), row["password_hash"].encode()):
-        raise HTTPException(401, "Invalid credentials")
+        raise HTTPException(401, "Invalid username or password")
     if row["status"] != "active":
         raise HTTPException(403, "Vendor user disabled")
     if row["vendor_status"] != "active":

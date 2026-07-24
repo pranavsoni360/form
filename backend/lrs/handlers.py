@@ -20,7 +20,9 @@ async def lrs_score(payload: dict, db_pool) -> None:
     (worker retries w/ backoff). Idempotent: skips if already scored.
     """
     application_id = uuid.UUID(str(payload["application_id"]))
-    await run_and_persist(db_pool, application_id)
+    # `force` lets a bulk re-score (config change) recompute an already-scored
+    # app; normal enqueues omit it so re-scoring stays idempotent.
+    await run_and_persist(db_pool, application_id, force=bool(payload.get("force")))
 
 
 async def run_and_persist(db_pool, application_id, *, force: bool = False) -> dict | None:

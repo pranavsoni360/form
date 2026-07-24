@@ -690,6 +690,7 @@ export default function ScorecardPage() {
   const [original, setOriginal] = useState<ScorecardConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [rescoring, setRescoring] = useState(false);
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
   const [token, setToken] = useState<string | null>(null);
@@ -750,6 +751,30 @@ export default function ScorecardPage() {
 
   const handleReset = () => {
     if (original) { setConfig(deepClone(original)); }
+  };
+
+  // Bulk re-score: applies the saved config to PRE-DECISION applications only
+  // (draft / submitted / documents_submitted). Approved/disbursed apps stay
+  // frozen. Runs async on the server; returns how many were queued.
+  const handleRescorePending = async () => {
+    if (!token) return;
+    setRescoring(true);
+    try {
+      const res = await fetch(`${API_URL}/api/lrs/rescore-pending`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Re-score failed');
+      setToast({
+        type: 'ok',
+        msg: `Queued ${data.queued} pending application(s) for re-scoring. Approved / disbursed applications are left unchanged.`,
+      });
+    } catch (e: unknown) {
+      setToast({ type: 'err', msg: e instanceof Error ? e.message : 'Re-score failed' });
+    } finally {
+      setRescoring(false);
+    }
   };
 
   // Return to the previous in-app screen. Use browser history when we arrived
@@ -947,6 +972,13 @@ export default function ScorecardPage() {
             <span className="hidden sm:inline">Discard</span>
           </button>
         )}
+        <button onClick={handleRescorePending} disabled={isDirty || saving || rescoring}
+          title={isDirty ? 'Save the scorecard first, then re-score' : 'Re-score draft/submitted applications with the saved config (approved/disbursed untouched)'}
+          className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded text-sm disabled:opacity-40 flex-shrink-0"
+          style={{ color: 'rgba(255,255,255,0.85)', background: 'rgba(255,255,255,0.10)' }}>
+          {rescoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+          <span className="hidden sm:inline">{rescoring ? 'Re-scoring…' : 'Re-score pending'}</span>
+        </button>
         <button onClick={handleSave} disabled={!isDirty || saving || !pillarWeightOk}
           className="flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded text-sm font-semibold disabled:opacity-40 flex-shrink-0"
           style={{ background: '#2563EB', color: '#fff' }}>

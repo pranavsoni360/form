@@ -1,5 +1,5 @@
 ﻿'use client';
-import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -12,6 +12,21 @@ import { API_URL, getCodeList } from '@/lib/api';
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000;   // 300s — MUST match backend
 const WARNING_WINDOW_MS = 60 * 1000;        // show the warning modal 60s before expiry
 const KEEPALIVE_THROTTLE_MS = 60 * 1000;    // at most one server ping per 60s of activity
+
+// Format a save timestamp as full date + time, with a friendly Today/Yesterday
+// prefix so an officer resuming days later can see WHEN they last worked.
+// e.g. "Today, 12:10:59 PM" · "Yesterday, 12:10:59 PM" · "18 Jul 2026, 12:10:59 PM".
+function formatSavedStamp(input: string | number | Date): string {
+  const d = new Date(input);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return `Today, ${time}`;
+  if (d.toDateString() === yest.toDateString()) return `Yesterday, ${time}`;
+  const date = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return `${date}, ${time}`;
+}
 
 // ── Name similarity helpers ──────────────────────────────────────────────────
 function levenshtein(a: string, b: string): number {
@@ -199,6 +214,8 @@ export default function LoanApplication() {
   };
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState('');
+  const [resuming, setResuming] = useState(false);
+  const [resumeStep, setResumeStep] = useState(1);
   const [previewDoc, setPreviewDoc] = useState<{ url: string; label: string } | null>(null);
   const [previewDisclaimer, setPreviewDisclaimer] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -518,6 +535,10 @@ export default function LoanApplication() {
         setAppData(d);
         setFormData(d);
         const savedStep = d.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, d.highest_step || 1));
+        // Show the DB's last-saved date+time on resume (not just this session's),
+        // and flag a resume when the applicant had already progressed before.
+        if (d.last_saved_at) setLastSaved(formatSavedStamp(d.last_saved_at));
+        if (savedStep > 1 || (d.highest_step || 1) > 1) { setResuming(true); setResumeStep(savedStep); }
         // On-load: restore PAN mismatch lock/warning state from DB
         const callName = d.customer_name || '';
         if (d.pan_mismatch_locked) {
@@ -621,7 +642,7 @@ export default function LoanApplication() {
         body: JSON.stringify({ session_token: session, step: currentStep, data: { ...filtered, highest_step: highestStep } }),
       });
       if (res.status === 401) { logout(); return; }
-      setLastSaved(new Date().toLocaleTimeString());
+      setLastSaved(formatSavedStamp(new Date()));
     } catch {}
     setSaving(false);
   };
@@ -932,12 +953,31 @@ export default function LoanApplication() {
               ) : lastSaved ? (
                 <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: '#059669', background: '#F0FDF4', fontFamily: 'var(--font-body)' }}>
                   <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: '#059669' }} />
-                  <span className="hidden sm:inline">Saved {lastSaved}</span>
+                  <span className="hidden sm:inline">Last saved {lastSaved}</span>
                 </span>
               ) : null}
               <ThemeToggle />
             </div>
           </div>
+
+          {/* ── RESUME BANNER — shown when continuing a previously-saved application ── */}
+          {resuming && (
+            <div className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+              <RotateCcw className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#2563EB' }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold" style={{ color: '#1E3A8A', fontFamily: 'var(--font-heading)' }}>
+                  You&apos;re resuming your previously saved loan application
+                </p>
+                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+                  Resume point: <b>{steps[Math.min(Math.max(resumeStep, 1), steps.length) - 1]}</b> (Step {resumeStep} of {steps.length}). Continue from where you left off.
+                  {lastSaved ? <><br />Last saved: {lastSaved}</> : null}
+                </p>
+              </div>
+              <button onClick={() => setResuming(false)} className="flex-shrink-0 p-0.5" style={{ color: '#94A3B8' }} aria-label="Dismiss">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* ── STEP PROGRESS BAR (40px circles) ── */}
           <div className="relative">

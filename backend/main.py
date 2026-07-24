@@ -3165,6 +3165,37 @@ async def get_application(session_token: str, request: Request):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
     return {"status": "success", "data": app_dict, "session_valid_until": expires_at.isoformat()}
 
+@app.post("/api/session-keepalive")
+async def session_keepalive(request: Request):
+    """Refresh a loan session's inactivity timer (last_activity_at) WITHOUT
+    returning application data (so it can't clobber unsaved form fields).
+
+    Used by the loan-form inactivity-warning modal's 'Continue Session' button
+    and by throttled activity pings, keeping the client countdown and the
+    server's 5-minute inactivity cutoff in sync. Still honours both the absolute
+    session cap and the 5-min inactivity window — a genuinely expired session is
+    NOT resurrected here (returns 401 so the client redirects to re-verify)."""
+    data = await request.json()
+    session_token = data.get('session_token')
+    if not session_token:
+        raise HTTPException(status_code=400, detail="Session token required")
+    session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
+    if not session or not session["otp_verified"]:
+        raise HTTPException(status_code=401, detail="Invalid session. Please verify again.")
+    expires_at = session["expires_at"]
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at < now_utc():
+        raise HTTPException(status_code=401, detail="Session expired. Please verify again.")
+    last_activity = session["last_activity_at"]
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    if (now_utc() - last_activity).total_seconds() > 300:
+        raise HTTPException(status_code=401, detail="Session expired due to inactivity. Please verify again.")
+    await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
+    return {"status": "extended", "inactivity_window_seconds": 300}
+
+
 @app.post("/api/autosave-session")
 async def autosave_session(request: Request):
     data = await request.json()

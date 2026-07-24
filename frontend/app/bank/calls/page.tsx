@@ -27,10 +27,20 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   'Called - Not Interested': { label: 'Not Interested', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
   'Not Answered':            { label: 'Not Answered',   color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
   'Failed':                  { label: 'Failed',         color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
+  'Invalid Phone':           { label: 'Invalid Phone',  color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
+  'Call Not Connected':      { label: 'Not Connected',  color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
   'Calling':                 { label: 'Calling',        color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
   'Pending':                 { label: 'Pending',        color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
   'Scheduled':               { label: '📅 Scheduled',   color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
 };
+
+// The "Failed" tab groups all hard-failure statuses, matching the batch
+// dashboard's `failed` count (Failed + Invalid Phone + Call Not Connected) so
+// the two pages reconcile. Without this, Invalid-Phone / Not-Connected rows
+// land in no tab and the tab counts don't sum to the total.
+const FAILED_STATUSES = ['Failed', 'Invalid Phone', 'Call Not Connected'];
+const matchesFilter = (status: string, key: string) =>
+  key === 'Failed' ? FAILED_STATUSES.includes(status) : status === key;
 
 const FILTERS: { key: string; label: string }[] = [
   { key: 'all',                    label: 'All' },
@@ -69,7 +79,7 @@ export default function CallsPage() {
   };
 
   const filtered = allCalls.filter(c => {
-    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' || matchesFilter(c.status, statusFilter);
     if (!matchesStatus) return false;
     if (!search) return true;
     const q = search.toLowerCase();
@@ -77,7 +87,7 @@ export default function CallsPage() {
   });
 
   const countFor = (key: string) =>
-    key === 'all' ? allCalls.length : allCalls.filter(c => c.status === key).length;
+    key === 'all' ? allCalls.length : allCalls.filter(c => matchesFilter(c.status, key)).length;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">

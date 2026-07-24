@@ -36,6 +36,7 @@ import {
   Hammer,
   Loader2,
   PhoneOff,
+  PhoneMissed,
   Play,
   PlayCircle,
   RefreshCw,
@@ -67,6 +68,7 @@ interface BatchStatus {
   pending: number;
   active_calls: number;
   failed: number;
+  not_answered: number;
   completed: number;
   total: number;
 }
@@ -332,7 +334,7 @@ export default function OpsBatchPage() {
         <LiveStatusBanner s={s} loading={status.isLoading} live={live} />
 
         {/* KPI strip */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <StatCard
             label="ACTIVE NOW"
             value={s?.active_calls ?? 0}
@@ -356,6 +358,12 @@ export default function OpsBatchPage() {
             value={s?.failed ?? 0}
             icon={PhoneOff}
             tone={(s?.failed ?? 0) > 0 ? "danger" : "neutral"}
+          />
+          <StatCard
+            label="NOT ANSWERED"
+            value={s?.not_answered ?? 0}
+            icon={PhoneMissed}
+            tone={(s?.not_answered ?? 0) > 0 ? "warning" : "neutral"}
           />
         </div>
 

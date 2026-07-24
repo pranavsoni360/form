@@ -767,7 +767,15 @@ async def batch_status(
 
     pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
     active_count = await _count(" AND status = 'Calling'")
-    failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
+    # 'failed' is STRICT — only status='Failed' — so the dashboard tile
+    # reconciles exactly with the Call Logs 'Failed' filter (which matches the
+    # literal status). The other unsuccessful outcomes are reported separately.
+    failed_count = await _count(" AND status = 'Failed'")
+    not_answered_count = await _count(" AND status = 'Not Answered'")
+    invalid_phone_count = await _count(" AND status = 'Invalid Phone'")
+    not_connected_count = await _count(" AND status = 'Call Not Connected'")
+    # Convenience roll-up for callers that want every non-success bucket at once.
+    unsuccessful_count = failed_count + not_answered_count + invalid_phone_count + not_connected_count
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
     total_count = await _count("")
 
@@ -777,7 +785,11 @@ async def batch_status(
         "message": "All calls completed" if pending_count == 0 else f"{pending_count} calls remaining",
         "pending": pending_count,
         "active_calls": active_count,
-        "failed": failed_count,
+        "failed": failed_count,                             # strict status='Failed' (matches Call Logs)
+        "not_answered": not_answered_count,
+        "invalid_phone": invalid_phone_count,
+        "not_connected": not_connected_count,
+        "unsuccessful": unsuccessful_count,                 # failed + not_answered + invalid_phone + not_connected
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
         "total": total_count,
     }

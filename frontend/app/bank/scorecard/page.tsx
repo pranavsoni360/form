@@ -692,11 +692,15 @@ export default function ScorecardPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
-  const token = typeof window !== 'undefined' ? getAccessToken('bank') : null;
+  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token) { router.push('/bank/login'); return; }
-    fetch(`${API_URL}/api/lrs/config`, { headers: { Authorization: `Bearer ${token}` } })
+    // Read the token on the client (after mount) so we never redirect on a
+    // transient SSR/first-paint null. Only bounce to login if it's truly absent.
+    const t = getAccessToken('bank');
+    if (!t) { router.push('/bank/login'); return; }
+    setToken(t);
+    fetch(`${API_URL}/api/lrs/config`, { headers: { Authorization: `Bearer ${t}` } })
       .then(async r => {
         const data = await r.json();
         if (!r.ok || !data || typeof data !== 'object' || !data.pillars) {
@@ -746,6 +750,18 @@ export default function ScorecardPage() {
 
   const handleReset = () => {
     if (original) { setConfig(deepClone(original)); }
+  };
+
+  // Return to the previous in-app screen. Use browser history when we arrived
+  // from within the app; otherwise (opened/refreshed directly on this URL, so
+  // history has no same-origin entry) fall back to the dashboard — never login.
+  const goBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1
+        && document.referrer && document.referrer.includes(window.location.host)) {
+      router.back();
+    } else {
+      router.push('/bank/dashboard');
+    }
   };
 
   const updatePillarWeight = useCallback((pillarKey: string, weight: number) => {
@@ -905,11 +921,11 @@ export default function ScorecardPage() {
       {/* Top bar */}
       <div className="sticky top-0 z-20 flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3"
         style={{ background: '#071A38', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <button onClick={() => router.push('/bank/dashboard')}
+        <button onClick={goBack}
           className="flex items-center gap-1.5 text-sm flex-shrink-0"
           style={{ color: 'rgba(255,255,255,0.55)' }}>
           <ArrowLeft className="w-4 h-4" />
-          <span className="hidden sm:inline">Dashboard</span>
+          <span className="hidden sm:inline">Back</span>
         </button>
         <span className="hidden sm:inline" style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
         <span className="text-sm font-semibold text-white truncate">

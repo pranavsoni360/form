@@ -6,7 +6,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
-const INACTIVITY_LIMIT = 4 * 60 * 1000; // 4 min warning, 5 min logout
+// Server expires a loan session after 5 min of inactivity (backend
+// /api/get-application, /api/autosave-session, /api/session-keepalive all use 300s).
+// Keep these in sync with that cutoff: warn 60s before, count down to 0 = expiry.
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000;   // 300s — MUST match backend
+const WARNING_WINDOW_MS = 60 * 1000;        // show the warning modal 60s before expiry
+const KEEPALIVE_THROTTLE_MS = 60 * 1000;    // at most one server ping per 60s of activity
 
 // ── Name similarity helpers ──────────────────────────────────────────────────
 function levenshtein(a: string, b: string): number {
@@ -200,27 +205,61 @@ export default function LoanApplication() {
   const [agreed, setAgreed] = useState(false);
   const [errors, setErrors] = useState<any>({});
   const [inactivityWarning, setInactivityWarning] = useState(false);
+  const [countdown, setCountdown] = useState(Math.floor(WARNING_WINDOW_MS / 1000));
   // Loan amount cap (₹1 lakh) — shows a small popup above the field when exceeded
   const [loanCapWarn, setLoanCapWarn] = useState(false);
   const loanCapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  let inactivityTimer: any = null;
-  let warningTimer: any = null;
+
+  // Inactivity tracking (refs so the 1s ticker + event handlers never go stale).
+  const lastActivityRef = useRef<number>(Date.now());
+  const lastKeepAliveRef = useRef<number>(Date.now());
+  const warningShownRef = useRef<boolean>(false);
 
   const getSession = () => sessionStorage.getItem('loan_session');
 
   const logout = useCallback(() => {
     sessionStorage.removeItem('loan_session');
     sessionStorage.removeItem('session_expiry');
-    setSessionExpired(true);
+    warningShownRef.current = false;
+    setInactivityWarning(false);
+    setSessionExpired(true);   // → Re-Verify with OTP screen
   }, []);
 
-  const resetInactivityTimer = useCallback(() => {
-    clearTimeout(inactivityTimer);
-    clearTimeout(warningTimer);
-    setInactivityWarning(false);
-    warningTimer = setTimeout(() => setInactivityWarning(true), INACTIVITY_LIMIT);
-    inactivityTimer = setTimeout(() => logout(), INACTIVITY_LIMIT + 60000);
+  // Refresh the server's inactivity timer without pulling application data
+  // (so unsaved form fields are never clobbered). A 401 means the session is
+  // genuinely gone → send the user to re-verify.
+  const pingKeepAlive = useCallback(async (): Promise<boolean> => {
+    const s = getSession();
+    if (!s) return false;
+    try {
+      const res = await fetch(`${API_URL}/api/session-keepalive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_token: s }),
+      });
+      if (res.status === 401) { logout(); return false; }
+      return res.ok;
+    } catch {
+      return false;   // transient network blip — keep the client session, tick will retry
+    }
   }, [logout]);
+
+  // "Continue Session" — extend on the server, then reset the client counters.
+  const continueSession = useCallback(async () => {
+    const ok = await pingKeepAlive();
+    if (!ok) return;   // logout() already fired on a hard 401
+    lastActivityRef.current = Date.now();
+    lastKeepAliveRef.current = Date.now();
+    warningShownRef.current = false;
+    setInactivityWarning(false);
+  }, [pingKeepAlive]);
+
+  // Explicit "Logout" from the warning — end the session and go to the start.
+  const sessionLogout = useCallback(() => {
+    sessionStorage.removeItem('loan_session');
+    sessionStorage.removeItem('session_expiry');
+    router.push('/');
+  }, [router]);
 
   useEffect(() => {
     let session = getSession();
@@ -238,13 +277,37 @@ export default function LoanApplication() {
     }
     if (!session) { router.push('/loan-form'); return; }
     loadApplication();
+
+    // Real user activity resets the idle clock. While the warning modal is up we
+    // IGNORE passive activity — only the "Continue Session" button may extend, so
+    // the countdown stays honest. A throttled server ping keeps the backend's
+    // inactivity timer in sync with the client (prevents a sudden 401 with no warning).
+    const bump = () => {
+      if (warningShownRef.current) return;
+      lastActivityRef.current = Date.now();
+      const now = Date.now();
+      if (now - lastKeepAliveRef.current > KEEPALIVE_THROTTLE_MS) {
+        lastKeepAliveRef.current = now;
+        pingKeepAlive();
+      }
+    };
     const events = ['mousedown', 'keypress', 'scroll', 'touchstart'];
-    events.forEach(e => window.addEventListener(e, resetInactivityTimer));
-    resetInactivityTimer();
+    events.forEach(e => window.addEventListener(e, bump));
+
+    // Single 1s ticker: drives the warning modal + live countdown + auto-expiry.
+    const ticker = setInterval(() => {
+      const remainingMs = SESSION_TIMEOUT_MS - (Date.now() - lastActivityRef.current);
+      if (remainingMs <= 0) { logout(); return; }
+      if (remainingMs <= WARNING_WINDOW_MS) {
+        warningShownRef.current = true;
+        setInactivityWarning(true);
+        setCountdown(Math.ceil(remainingMs / 1000));
+      }
+    }, 1000);
+
     return () => {
-      events.forEach(e => window.removeEventListener(e, resetInactivityTimer));
-      clearTimeout(inactivityTimer);
-      clearTimeout(warningTimer);
+      events.forEach(e => window.removeEventListener(e, bump));
+      clearInterval(ticker);
     };
   }, []);
 
@@ -796,22 +859,38 @@ export default function LoanApplication() {
         </div>
       )}
 
-      {/* Inactivity warning */}
+      {/* Inactivity warning — countdown + Continue / Logout */}
       {inactivityWarning && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-8 pointer-events-none">
-          <div className="pointer-events-auto bg-white backdrop-blur-md shadow-2xl rounded-2xl px-6 py-4 max-w-md w-full mx-4 animate-[slideDown_0.3s_ease-out]"
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" style={{ background: 'rgba(15,23,42,0.45)' }}>
+          <div className="bg-white shadow-2xl rounded-2xl px-6 py-6 max-w-sm w-full text-center animate-[slideDown_0.3s_ease-out]"
             style={{ border: '1px solid #FDE68A' }}>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#FEF3C7' }}>
-                <AlertTriangle className="w-4 h-4" style={{ color: '#D97706' }} />
+            <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: '#FEF3C7' }}>
+              <AlertTriangle className="w-6 h-6" style={{ color: '#D97706' }} />
+            </div>
+            <p className="text-base font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Session about to expire</p>
+            <p className="text-sm mt-1" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+              Your session will expire due to inactivity. Click &ldquo;Continue Session&rdquo; to keep working.
+            </p>
+            <div className="my-4">
+              <div className="text-4xl font-bold tabular-nums" style={{ color: '#D97706', fontFamily: 'var(--font-heading)' }}>
+                {countdown}s
               </div>
-              <div>
-                <p className="text-sm font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Session Expiring Soon</p>
-                <p className="text-xs mt-0.5" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>Your session will expire in 1 minute. Interact to stay active.</p>
+              <div className="mt-2 mx-auto h-1.5 rounded-full overflow-hidden" style={{ background: '#E2E8F0', width: '80%' }}>
+                <div className="h-full rounded-full transition-[width] duration-1000 ease-linear"
+                  style={{ background: '#D97706', width: `${Math.max(0, (countdown / (WARNING_WINDOW_MS / 1000)) * 100)}%` }} />
               </div>
             </div>
-            <div className="mt-3 h-1 rounded-full overflow-hidden" style={{ background: '#E2E8F0' }}>
-              <div className="h-full rounded-full animate-[shrink_60s_linear_forwards]" style={{ background: '#D97706' }} />
+            <div className="flex gap-3 mt-2">
+              <button onClick={continueSession}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition active:scale-[0.98]"
+                style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>
+                Continue Session
+              </button>
+              <button onClick={sessionLogout}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98]"
+                style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)' }}>
+                Logout
+              </button>
             </div>
           </div>
         </div>

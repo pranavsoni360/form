@@ -140,6 +140,35 @@ async def transcript_analyze(payload: dict, db_pool: asyncpg.Pool) -> None:
             if fresh_row and fresh_row["scheduled_callback_at"] is None:
                 await _schedule_callback_from_analysis(db_pool, call_uuid, cb_iso, call)
 
+    # Safety net #2: hot lead but no WhatsApp form. Happens when the customer
+    # says "haan, link bhej do" and hangs up before the agent fires
+    # send_form_link — nothing inside the live call can run any more, and the
+    # transcript webhook's interested flag is False (only tools set it). Gemini
+    # has read the actual transcript here, so its lead_quality is the truth.
+    if (analysis.get("lead_quality") == "hot") and not call.get("form_sent"):
+        fresh = await db_pool.fetchrow(
+            "SELECT form_sent, phone, customer_name, loan_type FROM agent_calls WHERE id = $1",
+            call_uuid,
+        )
+        if fresh and not fresh["form_sent"] and fresh["phone"]:
+            try:
+                from agent.whatsapp import send_whatsapp_form_impl
+                result = await send_whatsapp_form_impl({
+                    "phone": fresh["phone"],
+                    "customer_name": fresh["customer_name"],
+                    "call_id": str(call_uuid),
+                    "loan_type": analysis.get("loan_type") or fresh["loan_type"] or "personal",
+                    "estimated_amount": 0,
+                    "collected_data": {},  # impl merges agent_calls.collected_data from DB
+                })
+                logger.info(
+                    "transcript_analyze: WhatsApp safety net for %s — sent=%s (%s)",
+                    call_uuid, result.get("whatsapp_sent"), result.get("message"),
+                )
+            except Exception as e:
+                # Non-fatal: don't fail (and re-run) the whole analysis job over this.
+                logger.error("transcript_analyze: WhatsApp safety net failed for %s: %s", call_uuid, e)
+
 
 # ============================================================================
 # Stubs — wired in later milestones

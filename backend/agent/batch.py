@@ -1,4 +1,4 @@
-# backend/agent/batch.py
+﻿# backend/agent/batch.py
 import os
 import io
 import secrets
@@ -11,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
+import csv
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from livekit import api
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -20,7 +22,7 @@ from apscheduler.events import EVENT_JOB_ERROR
 from . import state as _state
 from .state import (
     now_ist, now_ist_str, is_within_calling_hours,
-    acquire_batch_lock, release_batch_lock, is_batch_lock_held, is_emergency_stop_active,
+    acquire_batch_lock, release_batch_lock, is_emergency_stop_active,
     set_emergency_stop, cleanup_stuck_calls, _init_system_state,
     _row_to_dict, _rows_to_list, _serialize_call,
     LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
@@ -258,25 +260,6 @@ async def process_batch_run(batch_uuid_str: str = None):
     batch_row = None
     batch_id = None
 
-    # Zombie sweeper: a healthy call can never sit in 'Calling' >30 min (the
-    # agent safety-timeout force-ends at 6 min). Such rows are leftovers from
-    # a crashed dispatcher/agent and used to freeze the ops Start button
-    # forever. Runs before the lock so it heals even while a batch is live.
-    try:
-        res = await _state.db_pool.execute(
-            """UPDATE agent_calls
-                  SET status = 'Failed',
-                      error_message = 'auto-reclaimed: stuck in Calling >30min',
-                      ended_at = NOW(), updated_at = NOW()
-                WHERE status = 'Calling'
-                  AND updated_at < NOW() - INTERVAL '30 minutes'"""
-        )
-        n = int(res.split()[-1]) if res else 0
-        if n:
-            logger.warning(f"Zombie sweeper reclaimed {n} stuck 'Calling' row(s)")
-    except Exception as e:
-        logger.error(f"Zombie sweeper failed (non-fatal): {e}")
-
     if not await acquire_batch_lock():
         logger.warning("Batch already running")
         return
@@ -379,12 +362,107 @@ async def process_batch_run(batch_uuid_str: str = None):
 # BATCH MANAGEMENT ENDPOINTS
 # ============================================================================
 
+def _normalize_phone(raw) -> tuple:
+    """Return (canonical_dialing_phone, digit_count).
+
+    canonical is the +91… form used both for dialing AND as the dedup key, so
+    the same number written as 9876543210 / 919876543210 / 09876543210 collapses
+    to one. digit_count is the raw number of digits (used for the ≥10 validity
+    check). Lenient: a 10-digit national number (after stripping a leading 0 or
+    91) canonicalises to +91<national>; anything else with ≥10 digits is kept
+    as-is; <10 digits is left raw for display in the skipped report.
+    """
+    raw = str(raw or "").strip()
+    if raw.endswith(".0"):  # Excel turns phone cells into floats: 9876543210.0
+        raw = raw[:-2]
+    digits = "".join(filter(str.isdigit, raw))
+    national = digits
+    if len(national) == 11 and national.startswith("0"):
+        national = national[1:]
+    elif len(national) == 12 and national.startswith("91"):
+        national = national[2:]
+    if len(national) == 10:
+        canonical = f"+91{national}"
+    elif len(digits) >= 10:
+        canonical = f"+{digits}"
+    else:
+        canonical = raw
+    return canonical, len(digits)
+
+
+def _preprocess_records(records: list) -> tuple:
+    """Clean a parsed CSV/Excel row list before any call is queued.
+
+    Drops rows in this precedence: missing name → missing number → invalid
+    number (fewer than 10 digits) → duplicate number (same canonical dialing
+    form already seen). Returns (clean_records, report). Each clean record gets
+    `_phone` (canonical) and `_name` (trimmed) attached for the insert loop.
+    Row numbers in the report are 1-based including the header (so the first
+    data row is 2), matching what the operator sees in Excel.
+    """
+    clean: list = []
+    seen: dict = {}
+    dropped = {"missing_name": [], "missing_number": [], "invalid_number": [], "duplicate": []}
+    for idx, r in enumerate(records):
+        row_no = idx + 2
+        name = str(r.get("name", "") or "").strip()
+        raw_phone = str(r.get("phone", "") or "").strip()
+        if raw_phone.endswith(".0"):
+            raw_phone = raw_phone[:-2]
+        entry = {"row": row_no, "name": name, "phone": raw_phone}
+        if not name:
+            dropped["missing_name"].append(entry)
+            continue
+        if not raw_phone:
+            dropped["missing_number"].append(entry)
+            continue
+        canonical, ndigits = _normalize_phone(raw_phone)
+        if ndigits < 10:  # lenient rule: must have at least 10 digits
+            dropped["invalid_number"].append(entry)
+            continue
+        if canonical in seen:
+            dropped["duplicate"].append({**entry, "duplicate_of_row": seen[canonical]})
+            continue
+        seen[canonical] = row_no
+        r["_phone"] = canonical
+        r["_name"] = name
+        clean.append(r)
+    skipped = (
+        [{**x, "reason": "duplicate"} for x in dropped["duplicate"]]
+        + [{**x, "reason": "invalid_number"} for x in dropped["invalid_number"]]
+        + [{**x, "reason": "missing_name"} for x in dropped["missing_name"]]
+        + [{**x, "reason": "missing_number"} for x in dropped["missing_number"]]
+    )
+    report = {
+        "total_rows": len(records),
+        "valid": len(clean),
+        "removed": {
+            "duplicates": len(dropped["duplicate"]),
+            "invalid_numbers": len(dropped["invalid_number"]),
+            "missing_name": len(dropped["missing_name"]),
+            "missing_number": len(dropped["missing_number"]),
+        },
+        "removed_total": sum(len(v) for v in dropped.values()),
+        "skipped": skipped[:200],  # cap the list sent to the UI
+    }
+    return clean, report
+
+
 @router.post("/upload-excel")
 async def upload_excel(
     file: UploadFile = File(...),
     language: str = Query("hindi", description="Agent language"),
     gender: str = Query("male", description="Agent voice gender"),
     agent_type: str = Query("loan_enquiry", description="loan_enquiry | account_opening"),
+    commit: bool = Query(
+        False,
+        description=(
+            "When false (default) the file is parsed + preprocessed and a PREVIEW "
+            "report is returned WITHOUT queuing any calls. When true, the cleaned "
+            "rows are queued and calling starts. The frontend previews first, then "
+            "re-sends the same file with commit=true on operator confirmation."
+        ),
+    ),
     phone_number_id: Optional[str] = Query(
         None,
         description=(
@@ -459,6 +537,35 @@ async def upload_excel(
         if not records:
             raise HTTPException(status_code=400, detail="File is empty")
 
+        # ── Preprocess: dedupe, drop invalid (<10 digits) + rows missing
+        # name/number. Nothing is written or dialed until the operator confirms.
+        clean_records, report = _preprocess_records(records)
+
+        if not commit:
+            # Preview only — no batch row, no calls, no auto-start.
+            return {
+                "status": "preview",
+                "preview": True,
+                "filename": file.filename,
+                **report,
+                "message": (
+                    f"{report['valid']} of {report['total_rows']} rows are ready to call; "
+                    f"{report['removed_total']} will be skipped. Confirm to start."
+                ),
+            }
+
+        if not clean_records:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No valid rows to call after preprocessing — all rows were "
+                    "duplicates, invalid numbers, or missing a name/number."
+                ),
+            )
+
+        # From here we only queue the cleaned rows.
+        records = clean_records
+
         batch_id = f"batch_{secrets.token_hex(8)}_{int(time.time())}"
         upload_time = now_ist()
         bank_id_uuid = uuid.UUID(bank_id) if bank_id else None
@@ -496,16 +603,8 @@ async def upload_excel(
 
         count = 0
         for r in records:
-            raw_phone = str(r.get("phone", "")).strip()
-            if raw_phone.endswith(".0"):
-                raw_phone = raw_phone[:-2]
-            digits = "".join(filter(str.isdigit, raw_phone))
-            if len(digits) == 10:
-                phone = f"+91{digits}"
-            elif len(digits) == 12 and digits.startswith("91"):
-                phone = f"+{digits}"
-            else:
-                phone = raw_phone
+            # Phone was already validated + canonicalised in preprocessing.
+            phone = r.get("_phone") or str(r.get("phone", "")).strip()
 
             call_uuid = uuid.uuid4()
             room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
@@ -525,7 +624,7 @@ async def upload_excel(
                 call_uuid,
                 bank_id_uuid,
                 batch_id,
-                r.get("name", ""),
+                r.get("_name") or r.get("name", ""),
                 phone,
                 r.get("loan_type", "") or None,
                 float(r["loan_amount"]) if r.get("loan_amount") and str(r["loan_amount"]).strip() else None,
@@ -561,10 +660,11 @@ async def upload_excel(
             "batch_uuid": str(batch_uuid),
             "inserted_count": count,
             "message": (
-                f"Uploaded {count} records. Calling started!" if auto_calling
-                else f"Uploaded {count} records. Calls will start at {CALL_START_HOUR} AM IST."
+                f"Queued {count} clean records ({report['removed_total']} skipped). Calling started!" if auto_calling
+                else f"Queued {count} clean records ({report['removed_total']} skipped). Calls will start at {CALL_START_HOUR} AM IST."
             ),
             "auto_calling": auto_calling,
+            **report,
             "calling_hours": {"active": is_within_calling_hours(), "window": f"{CALL_START_HOUR}AM - {CALL_END_HOUR % 24 or 12}AM IST"},
         }
     except HTTPException:
@@ -596,16 +696,6 @@ async def trigger_batch(
             status_code=403,
             detail=f"Calling not allowed. Active hours: {CALL_START_HOUR}AM-{CALL_END_HOUR % 24 or 12}AM IST. "
                    f"Current: {now_ist().strftime('%I:%M %p IST')}",
-        )
-
-    # Explicit 409 while a dispatcher is running. Without this the second
-    # start silently no-ops on the batch lock in the background task and the
-    # operator never learns why nothing happened.
-    if is_batch_lock_held():
-        raise HTTPException(
-            status_code=409,
-            detail="A batch is already running — wait for it to finish "
-                   "(or use Emergency stop to halt it first).",
         )
 
     # Clear emergency stop first (operator is explicitly starting)
@@ -676,15 +766,6 @@ async def batch_status(
         )
 
     pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
-    # Split "will dial right now" from "parked for later": scheduled callbacks
-    # can sit for hours and must NOT freeze the Start button. Rows stuck in
-    # 'Calling' for >30 min are zombies (agent safety-timeout ends calls at
-    # 6 min) — a crashed dispatcher left them; exclude them from dialable so
-    # they can't freeze the UI either (the sweeper reclaims them separately).
-    dialable_count = await _count(
-        " AND (status = 'Pending' OR (status = 'Calling' AND updated_at > NOW() - INTERVAL '30 minutes'))"
-    )
-    callbacks_due_count = await _count(" AND status IN ('Scheduled', 'Called - Callback Requested')")
     active_count = await _count(" AND status = 'Calling'")
     failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
@@ -693,14 +774,8 @@ async def batch_status(
     return {
         "status": "success",
         "is_complete": pending_count == 0,                  # boolean kept under a non-clashing key
-        "message": (
-            "All calls completed" if pending_count == 0
-            else f"Idle — {callbacks_due_count} callback(s) scheduled for later" if dialable_count == 0
-            else f"{dialable_count} calls to dial"
-        ),
+        "message": "All calls completed" if pending_count == 0 else f"{pending_count} calls remaining",
         "pending": pending_count,
-        "dialable": dialable_count,          # dials NOW (Pending + live Calling) — drives the Start button
-        "callbacks_due": callbacks_due_count,  # parked for later; never freezes the button
         "active_calls": active_count,
         "failed": failed_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
@@ -822,12 +897,90 @@ async def list_uploads():
 
 @router.get("/upload/{batch_id}")
 async def get_upload_detail(batch_id: str):
-    """Get calls for a specific batch."""
+    """Get calls for a specific batch.
+
+    The frontend passes agent_batches.id (a UUID). agent_calls.batch_id stores
+    the string like 'batch_abc123_...'. Resolve via agent_batches when a UUID is given.
+    """
+    call_batch_id = batch_id
+    try:
+        batch_uuid = uuid.UUID(batch_id)
+        row = await _state.db_pool.fetchrow(
+            "SELECT batch_id FROM agent_batches WHERE id = $1", batch_uuid
+        )
+        if row and row["batch_id"]:
+            call_batch_id = row["batch_id"]
+    except ValueError:
+        pass  # already a string batch_id
+
     rows = await _state.db_pool.fetch(
-        "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, created_at FROM agent_calls WHERE batch_id = $1 ORDER BY created_at DESC",
-        batch_id,
+        "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, form_status, created_at"
+        " FROM agent_calls WHERE batch_id = $1 ORDER BY created_at DESC LIMIT 200",
+        call_batch_id,
     )
-    return {"calls": _rows_to_list(rows), "batch_id": batch_id, "total": len(rows)}
+    return {"calls": _rows_to_list(rows), "batch_id": call_batch_id, "total": len(rows)}
+
+@router.get("/upload/{batch_id}/download")
+async def download_batch_csv(batch_id: str):
+    """Stream a CSV of all calls in the batch for download."""
+    # Resolve UUID → string batch_id used in agent_calls
+    call_batch_id = batch_id
+    batch_filename = batch_id[:8]
+    try:
+        batch_uuid = uuid.UUID(batch_id)
+        row = await _state.db_pool.fetchrow(
+            "SELECT batch_id, filename FROM agent_batches WHERE id = $1", batch_uuid
+        )
+        if row:
+            if row["batch_id"]:
+                call_batch_id = row["batch_id"]
+            if row["filename"]:
+                batch_filename = row["filename"].rsplit(".", 1)[0]
+    except ValueError:
+        pass
+
+    rows = await _state.db_pool.fetch(
+        """SELECT customer_name, phone, status, call_duration, interested,
+                  form_sent, form_status, form_link, started_at, ended_at, loan_type, loan_amount
+           FROM agent_calls WHERE batch_id = $1 ORDER BY created_at ASC""",
+        call_batch_id,
+    )
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "Customer Name", "Phone", "Loan Type", "Loan Amount",
+            "Status", "Duration (s)", "Interested", "Form Sent", "Form Status", "Form Link",
+            "Call Started", "Call Ended",
+        ])
+        yield buf.getvalue()
+        for r in rows:
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow([
+                r["customer_name"] or "",
+                r["phone"] or "",
+                r["loan_type"] or "",
+                r["loan_amount"] or "",
+                r["status"] or "",
+                r["call_duration"] or 0,
+                "Yes" if r["interested"] else "No",
+                "Yes" if r["form_sent"] else "No",
+                r["form_status"] or "not_sent",
+                r["form_link"] or "",
+                r["started_at"].isoformat() if r["started_at"] else "",
+                r["ended_at"].isoformat() if r["ended_at"] else "",
+            ])
+            yield buf.getvalue()
+
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in batch_filename)
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_results.csv"'},
+    )
+
 
 @router.get("/recent_calls")
 async def recent_calls(limit: int = Query(10, ge=1, le=50)):

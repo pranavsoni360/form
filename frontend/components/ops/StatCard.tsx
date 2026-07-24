@@ -16,17 +16,34 @@ export function StatCard({
   icon: Icon,
   tone = "info",
   hint,
+  onClick,
+  active = false,
 }: {
   label: string;
   value: number | string;
   icon: React.ComponentType<{ className?: string }>;
   tone?: StatTone;
   hint?: string;
+  onClick?: () => void;
+  active?: boolean;
 }) {
   const t = TONE[tone];
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-card transition-all hover:-translate-y-0.5 hover:shadow-lg border border-border"
-      style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+    <div
+      className={[
+        "relative overflow-hidden rounded-2xl bg-card transition-all border",
+        onClick ? "cursor-pointer hover:-translate-y-0.5 hover:shadow-lg" : "",
+        active ? "ring-2 ring-offset-1" : "border-border",
+      ].join(" ")}
+      style={{
+        boxShadow: active ? `0 0 0 2px ${t.strip}` : '0 1px 4px rgba(0,0,0,0.05)',
+        borderColor: active ? t.strip : undefined,
+      }}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
+    >
       {/* Accent strip */}
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl" style={{ background: t.strip }} />
 

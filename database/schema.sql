@@ -1,4 +1,4 @@
-﻿-- Bank Loan Form System - PostgreSQL Schema
+-- Bank Loan Form System - PostgreSQL Schema
 -- Production-grade with encryption, audit trails, and compliance
 
 -- Enable required extensions

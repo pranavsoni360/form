@@ -1,8 +1,8 @@
-'use client';
+﻿'use client';
 import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
@@ -73,6 +73,9 @@ export default function LoanApplication() {
   const [nameMatchError, setNameMatchError] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
   const [nameMatchDetail, setNameMatchDetail] = useState<{source: string; callName: string; verifiedName: string; score: number} | null>(null);
   const [nameMatchLocked, setNameMatchLocked] = useState(false);
+  const [panMismatchWarning, setPanMismatchWarning] = useState<{callName: string; verifiedName: string; attemptsRemaining: number} | null>(null);
+  const [pincodeLookingUp, setPincodeLookingUp] = useState<{ current: boolean; permanent: boolean }>({ current: false, permanent: false });
+  const [pincodeValid, setPincodeValid] = useState<{ current: boolean; permanent: boolean }>({ current: true, permanent: true });
 
   const handleVerifyPAN = async () => {
     const pan = formData.pan_number || '';
@@ -84,6 +87,13 @@ export default function LoanApplication() {
     try {
       const session = sessionStorage.getItem('loan_session');
       const res = await fetch(`${API_URL}/api/verify-pan-session?session_token=${session}&pan_number=${pan}`, { method: 'POST' });
+      if (res.status === 423) {
+        // Already locked by a previous session
+        setNameMatchLocked(true);
+        setPanMismatchWarning(null);
+        setErrors((p: any) => ({ ...p, pan_number: '' }));
+        return;
+      }
       if (!res.ok) throw new Error('Verification failed');
       const data = await res.json();
       onChange('pan_verified', true);
@@ -114,10 +124,26 @@ export default function LoanApplication() {
         if (callName && data.name) {
           const score = calcNameSimilarity(callName, data.name);
           if (score < 85) {
-            const err = { source: 'PAN Card', callName, verifiedName: data.name, score };
-            setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+            // Report mismatch to backend — it will track attempts and lock if needed
+            const mismatchRes = await fetch(`${API_URL}/api/pan-mismatch?session_token=${session}`, { method: 'POST' });
+            const mismatchData = mismatchRes.ok ? await mismatchRes.json() : { locked: true, attempts_remaining: 0 };
+            // Reset pan_verified in local state so the field is editable again
+            onChange('pan_verified', false);
+            if (mismatchData.locked) {
+              // Max retries exceeded — hard lock
+              const err = { source: 'PAN Card', callName, verifiedName: data.name, score };
+              setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+              setPanMismatchWarning(null);
+            } else {
+              // First mismatch — show retryable warning, keep field editable
+              setPanMismatchWarning({ callName, verifiedName: data.name, attemptsRemaining: mismatchData.attempts_remaining });
+              setNameMatchLocked(false);
+              setNameMatchError(null);
+            }
+            return;
           } else {
             setNameMatchError(null); setNameMatchDetail(null); setNameMatchLocked(false);
+            setPanMismatchWarning(null);
           }
         }
       }
@@ -174,6 +200,9 @@ export default function LoanApplication() {
   const [agreed, setAgreed] = useState(false);
   const [errors, setErrors] = useState<any>({});
   const [inactivityWarning, setInactivityWarning] = useState(false);
+  // Loan amount cap (₹1 lakh) — shows a small popup above the field when exceeded
+  const [loanCapWarn, setLoanCapWarn] = useState(false);
+  const loanCapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   let inactivityTimer: any = null;
   let warningTimer: any = null;
 
@@ -352,6 +381,51 @@ export default function LoanApplication() {
     } catch {}
   };
 
+  const lookupPincode = async (pincode: string, type: 'current' | 'permanent') => {
+    if (pincode.length !== 6) return;
+    setPincodeLookingUp(p => ({ ...p, [type]: true }));
+    setPincodeValid(p => ({ ...p, [type]: false }));
+    setErrors((p: any) => ({ ...p, [`${type}_pincode`]: '' }));
+    try {
+      const res = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
+      const data = await res.json();
+      if (!data?.[0] || data[0].Status !== 'Success' || !data[0].PostOffice?.length) {
+        setErrors((p: any) => ({ ...p, [`${type}_pincode`]: 'Invalid pincode — no location found' }));
+        return;
+      }
+      const po = data[0].PostOffice[0];
+      const stateName: string = (po.State || '').toLowerCase();
+      const districtName: string = (po.District || '').toLowerCase();
+
+      const states = codeLists[5] || [];
+      const matchedState = states.find(s =>
+        s.code_desc.toLowerCase() === stateName ||
+        s.code_desc.toLowerCase().includes(stateName) ||
+        stateName.includes(s.code_desc.toLowerCase())
+      );
+      if (!matchedState) { setPincodeValid(p => ({ ...p, [type]: true })); return; }
+
+      onChange(`${type}_state_code`, matchedState.code_mst_id);
+      onChange(`${type}_city_code`, '');
+      const cityRes = await getCodeList(6, matchedState.code_mst_id);
+      const cities: { code_mst_id: string; code_desc: string }[] = cityRes?.data || [];
+      if (type === 'current') setCityOptions(cities);
+      else setPermCityOptions(cities);
+
+      const matchedCity = cities.find(c =>
+        c.code_desc.toLowerCase() === districtName ||
+        c.code_desc.toLowerCase().includes(districtName) ||
+        districtName.includes(c.code_desc.toLowerCase())
+      );
+      if (matchedCity) onChange(`${type}_city_code`, matchedCity.code_mst_id);
+      setPincodeValid(p => ({ ...p, [type]: true }));
+    } catch {
+      setPincodeValid(p => ({ ...p, [type]: true })); // network error — don't block user
+    } finally {
+      setPincodeLookingUp(p => ({ ...p, [type]: false }));
+    }
+  };
+
   // Helper: resolve code_desc from code_mst_id for review display
   const codeLabel = (sqlMstId: number, code: string) => {
     if (!code) return '—';
@@ -381,9 +455,16 @@ export default function LoanApplication() {
         setAppData(d);
         setFormData(d);
         const savedStep = d.current_step || 1; setCurrentStep(savedStep); setHighestStep(Math.max(savedStep, d.highest_step || 1));
-        // On-load name match check for already-verified applications
+        // On-load: restore PAN mismatch lock/warning state from DB
         const callName = d.customer_name || '';
-        if (callName) {
+        if (d.pan_mismatch_locked) {
+          // Hard lock persisted in DB — restore immediately
+          const err = { source: 'PAN Card', callName, verifiedName: d.pan_name || '', score: 0 };
+          setNameMatchError(err); setNameMatchDetail(err); setNameMatchLocked(true);
+        } else if ((d.pan_verification_attempts || 0) > 0) {
+          // Had a mismatch but not yet locked — restore the retryable warning
+          setPanMismatchWarning({ callName, verifiedName: d.pan_name || '', attemptsRemaining: Math.max(0, 2 - (d.pan_verification_attempts || 0)) });
+        } else if (callName) {
           if (d.pan_verified && d.pan_name) {
             const score = calcNameSimilarity(callName, d.pan_name);
             if (score < 85) {
@@ -530,7 +611,17 @@ export default function LoanApplication() {
     return Object.keys(e).length === 0;
   };
 
-  const step1Valid = () => validate({ pan_number: 'Required', full_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+  const step1Valid = () => {
+    if (!formData.pan_verified) {
+      setErrors((p: any) => ({ ...p, pan_number: 'Please verify your PAN before proceeding' }));
+      return false;
+    }
+    if (!formData.aadhaar_verified) {
+      setErrors((p: any) => ({ ...p, aadhaar_number: 'Please complete Aadhaar verification before proceeding' }));
+      return false;
+    }
+    return validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+  };
   const step2Valid = () => {
     // Permanent address is always required (Aadhaar-sourced). Current address
     // is required only when the user doesn't check "Same as permanent".
@@ -543,23 +634,57 @@ export default function LoanApplication() {
     if (ok && formData.permanent_pincode && !/^\d{6}$/.test(formData.permanent_pincode)) {
       setErrors((p: any) => ({ ...p, permanent_pincode: 'Enter valid 6-digit pincode' })); return false;
     }
+    if (ok && !pincodeValid.permanent) {
+      setErrors((p: any) => ({ ...p, permanent_pincode: 'Invalid pincode — no location found' })); return false;
+    }
     if (ok && !formData.same_as_current && formData.current_pincode && !/^\d{6}$/.test(formData.current_pincode)) {
       setErrors((p: any) => ({ ...p, current_pincode: 'Enter valid 6-digit pincode' })); return false;
+    }
+    if (ok && !formData.same_as_current && !pincodeValid.current) {
+      setErrors((p: any) => ({ ...p, current_pincode: 'Invalid pincode — no location found' })); return false;
     }
     return ok;
   };
   const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+
+  // Product-wise loan amount limits (max also enforced live by the ₹1 lakh cap).
+  const LOAN_LIMITS: Record<string, { min: number; max: number; label: string }> = {
+    personal: { min: 20000, max: 100000, label: 'Personal Loan' },
+    consumer_durable: { min: 20000, max: 100000, label: 'Consumer Durable Loan' },
+  };
+  // Returns a validation message if the entered loan amount is outside the
+  // selected product's permitted range, else '' (empties are left to the
+  // Required check). Used both live (onBlur) and on Continue (step4Valid).
+  const loanAmountError = (): string => {
+    const key = (formData.consumer_loan_type || 'personal') === 'consumer_durable' ? 'consumer_durable' : 'personal';
+    const { min, max, label } = LOAN_LIMITS[key];
+    const raw = formData.loan_amount_requested;
+    if (raw === undefined || raw === null || String(raw).trim() === '') return '';
+    const amt = parseFloat(raw);
+    if (isNaN(amt)) return 'Enter a valid loan amount.';
+    if (amt < min || amt > max) {
+      return `Loan Amount must be between ₹${min.toLocaleString('en-IN')} and ₹${max.toLocaleString('en-IN')} for the selected ${label}.`;
+    }
+    return '';
+  };
+
   const step4Valid = () => {
-    const base = validate({ loan_amount_requested: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' });
+    const isCD = (formData.consumer_loan_type || 'personal') === 'consumer_durable';
+    // Single validate() call so its setErrors doesn't wipe the merged errors below.
+    const reqFields: any = { loan_amount_requested: 'Required', monthly_gross_income: 'Required', monthly_net_income: 'Required' };
+    if (isCD) Object.assign(reqFields, { product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
+    const base = validate(reqFields);
     const loanAmt = parseFloat(formData.loan_amount_requested || '0');
     const guarantorValid = loanAmt > 100000 ? validate({ guarantor_name: 'Required', guarantor_phone: 'Required' }) : true;
+    const amtErr = loanAmountError();
     const criminalValid = formData.criminal_records === true;
-    if (!criminalValid) setErrors((p: any) => ({ ...p, criminal_records: 'You must confirm you have no pending criminal cases to proceed' }));
-    if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
-      const extra = validate({ product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
-      return base && extra && guarantorValid && criminalValid;
-    }
-    return base && guarantorValid && criminalValid;
+    // Merge range + criminal errors on top of the required-field errors.
+    setErrors((p: any) => ({
+      ...p,
+      ...(amtErr ? { loan_amount_requested: amtErr } : {}),
+      ...(!criminalValid ? { criminal_records: 'You must confirm you have no pending criminal cases to proceed' } : {}),
+    }));
+    return base && !amtErr && guarantorValid && criminalValid;
   };
 
   const handleNext = () => {
@@ -795,12 +920,31 @@ export default function LoanApplication() {
           {currentStep === 1 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="KYC" color="#2563EB" title="KYC & Personal Details" />
+              {/* PAN mismatch — retryable warning (first failure) */}
+              {!nameMatchLocked && panMismatchWarning && (
+                <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: '#FFFBEB', border: '1px solid #FCD34D' }}>
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#D97706' }} />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>PAN verification failed — name mismatch</p>
+                      <p className="text-xs mt-0.5" style={{ color: '#B45309', fontFamily: 'var(--font-body)' }}>
+                        The name on your PAN card (<strong>{panMismatchWarning.verifiedName}</strong>) does not match the name on file (<strong>{panMismatchWarning.callName}</strong>).
+                        Please verify the PAN number entered and try again.
+                      </p>
+                      <p className="text-xs mt-1 font-medium" style={{ color: '#D97706', fontFamily: 'var(--font-body)' }}>
+                        {panMismatchWarning.attemptsRemaining} retry attempt{panMismatchWarning.attemptsRemaining !== 1 ? 's' : ''} remaining.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* PAN mismatch — hard lock (max retries exceeded) */}
               {nameMatchLocked && (
                 <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
                   <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: '#DC2626' }} />
                   <div className="flex-1">
-                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>Form locked — name mismatch</p>
-                    <p className="text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Contact your bank branch to resolve the identity mismatch before proceeding.</p>
+                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>Application locked — identity verification failed</p>
+                    <p className="text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Identity verification failed after maximum retry attempts. Please contact your bank branch to resolve this.</p>
                   </div>
                   <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs underline whitespace-nowrap" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>View details</button>
                 </div>
@@ -823,10 +967,10 @@ export default function LoanApplication() {
                         }
                         onChange={e => onChange('pan_number', e.target.value.toUpperCase())}
                         onClick={() => { if (!formData.pan_verified && !showPan) setShowPan(true); }}
-                        disabled={formData.pan_verified}
+                        disabled={formData.pan_verified || nameMatchLocked}
                         readOnly={false}
                         className={`w-full pr-16 ${formData.pan_verified ? '' : 'cursor-text'} ${inp(errors.pan_number)}`}
-                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? '#F0FDF4' : undefined, borderColor: formData.pan_verified ? '#059669' : undefined }}
+                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? '#F0FDF4' : nameMatchLocked ? '#FEF2F2' : undefined, borderColor: formData.pan_verified ? '#059669' : nameMatchLocked ? '#FECACA' : panMismatchWarning ? '#FCD34D' : undefined }}
                         placeholder="ABCDE1234F" maxLength={10} />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         {!formData.pan_verified && (
@@ -843,15 +987,15 @@ export default function LoanApplication() {
                         )}
                       </div>
                     </div>
-                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying}
+                    <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying || nameMatchLocked}
                       className="px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition flex items-center justify-center gap-1 sm:gap-2 min-w-[76px] sm:min-w-[100px] disabled:opacity-70"
                       style={{
-                        background: formData.pan_verified ? '#059669' : '#1A1A2E',
+                        background: formData.pan_verified ? '#059669' : nameMatchLocked ? '#DC2626' : '#1A1A2E',
                         color: '#fff',
                         fontFamily: 'var(--font-heading)',
-                        cursor: formData.pan_verified ? 'default' : 'pointer',
+                        cursor: (formData.pan_verified || nameMatchLocked) ? 'default' : 'pointer',
                       }}>
-                      {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? '✓ Verified' : 'Verify'}
+                      {panVerifying ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Verifying...</span></> : formData.pan_verified ? '✓ Verified' : nameMatchLocked ? '🔒 Locked' : 'Verify'}
                     </button>
                   </div>
                   {formData.pan_verified && <p className="text-[10px] sm:text-xs text-green-600 mt-1 flex items-center gap-1"><ShieldCheck className="w-3 h-3 flex-shrink-0" /><span>PAN verified{formData.pan_name ? ` — ${formData.pan_name}` : ''}{formData.pan_verification_timestamp ? ` on ${new Date(formData.pan_verification_timestamp).toLocaleString()}` : ''}</span></p>}
@@ -864,6 +1008,12 @@ export default function LoanApplication() {
                         <span>Verified via DigiLocker (XXXX XXXX {formData.aadhaar_last4})</span>
                       </p>
                       {formData.aadhaar_verification_timestamp && <p className="text-[10px] sm:text-xs text-green-600 dark:text-green-400 mt-1 ml-6">Verified on {new Date(formData.aadhaar_verification_timestamp).toLocaleString()}</p>}
+                    </div>
+                  ) : !formData.pan_verified ? (
+                    <div className="w-full rounded-xl flex items-center justify-center gap-3 opacity-60 cursor-not-allowed"
+                      style={{ background: '#E2E8F0', color: '#64748B', fontFamily: 'var(--font-heading)', height: '52px' }}>
+                      <Lock className="w-4 h-4" />
+                      <span className="text-sm font-semibold">Verify PAN first to unlock Aadhaar</span>
                     </div>
                   ) : (
                     <button type="button" onClick={handleVerifyAadhaar} disabled={aadhaarVerifying}
@@ -959,7 +1109,10 @@ export default function LoanApplication() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <F label="Pincode" required error={errors.current_pincode}>
-                    <input type="text" value={formData.current_pincode || ''} onChange={e => onChange('current_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.current_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                    <div className="relative">
+                      <input type="text" value={formData.current_pincode || ''} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); onChange('current_pincode', v); if (v.length === 6) lookupPincode(v, 'current'); }} className={inp(errors.current_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                      {pincodeLookingUp.current && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-blue-500" />}
+                    </div>
                   </F>
                   <F label="State" required error={errors.current_state_code}>
                     <select value={formData.current_state_code || ''} onChange={e => { onChange('current_state_code', e.target.value); onChange('current_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'current'); else setCityOptions([]); }} className={inp(errors.current_state_code)}>
@@ -1000,7 +1153,10 @@ export default function LoanApplication() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <F label="Pincode" required error={errors.permanent_pincode} fieldName="permanent_pincode" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.permanent_pincode || ''} onChange={e => onChange('permanent_pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} className={inp(errors.permanent_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                    <div className="relative">
+                      <input type="text" value={formData.permanent_pincode || ''} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); onChange('permanent_pincode', v); if (v.length === 6) lookupPincode(v, 'permanent'); }} className={inp(errors.permanent_pincode)} placeholder="6-digit pincode" maxLength={6} inputMode="numeric" />
+                      {pincodeLookingUp.permanent && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-blue-500" />}
+                    </div>
                   </F>
                   <F label="State" required error={errors.permanent_state_code} fieldName="permanent_state_code" fieldSources={formData.field_sources}>
                     <select value={formData.permanent_state_code || ''} onChange={e => { onChange('permanent_state_code', e.target.value); onChange('permanent_city_code', ''); if (e.target.value) fetchCities(e.target.value, 'permanent'); else setPermCityOptions([]); }} className={inp(errors.permanent_state_code)}>
@@ -1238,7 +1394,37 @@ export default function LoanApplication() {
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Loan Amount (₹)" required error={errors.loan_amount_requested} fieldName="loan_amount_requested" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.loan_amount_requested || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
+                    <div className="relative">
+                      {loanCapWarn && (
+                        <div className="absolute bottom-full left-0 mb-1.5 z-50 animate-[fadeIn_0.15s]">
+                          <div className="relative bg-red-600 text-white text-[11px] font-medium px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+                            Maximum limit is ₹1,00,000 (1 lakh)
+                            <span className="absolute left-4 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-red-600" />
+                          </div>
+                        </div>
+                      )}
+                      <input
+                        type="number"
+                        max={100000}
+                        value={formData.loan_amount_requested || ''}
+                        onChange={e => {
+                          const raw = e.target.value.slice(0, 16);
+                          const num = parseFloat(raw);
+                          if (!isNaN(num) && num > 100000) {
+                            onChange('loan_amount_requested', '100000');
+                            setLoanCapWarn(true);
+                            if (loanCapTimer.current) clearTimeout(loanCapTimer.current);
+                            loanCapTimer.current = setTimeout(() => setLoanCapWarn(false), 3000);
+                          } else {
+                            onChange('loan_amount_requested', raw);
+                            setLoanCapWarn(false);
+                          }
+                        }}
+                        onBlur={() => setErrors((p: any) => ({ ...p, loan_amount_requested: loanAmountError() }))}
+                        className={inp(errors.loan_amount_requested)}
+                        placeholder="₹20,000 – ₹1,00,000"
+                      />
+                    </div>
                   </F>
                   <F label="Repayment Period (Years)">
                     <select value={formData.repayment_period_years || ''} onChange={e => onChange('repayment_period_years', e.target.value)} className={inp('')}>
@@ -1262,15 +1448,15 @@ export default function LoanApplication() {
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income} fieldName="monthly_gross_income" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
+                    <input type="number" max={9999999999999} value={formData.monthly_gross_income || ''} onChange={e => { const v = e.target.value.slice(0, 16); setFormData((p: any) => ({ ...p, monthly_gross_income: v, monthly_net_income: String(Math.max(0, (parseFloat(v) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
                   </F>
                   <F label="Monthly Deductions (₹)">
-                    <input type="number" value={formData.monthly_deductions || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_deductions: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(v) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp('')} placeholder="Tax, PF etc." />
+                    <input type="number" max={9999999999999} value={formData.monthly_deductions || ''} onChange={e => { const v = e.target.value.slice(0, 16); setFormData((p: any) => ({ ...p, monthly_deductions: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(v) || 0) - (parseFloat(p.monthly_emi_existing) || 0))) })); }} className={inp('')} placeholder="Tax, PF etc." />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <F label="Existing Monthly EMIs (₹)" fieldName="monthly_emi_existing" fieldSources={formData.field_sources}>
-                    <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => { const v = e.target.value; setFormData((p: any) => ({ ...p, monthly_emi_existing: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(v) || 0))) })); }} className={inp('')} placeholder="0 if none" />
+                    <input type="number" max={9999999999999} value={formData.monthly_emi_existing || ''} onChange={e => { const v = e.target.value.slice(0, 16); setFormData((p: any) => ({ ...p, monthly_emi_existing: v, monthly_net_income: String(Math.max(0, (parseFloat(p.monthly_gross_income) || 0) - (parseFloat(p.monthly_deductions) || 0) - (parseFloat(v) || 0))) })); }} className={inp('')} placeholder="0 if none" />
                   </F>
                   <F label="Monthly Net Income (₹)" required error={errors.monthly_net_income}>
                     <input type="number" value={formData.monthly_net_income || ''} readOnly className={`${inp(errors.monthly_net_income)} bg-gray-100 dark:bg-gray-800 cursor-not-allowed`} placeholder="Auto: Gross − Deductions − EMIs" title="Auto-calculated from Gross − Deductions − Existing EMIs" />

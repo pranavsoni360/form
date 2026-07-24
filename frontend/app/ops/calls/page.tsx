@@ -177,20 +177,23 @@ export default function OpsCallsPage() {
     });
   }, [query.data, search]);
 
-  // KPI strip pulled from the current page (lightweight; full counts are
-  // available via /api/agent/dashboard-stats but for this page the page-
-  // local view is enough and keeps the strip honest about what's visible).
-  const kpis = React.useMemo(() => {
-    const r = query.data?.calls ?? [];
-    let interested = 0, formSent = 0, failed = 0;
-    for (const c of r) {
-      if (c.customer_interested ?? c.interested) interested += 1;
-      if (c.whatsapp_form_sent ?? c.form_sent) formSent += 1;
-      const st = c.status || c.call_status || "";
-      if (st === "Failed" || st === "Invalid Phone") failed += 1;
-    }
-    return { interested, formSent, failed };
-  }, [query.data]);
+  // Global KPI counts — lightweight count-only queries (page_size=1, just read `total`)
+  const fetchCount = async (params: Record<string, string>) => {
+    const p = new URLSearchParams({ page_size: "1", ...params });
+    const res = await fetch(`${API_URL}/api/agent/calls?${p}`, { credentials: "include" });
+    if (!res.ok) return 0;
+    return ((await res.json()) as CallsResponse).total ?? 0;
+  };
+  const interestedCount = useQuery<number>({ queryKey: ["kpi-interested"], queryFn: () => fetchCount({ status: "Called - Interested" }), refetchInterval: 30_000 });
+  const formSentCount   = useQuery<number>({ queryKey: ["kpi-form-sent"],  queryFn: () => fetchCount({ form_sent: "yes" }),                refetchInterval: 30_000 });
+  const failedCount     = useQuery<number>({ queryKey: ["kpi-failed"],     queryFn: () => fetchCount({ status: "Failed" }),                refetchInterval: 30_000 });
+
+  const handleCardClick = (type: "interested" | "form_sent" | "failed") => {
+    setStatusFilter("all"); setCategoryFilter("all"); setLeadFilter("all"); setFormFilter("all"); setDateFilter(""); setSearch("");
+    if (type === "interested") setStatusFilter("Called - Interested");
+    if (type === "form_sent")  setFormFilter("yes");
+    if (type === "failed")     setStatusFilter("Failed");
+  };
 
   /* ─── Columns ─────────────────────────────────────────────────────── */
 
@@ -349,32 +352,38 @@ export default function OpsCallsPage() {
         {/* KPI strip */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard
-            label="ON PAGE"
-            value={(query.data?.calls ?? []).length}
+            label="TOTAL CALLS"
+            value={total.toLocaleString()}
             icon={PhoneCall}
             tone="info"
-            hint={`of ${total.toLocaleString()} total`}
+            hint="all records"
           />
           <StatCard
             label="INTERESTED"
-            value={kpis.interested}
+            value={interestedCount.data ?? "—"}
             icon={PhoneCall}
             tone="success"
-            hint="customer_interested = true"
+            hint="Click to view records"
+            onClick={() => handleCardClick("interested")}
+            active={statusFilter === "Called - Interested"}
           />
           <StatCard
             label="FORM SENT"
-            value={kpis.formSent}
+            value={formSentCount.data ?? "—"}
             icon={PhoneCall}
             tone="info"
-            hint="whatsapp delivered"
+            hint="Click to view records"
+            onClick={() => handleCardClick("form_sent")}
+            active={formFilter === "yes"}
           />
           <StatCard
             label="FAILED"
-            value={kpis.failed}
+            value={failedCount.data ?? "—"}
             icon={PhoneCall}
-            tone={kpis.failed > 0 ? "danger" : "neutral"}
-            hint="Failed + Invalid Phone"
+            tone={(failedCount.data ?? 0) > 0 ? "danger" : "neutral"}
+            hint="Click to view records"
+            onClick={() => handleCardClick("failed")}
+            active={statusFilter === "Failed"}
           />
         </div>
 

@@ -1,4 +1,4 @@
-# main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
+﻿# main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
 from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -1101,6 +1101,13 @@ DECIMAL_COLUMNS = {
 }
 INTEGER_COLUMNS = {"repayment_period_years", "current_step", "highest_step"}
 
+# DB range guards. The DECIMAL columns above are DECIMAL(15,2) => max magnitude
+# 9_999_999_999_999.99; the INTEGER columns are int4 => max 2_147_483_647.
+# Clamping here prevents a fat-fingered / pasted oversized number from reaching
+# Postgres and raising an unhandled NumericValueOutOfRangeError (500) on autosave.
+DECIMAL_MAX = 9_999_999_999_999.99
+INT4_MAX = 2_147_483_647
+
 def _coerce_value(key: str, val):
     """Convert frontend string values to proper Python types for asyncpg."""
     if val is None or val == '':
@@ -1120,14 +1127,26 @@ def _coerce_value(key: str, val):
         return bool(val)
     if key in DECIMAL_COLUMNS:
         try:
-            return float(val)
+            num = float(val)
         except (ValueError, TypeError):
             return None
+        if num != num or num in (float('inf'), float('-inf')):  # NaN/inf
+            return None
+        if abs(num) > DECIMAL_MAX:
+            clamped = DECIMAL_MAX if num > 0 else -DECIMAL_MAX
+            print(f"[autosave] {key}={num} exceeds DECIMAL(15,2) range; clamped to {clamped}")
+            return clamped
+        return num
     if key in INTEGER_COLUMNS:
         try:
-            return int(val)
+            num = int(val)
         except (ValueError, TypeError):
             return None
+        if abs(num) > INT4_MAX:
+            clamped = INT4_MAX if num > 0 else -INT4_MAX
+            print(f"[autosave] {key}={num} exceeds int4 range; clamped to {clamped}")
+            return clamped
+        return num
     return val
 
 # ============================================
@@ -1160,6 +1179,47 @@ AUTOSAVE_COLUMNS = {
     # Guarantor fields (v16)
     "guarantor_name", "guarantor_phone",
 }
+
+# ============================================
+# LOAN AMOUNT LIMITS (server-side guard)
+# ============================================
+# Mirrors the client-side product-wise validation so an out-of-range amount
+# cannot be submitted by bypassing the UI. Both products share the same band
+# for now; kept as a dict so per-product limits can diverge later.
+LOAN_AMOUNT_LIMITS = {
+    "personal": {"min": 20000, "max": 100000, "label": "Personal Loan"},
+    "consumer_durable": {"min": 20000, "max": 100000, "label": "Consumer Durable Loan"},
+}
+
+def _inr(n: int) -> str:
+    """Format an integer with Indian digit grouping (e.g. 100000 -> '1,00,000')
+    so the server message matches the frontend's toLocaleString('en-IN')."""
+    s = str(int(n))
+    if len(s) <= 3:
+        return s
+    head, tail = s[:-3], s[-3:]
+    head = re.sub(r"(?<=\d)(?=(\d\d)+$)", ",", head)
+    return f"{head},{tail}"
+
+def _validate_loan_amount(app: dict) -> None:
+    """Raise HTTP 400 if the application's loan amount is outside the selected
+    product's permitted range. `app` may be an asyncpg Record or a dict — both
+    support .get()."""
+    key = "consumer_durable" if (app.get("consumer_loan_type") or "personal") == "consumer_durable" else "personal"
+    limits = LOAN_AMOUNT_LIMITS[key]
+    raw = app.get("loan_amount_requested")
+    if raw is None or str(raw).strip() == "":
+        raise HTTPException(status_code=400, detail="Loan Amount is required.")
+    try:
+        amt = float(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Enter a valid loan amount.")
+    lo, hi = limits["min"], limits["max"]
+    if amt < lo or amt > hi:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loan Amount must be between ₹{_inr(lo)} and ₹{_inr(hi)} for the selected {limits['label']}.",
+        )
 
 # ============================================
 # API ENDPOINTS
@@ -1265,6 +1325,33 @@ async def auth_refresh(request: Request):
         user_type=payload["user_type"], bank_id=payload.get("bank_id"),
     )
     return {"token": access_token}
+
+@app.post("/api/auth/admin-change-password")
+async def admin_change_password(
+    request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    """Change the logged-in admin's password. Requires current password verification."""
+    body = await request.json()
+    current_password = body.get("current_password", "")
+    new_password = body.get("new_password", "")
+
+    if not current_password or not new_password:
+        raise HTTPException(status_code=400, detail="current_password and new_password are required")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    row = await db_pool.fetchrow("SELECT password_hash FROM admin_users WHERE id = $1", uuid.UUID(admin["id"]))
+    if not row or not bcrypt.checkpw(current_password.encode("utf-8"), row["password_hash"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    new_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    await db_pool.execute(
+        "UPDATE admin_users SET password_hash = $1 WHERE id = $2",
+        new_hash, uuid.UUID(admin["id"]),
+    )
+    return {"status": "ok", "message": "Password updated successfully"}
+
 
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request):
@@ -2934,6 +3021,22 @@ async def resolve_city_code(city_text: str, state_code: str) -> str | None:
 # PHONE-BASED AUTHENTICATION (EXISTING)
 # ============================================
 
+_IS_QA_DB: "bool | None" = None
+
+
+async def _is_qa_db() -> bool:
+    """True when running against the QA database (los_form_qa). Cached — the DB
+    name is fixed for the process. Same mechanism as agent/whatsapp.py."""
+    global _IS_QA_DB
+    if _IS_QA_DB is None:
+        try:
+            db = await db_pool.fetchval("SELECT current_database()")
+            _IS_QA_DB = (db == "los_form_qa")
+        except Exception:
+            _IS_QA_DB = False  # fail safe → behave like prod (enforce limit)
+    return _IS_QA_DB
+
+
 @app.post("/api/request-otp")
 async def request_otp(request: Request):
     data = await request.json()
@@ -2943,31 +3046,35 @@ async def request_otp(request: Request):
     if not phone.startswith('+'):
         phone = '+91' + phone
     # ── Rate limit: max 3 OTPs per phone per hour ──────────────────────────
+    # Prod only. On QA the testing team re-sends OTPs to the same handful of
+    # numbers repeatedly; the cap would block them with a 1-hour lockout, so we
+    # skip it entirely on los_form_qa. Prod keeps the anti-abuse protection.
     otp_key = f"otp:{phone}"
-    rate_row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", otp_key)
-    if rate_row:
-        window_start = now_utc() - timedelta(hours=1)
-        if rate_row["last_attempt"] and rate_row["last_attempt"] > window_start:
-            if rate_row["attempts"] >= 3:
-                raise HTTPException(
-                    status_code=429,
-                    detail="Too many OTP requests. Please wait 1 hour before trying again."
+    if not await _is_qa_db():
+        rate_row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", otp_key)
+        if rate_row:
+            window_start = now_utc() - timedelta(hours=1)
+            if rate_row["last_attempt"] and rate_row["last_attempt"] > window_start:
+                if rate_row["attempts"] >= 3:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Too many OTP requests. Please wait 1 hour before trying again."
+                    )
+                await db_pool.execute(
+                    "UPDATE login_attempts SET attempts = attempts + 1, last_attempt = $1 WHERE username = $2",
+                    now_utc(), otp_key
                 )
-            await db_pool.execute(
-                "UPDATE login_attempts SET attempts = attempts + 1, last_attempt = $1 WHERE username = $2",
-                now_utc(), otp_key
-            )
+            else:
+                # Window expired — reset counter
+                await db_pool.execute(
+                    "UPDATE login_attempts SET attempts = 1, last_attempt = $1 WHERE username = $2",
+                    now_utc(), otp_key
+                )
         else:
-            # Window expired — reset counter
             await db_pool.execute(
-                "UPDATE login_attempts SET attempts = 1, last_attempt = $1 WHERE username = $2",
-                now_utc(), otp_key
+                "INSERT INTO login_attempts (username, attempts, last_attempt) VALUES ($1, 1, $2)",
+                otp_key, now_utc()
             )
-    else:
-        await db_pool.execute(
-            "INSERT INTO login_attempts (username, attempts, last_attempt) VALUES ($1, 1, $2)",
-            otp_key, now_utc()
-        )
     # First check for existing application
     app_row = await db_pool.fetchrow(
         "SELECT * FROM loan_applications WHERE phone = $1 ORDER BY created_at DESC LIMIT 1", phone
@@ -3153,6 +3260,16 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
         raise HTTPException(status_code=401, detail="Invalid or unverified session")
     if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
         raise HTTPException(status_code=400, detail="Invalid PAN format")
+    # Block if already locked due to repeated mismatches
+    app_row = await db_pool.fetchrow(
+        "SELECT pan_mismatch_locked, pan_verification_attempts FROM loan_applications WHERE id = $1",
+        session["application_id"]
+    )
+    if app_row and app_row["pan_mismatch_locked"]:
+        raise HTTPException(
+            status_code=423,
+            detail="Application is locked due to repeated PAN identity mismatches. Please contact your bank branch."
+        )
     # Call VG API for real PAN verification
     pan_name = ""
     if not VG_MOCK_MODE:
@@ -3161,11 +3278,23 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
             async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
                 response = await client.post(f"{VG_API_BASE}/Pan", json=pan_payload, headers={"Content-Type": "application/json"})
             api_data = parse_vg_response(response.text)
-            print(f"[PAN API] {pan_number} -> {api_data.get('status-code', api_data.get('statusCode', '?'))}")
-            if str(api_data.get("status-code", api_data.get("statusCode", ""))) == "101":
+            status_code = str(api_data.get("status-code", api_data.get("statusCode", "")))
+            print(f"[PAN API] {pan_number} -> status={status_code}")
+            if status_code == "101":
                 pan_name = api_data.get("result", {}).get("name", "")
+                if not pan_name:
+                    # API returned 101 but no name — treat as unverified
+                    raise HTTPException(status_code=422, detail="PAN verified but no name returned. Please try again.")
+            else:
+                # Non-101: PAN not found in government records
+                print(f"[PAN API] Rejected {pan_number} — status={status_code} body={api_data}")
+                raise HTTPException(status_code=422, detail="PAN not found in government records. Please check the number and try again.")
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"[PAN API] Error: {e} — falling back to format-only verification")
+            print(f"[PAN API] Error: {e}")
+            raise HTTPException(status_code=503, detail="PAN verification service is temporarily unavailable. Please try again in a moment.")
+
     await db_pool.execute(
         "UPDATE loan_applications SET pan_number = $1, pan_verified = true, pan_verification_timestamp = $2, pan_name = $3 WHERE id = $4",
         pan_number, now_utc(), pan_name or None, session["application_id"]
@@ -3176,6 +3305,45 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
     if pan_name:
         result["name"] = pan_name
     return result
+
+
+PAN_MAX_ATTEMPTS = 2  # Lock after this many name-mismatch events
+
+@app.post("/api/pan-mismatch")
+async def report_pan_mismatch(session_token: str, request: Request):
+    """Called by the frontend when PAN name-similarity check fails.
+    Increments the mismatch counter and locks the application after PAN_MAX_ATTEMPTS."""
+    session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
+    if not session or not session["otp_verified"]:
+        raise HTTPException(status_code=401, detail="Invalid or unverified session")
+    app_id = session["application_id"]
+    row = await db_pool.fetchrow(
+        "SELECT pan_verification_attempts, pan_mismatch_locked FROM loan_applications WHERE id = $1", app_id
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if row["pan_mismatch_locked"]:
+        return {"locked": True, "attempts": row["pan_verification_attempts"], "max_attempts": PAN_MAX_ATTEMPTS, "attempts_remaining": 0}
+
+    new_attempts = (row["pan_verification_attempts"] or 0) + 1
+    locked = new_attempts >= PAN_MAX_ATTEMPTS
+    # Reset pan_verified so the applicant can re-enter PAN on the next attempt;
+    # if locking, leave pan_verified=false so the field stays blocked by the lock banner.
+    await db_pool.execute(
+        """UPDATE loan_applications
+           SET pan_verification_attempts = $1,
+               pan_mismatch_locked       = $2,
+               pan_verified              = false
+           WHERE id = $3""",
+        new_attempts, locked, app_id
+    )
+    print(f"[PAN Mismatch] app={app_id} attempts={new_attempts} locked={locked}")
+    return {
+        "locked": locked,
+        "attempts": new_attempts,
+        "max_attempts": PAN_MAX_ATTEMPTS,
+        "attempts_remaining": max(0, PAN_MAX_ATTEMPTS - new_attempts),
+    }
 
 @app.post("/api/verify-aadhaar-session")
 async def verify_aadhaar_session(session_token: str, aadhaar_number: str, request: Request):
@@ -3199,6 +3367,8 @@ async def submit_form_session(session_token: str, request: Request):
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
+    # Server-side product-wise loan amount guard (mirrors the client validation).
+    _validate_loan_amount(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

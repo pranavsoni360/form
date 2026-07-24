@@ -15,6 +15,35 @@ export function getAccessToken(type: AuthType): string | null {
   return localStorage.getItem(TOKEN_KEYS[type]);
 }
 
+// Decode a JWT payload WITHOUT verifying the signature. This is a client-side
+// convenience only (to read `exp`); the backend remains the real authority.
+// Returns null for a malformed token.
+function decodeJwtPayload(token: string): any | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(
+      atob(b64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(""),
+    );
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+// True when the token is missing, malformed, or past its `exp`. Used by route
+// guards so an expired/stale token can't slip past a mere presence check.
+export function isTokenExpired(token: string | null | undefined): boolean {
+  if (!token) return true;
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== "number") return true;
+  return payload.exp * 1000 <= Date.now();
+}
+
 export function setAccessToken(type: AuthType, token: string): void {
   localStorage.setItem(TOKEN_KEYS[type], token);
   notifyAuthChange(type, "login");
@@ -84,6 +113,28 @@ async function silentRefresh(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// ── Route-guard helper ───────────────────────────────────────
+// Returns a usable access token for `type`, or null if the visitor is not
+// authenticated. If the stored token is missing or expired, it attempts one
+// silent refresh via the httpOnly refresh cookie (same path authFetch uses),
+// so an active session (30-min access token, 9-hour refresh cookie) is NOT
+// bounced to login just because the short-lived access token lapsed. Only when
+// the refresh also fails do we clear state and report "not authenticated" —
+// that's the signal for a guard to redirect to the login page.
+export async function ensureValidToken(type: AuthType): Promise<string | null> {
+  const token = getAccessToken(type);
+  if (token && !isTokenExpired(token)) return token;
+  if (!refreshing) refreshing = silentRefresh();
+  const newToken = await refreshing;
+  refreshing = null;
+  if (newToken) {
+    setAccessToken(type, newToken);
+    return newToken;
+  }
+  clearAuth(type);
+  return null;
 }
 
 // ── Auth fetch wrapper ───────────────────────────────────────

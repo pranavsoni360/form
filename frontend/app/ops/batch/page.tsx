@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * /ops/batch — operator-side batch upload + dispatcher controls.
@@ -31,6 +31,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   Hammer,
   Loader2,
@@ -53,6 +54,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { maskPhone, statusVariant, fmtDuration } from "@/components/ops/CallDetailDialog";
+import { BatchPreviewModal, type BatchReport } from "@/components/shared/BatchPreviewModal";
 import { API_URL } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -63,12 +65,6 @@ interface BatchStatus {
   is_complete: boolean;
   message: string;
   pending: number;
-  /** Dials NOW (Pending + live Calling). Drives the Start button — unlike
-   *  `pending` it excludes scheduled callbacks and zombie Calling rows,
-   *  which used to freeze the button for hours. */
-  dialable?: number;
-  /** Parked for later (Scheduled / Callback Requested) — informational only. */
-  callbacks_due?: number;
   active_calls: number;
   failed: number;
   completed: number;
@@ -185,9 +181,7 @@ export default function OpsBatchPage() {
       // Poll fast while calls are in flight, slow once everything is at rest.
       const d = q.state.data;
       if (!d) return 5_000;
-      // dialable excludes parked callbacks/zombies — otherwise one scheduled
-      // callback kept the page on the fast 5s poll all day.
-      return d.active_calls > 0 || (d.dialable ?? d.pending) > 0 ? 5_000 : 30_000;
+      return d.active_calls > 0 || d.pending > 0 ? 5_000 : 30_000;
     },
   });
 
@@ -203,27 +197,51 @@ export default function OpsBatchPage() {
 
   /* ─── Mutations ────────────────────────────────────────────────────── */
 
+  // Preprocessing preview + confirm state. The file is uploaded once with
+  // commit=false to preview (dedupe / invalid / missing name-number), and only
+  // re-sent with commit=true when the operator confirms.
+  const [preview, setPreview] = React.useState<BatchReport | null>(null);
+  const [pendingFile, setPendingFile] = React.useState<File | null>(null);
+
+  const doUpload = async (file: File, commit: boolean) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    // Build query string. Include phone_number_id ONLY when the operator
+    // explicitly picked a number — otherwise leave it off and let the
+    // dispatcher auto-pick least-loaded.
+    const params = new URLSearchParams({ language, gender, agent_type: agentType, commit: String(commit) });
+    if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
+    if (bankId) params.set("bank_id", bankId);
+    const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    return data;
+  };
+
+  // Step 1 — preview (no calls queued).
   const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      // Build query string. Include phone_number_id ONLY when the operator
-      // explicitly picked a number — otherwise leave it off and let the
-      // dispatcher auto-pick least-loaded.
-      const params = new URLSearchParams({ language, gender, agent_type: agentType });
-      if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
-      if (bankId) params.set("bank_id", bankId);
-      const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-      return data;
+    mutationFn: (file: File) => doUpload(file, false),
+    onSuccess: (data: BatchReport, file) => {
+      setPendingFile(file);
+      setPreview(data);
+    },
+    onError: (e: Error) => toast.error(`Upload failed: ${e.message}`),
+  });
+
+  // Step 2 — confirm (queue clean rows + start calling).
+  const confirmUpload = useMutation({
+    mutationFn: () => {
+      if (!pendingFile) throw new Error("No file to confirm");
+      return doUpload(pendingFile, true);
     },
     onSuccess: (data) => {
-      toast.success(`Uploaded ${data?.inserted_count ?? "?"} record${data?.inserted_count === 1 ? "" : "s"}`);
+      toast.success(data?.message || `Queued ${data?.inserted_count ?? "?"} record${data?.inserted_count === 1 ? "" : "s"}`);
+      setPreview(null);
+      setPendingFile(null);
       qc.invalidateQueries({ queryKey: ["uploads"] });
       qc.invalidateQueries({ queryKey: ["batch-status"] });
     },
@@ -296,37 +314,25 @@ export default function OpsBatchPage() {
   /* ─── Render ───────────────────────────────────────────────────────── */
 
   const s = status.data;
-  // `dialable` (Pending + live Calling) is the truth for "is a batch running".
-  // Fall back to the old pending-based logic only if the backend predates it.
-  const dialsNow = s ? (s.dialable ?? s.pending) : 0;
-  const live = s ? dialsNow > 0 || s.active_calls > 0 : false;
-
-  // Completion acknowledgement: when the batch transitions live → idle,
-  // tell the operator instead of letting the button silently re-enable.
-  const wasLive = React.useRef(false);
-  React.useEffect(() => {
-    if (wasLive.current && !live && s) {
-      toast.success(
-        `Batch complete — ${s.completed} completed, ${s.failed} failed` +
-        ((s.callbacks_due ?? 0) > 0 ? ` · ${s.callbacks_due} callback${s.callbacks_due === 1 ? "" : "s"} scheduled for later` : ""),
-        { duration: 8000 },
-      );
-      refreshBatchViews();
-    }
-    wasLive.current = live;
-  }, [live, s, refreshBatchViews]);
+  const live = s ? s.active_calls > 0 || s.pending > 0 : false;
 
   return (
     <AppShell
       title="Batch operations"
       subtitle="Upload CSV/Excel, start dialing, retry failed, emergency stop · operator only"
     >
+      <BatchPreviewModal
+        report={preview}
+        confirming={confirmUpload.isPending}
+        onConfirm={() => confirmUpload.mutate()}
+        onCancel={() => { setPreview(null); setPendingFile(null); }}
+      />
       <div className="space-y-6">
         {/* Live status banner */}
         <LiveStatusBanner s={s} loading={status.isLoading} live={live} />
 
         {/* KPI strip */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard
             label="ACTIVE NOW"
             value={s?.active_calls ?? 0}
@@ -334,16 +340,10 @@ export default function OpsBatchPage() {
             tone={(s?.active_calls ?? 0) > 0 ? "info" : "neutral"}
           />
           <StatCard
-            label="TO DIAL"
-            value={dialsNow}
+            label="PENDING"
+            value={s?.pending ?? 0}
             icon={Activity}
-            tone={dialsNow > 0 ? "warning" : "neutral"}
-          />
-          <StatCard
-            label="CALLBACKS LATER"
-            value={s?.callbacks_due ?? 0}
-            icon={Activity}
-            tone="neutral"
+            tone={(s?.pending ?? 0) > 0 ? "warning" : "neutral"}
           />
           <StatCard
             label="COMPLETED"
@@ -475,7 +475,7 @@ export default function OpsBatchPage() {
                 {start.isPending
                   ? "Starting…"
                   : live
-                  ? `Running — ${dialsNow} to dial`
+                  ? `Running — ${s?.pending ?? 0} pending`
                   : "Start batch"}
               </Button>
               <Button
@@ -736,14 +736,47 @@ function BatchDetailDialog({
     },
   });
   const rows = q.data?.calls ?? [];
+  const [downloading, setDownloading] = React.useState(false);
+
+  const handleDownload = async () => {
+    if (!batchId) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/agent/upload/${batchId}/download`, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : `batch_${batchId.slice(0, 8)}_results.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Download failed", e);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
       size="xl"
       title={`Batch ${batchId?.slice(0, 8) ?? ""}`}
-      description={q.data ? `${q.data.total} call${q.data.total === 1 ? "" : "s"} · first 50 shown` : "Loading…"}
+      description={q.data ? `${q.data.total} call${q.data.total === 1 ? "" : "s"}` : "Loading…"}
     >
+      {/* Download button row */}
+      {batchId && !q.isLoading && !q.error && (
+        <div className="flex justify-end mb-3">
+          <Button variant="outline" size="sm" onClick={handleDownload} disabled={downloading}
+            className="flex items-center gap-1.5 text-xs h-8">
+            {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {downloading ? "Downloading…" : "Download CSV"}
+          </Button>
+        </div>
+      )}
       {q.isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -767,9 +800,7 @@ function BatchDetailDialog({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {rows.slice(0, 50).map((c, i) => (
-                // Fall back to phone+index so the row still has a stable key
-                // even if backend ever returns a row without `id`.
+              {rows.map((c, i) => (
                 <tr key={c.id || `${c.phone}-${i}`}>
                   <td className="px-3 py-2">
                     <div className="text-sm font-medium">{c.customer_name || "Customer"}</div>
@@ -782,7 +813,10 @@ function BatchDetailDialog({
                     {fmtDuration(c.call_duration ?? 0)}
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={cn("inline-block h-2 w-2 rounded-full", c.interested ? "bg-success" : "bg-muted-foreground/30")} />
+                    {['Calling', 'Pending', 'Connecting'].includes(c.status || '')
+                      ? <span className="text-xs text-muted-foreground">—</span>
+                      : <span className={cn("inline-block h-2 w-2 rounded-full", c.interested ? "bg-success" : "bg-muted-foreground/30")} />
+                    }
                   </td>
                   <td className="px-3 py-2 text-center">
                     <span className={cn("inline-block h-2 w-2 rounded-full", c.form_sent ? "bg-success" : "bg-muted-foreground/30")} />

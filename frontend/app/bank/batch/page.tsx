@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -12,6 +12,7 @@ import {
 import ThemeToggle from '@/components/ThemeToggle';
 import { useEventStream } from '@/lib/realtime/useEventStream';
 import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
+import { BatchPreviewModal, type BatchReport } from '@/components/shared/BatchPreviewModal';
 
 function StatusBadge({ status }: { status: string }) {
   const s = (status || '').toLowerCase();
@@ -37,6 +38,9 @@ export default function BatchPage() {
   const [batchStatus, setBatchStatus] = useState<any>(null);
   const [loading, setLoading]         = useState(true);
   const [uploading, setUploading]     = useState(false);
+  const [preview, setPreview]         = useState<BatchReport | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [confirming, setConfirming]   = useState(false);
   const [language, setLanguage]       = useState('hindi');
   const [gender, setGender]           = useState('male');
   const [agentType, setAgentType]     = useState('loan_enquiry');
@@ -52,6 +56,7 @@ export default function BatchPage() {
   const [notice, setNotice] = useState<{ msg: string; ok: boolean } | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [secondsAgo, setSecondsAgo]   = useState(0);
+  const [refreshing, setRefreshing]       = useState(false);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const [batchCalls, setBatchCalls]       = useState<Record<string, any[]>>({});
   const [loadingCalls, setLoadingCalls]   = useState<string | null>(null);
@@ -131,7 +136,11 @@ export default function BatchPage() {
     finally { setLoadingCalls(null); }
   };
 
-  const refresh = useCallback(() => { fetchBatches(); fetchStatus(); }, [fetchBatches, fetchStatus]);
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await Promise.all([fetchBatches(), fetchStatus()]); }
+    finally { setRefreshing(false); }
+  }, [fetchBatches, fetchStatus]);
 
   useEffect(() => { if (token) { fetchBatches(token); fetchStatus(token); } }, [token]);
   useEffect(() => {
@@ -170,6 +179,13 @@ export default function BatchPage() {
     return () => clearInterval(id);
   }, [lastUpdated]);
 
+  const uploadParams = (commit: boolean) => new URLSearchParams({
+    language, gender, agent_type: agentType, commit: String(commit),
+    ...(bankId        ? { bank_id: bankId }                : {}),
+    ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
+  });
+
+  // Step 1 — preview: parse + preprocess the file WITHOUT queuing any calls.
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -178,20 +194,38 @@ export default function BatchPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const params = new URLSearchParams({
-        language, gender, agent_type: agentType,
-        ...(bankId        ? { bank_id: bankId }                : {}),
-        ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
-      });
-      const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${uploadParams(false)}`, {
         method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Upload failed (${res.status})`); }
-      notify(`Uploaded ${(await res.json()).inserted_count ?? '?'} records`);
-      refresh();
+      const report: BatchReport = await res.json();
+      setPendingFile(file);
+      setPreview(report);
     } catch (err: any) { notify(err.message || 'Upload failed', false); }
     finally { setUploading(false); }
   };
+
+  // Step 2 — confirm: re-send the same file with commit=true to queue + call.
+  const confirmUpload = async () => {
+    if (!pendingFile) return;
+    setConfirming(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', pendingFile);
+      const res = await fetch(`${API_URL}/api/agent/upload-excel?${uploadParams(true)}`, {
+        method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Upload failed (${res.status})`); }
+      const data = await res.json();
+      notify(data.message || `Queued ${data.inserted_count ?? '?'} records`);
+      setPreview(null);
+      setPendingFile(null);
+      refresh();
+    } catch (err: any) { notify(err.message || 'Upload failed', false); }
+    finally { setConfirming(false); }
+  };
+
+  const cancelPreview = () => { setPreview(null); setPendingFile(null); };
 
   const apiPost = async (path: string) => {
     const res = await fetch(`${API_URL}${path}`, {
@@ -235,6 +269,8 @@ export default function BatchPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 relative">
+
+      <BatchPreviewModal report={preview} confirming={confirming} onConfirm={confirmUpload} onCancel={cancelPreview} />
 
       {/* Ambient background glow */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden -z-10">
@@ -291,9 +327,10 @@ export default function BatchPage() {
                     Updated {secondsAgo}s ago
                   </span>
                 )}
-                <button onClick={() => fetchStatus(token)}
-                  className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1">
-                  <RefreshCw className="w-3 h-3" /> Refresh
+                <button onClick={refresh} disabled={refreshing}
+                  className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1 disabled:opacity-60">
+                  <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+                  {refreshing ? 'Refreshing…' : 'Refresh'}
                 </button>
               </div>
             </div>
@@ -393,7 +430,7 @@ export default function BatchPage() {
             { label: 'Resume',        icon: <Play className="w-4 h-4" />,      busy: resuming, onClick: resumeCalling },
             { label: 'Retry Failed',  icon: <RotateCcw className="w-4 h-4" />, busy: retrying, onClick: retryFailed   },
             { label: 'Cleanup Stuck', icon: <Wrench className="w-4 h-4" />,    busy: cleaning, onClick: cleanupStuck  },
-            { label: 'Refresh',       icon: <RefreshCw className="w-4 h-4" />, busy: false,    onClick: refresh       },
+            { label: 'Refresh',       icon: <RefreshCw className="w-4 h-4" />, busy: refreshing, onClick: refresh     },
           ].map(({ label, icon, busy, onClick }) => (
             <button key={label} onClick={onClick} disabled={busy} className={btnSecondary}>
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
@@ -477,8 +514,8 @@ export default function BatchPage() {
                                   <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                                     <Clock className="w-3 h-3" />{call.call_duration ? `${call.call_duration}s` : '—'}
                                   </span>
-                                  <span className={`text-xs font-medium ${call.interested === true ? 'text-emerald-600 dark:text-emerald-400' : call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
-                                    {call.interested === true ? 'Yes' : call.interested === false ? 'No' : '—'}
+                                  <span className={`text-xs font-medium ${call.interested === true ? 'text-emerald-600 dark:text-emerald-400' : ['Calling', 'Pending', 'Connecting'].includes(call.status || '') ? 'text-slate-400' : call.interested === false ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
+                                    {call.interested === true ? 'Yes' : ['Calling', 'Pending', 'Connecting'].includes(call.status || '') ? '—' : call.interested === false ? 'No' : '—'}
                                   </span>
                                   <span className={`text-xs font-medium ${call.form_sent ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
                                     {call.form_sent ? 'Sent' : '—'}

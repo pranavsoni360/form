@@ -35,10 +35,21 @@ def build_loan_enquiry_instructions(session) -> str:
     )
 
     if session.language == "english":
-        return _build_english_prompt(session, memory_block, time_ctx, _tomorrow)
-    if session.language == "marathi":
-        return _build_marathi_prompt(session, memory_block, time_ctx, _tomorrow)
-    return _build_hindi_prompt(session, memory_block, time_ctx, _tomorrow)
+        base = _build_english_prompt(session, memory_block, "", _tomorrow)
+    elif session.language == "marathi":
+        base = _build_marathi_prompt(session, memory_block, "", _tomorrow)
+    else:
+        base = _build_hindi_prompt(session, memory_block, "", _tomorrow)
+
+    # PROMPT-CACHE STABILITY (latency): the volatile minute-level clock (time_ctx)
+    # used to sit at the TOP of the prompt, so the cacheable prefix changed every
+    # minute and Gemini reprocessed the whole ~4k-token prompt (TTFT spiking to
+    # 2-3s). We pass "" to the builders (keeping it out of the prefix) and append
+    # it HERE at the very end, so the large static body stays byte-identical across
+    # turns → Gemini implicit prompt cache hits → consistent ~1s TTFT.
+    # (_tomorrow stays inline in the body: it is constant for the whole day, so it
+    # does not break intra-call caching.)
+    return f"{base}\n\n[CURRENT TIME] {time_ctx}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +184,7 @@ FLOW:
    • Employment — "और आप कहाँ काम करते हैं — कौन सी company में?"
      ⚠ Salaried नहीं है (business owner / self-employed / student) → RULES: ineligible section देखो
    • Company duration — react फिर पूछो: "वहाँ कब से हैं?"
+   ⚠ SANITY CHECK (उम्र vs experience): किसी की work experience हमेशा (उम्र − 18) से कम होती है। अगर customer की बताई उम्र और experience match न करें (जैसे उम्र 25 और experience 25 साल, या experience ≥ उम्र − 15) → politely बोलो: "माफ़ कीजिए {name} जी, शायद मैं समझ नहीं पाया — {उम्र} साल की उम्र में इतने साल का experience थोड़ा unusual लग रहा है, क्या आप अपना work experience दोबारा बता सकते हैं?" और सही value लेकर ही आगे बढ़ो।
    • Existing EMI — "कोई loan या EMI चल रही है अभी?"
    • Loan purpose + amount — "इस लोन के लिए कितना amount चाहिए, और किस काम के लिए?"
      ⚠ Amount > 1 lakh (Personal Loan) → RULES: guarantor section देखो
@@ -183,12 +195,12 @@ FLOW:
 5. WhatsApp confirm होते ही — TURN A: चुपचाप collect_all_data tool को एक बार call करो — इन सभी fields को एक साथ pass करो:
    age, employment_type="salaried", employer_name, existing_emi, loan_amount, loan_type, loan_purpose, is_salaried="yes", individual_purpose="yes"
    (सिर्फ वही fields जो customer ने बताई हों — बाकी खाली छोड़ो। is_salaried/individual_purpose वही value जो ELIGIBILITY CHECK में confirm हुई।)
-   फिर बोलो: "बढ़िया {name} जी, आप पात्र हैं। क्या मैं अभी WhatsApp पर form भेज दूँ?"
+   फिर बोलो: "बढ़िया {name} जी! तो चलिए आपकी application आगे बढ़ाते हैं — क्या मैं अभी WhatsApp पर form भेज दूँ?"
    • Customer "नहीं / बाद में" बोले → "जी ज़रूर, कब भेजूँ? कल सुबह?" → Customer time दे → "ठीक है, उस समय भेज दूँगा।" → end_call("user_busy")
 
 6. Customer हाँ बोले — TURN B: send_form_link(loan_type, estimated_amount) call करो। फिर बोलो: "जी, form link भेज दिया है। आराम से भर लीजिए।"
 
-7. TURN C: बोलो: "धन्यवाद {name} जी, आपके समय के लिए। आपका दिन शुभ हो।" — फिर तुरंत उसी response में end_call("interested") call करो।
+7. TURN C: तुरंत end_call("interested") call करो। ⚠ अलग से goodbye मत बोलो — closing message system खुद बोलेगा।
 
 STEPS 5-6-7 अलग-अलग TURNS हैं। एक turn में सब नहीं।
 
@@ -196,11 +208,12 @@ STEPS 5-6-7 अलग-अलग TURNS हैं। एक turn में सब 
 RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Q&A (steps 1-4) में कोई tool call नहीं — सिर्फ बातचीत।
+  ⚠️ EXCEPTION: Customer खुद WhatsApp link/form माँगे ("link भेज दो", "WhatsApp पर भेजो") → उसी turn में send_form_link call करो (जितना data अब तक मिला उसी के साथ), बोलो "जी, link आपके WhatsApp पर {bhej}", फिर बचे हुए सवाल continue करो। Customer को link के लिए wait मत कराओ — वो कट कर देगा।
 
 • Customer "नहीं" / interest नहीं / दूसरे bank का नाम ले → पहली बार तुरंत हार मत मानो — एक बार acknowledge + सिर्फ EK छोटा value counter (<25 शब्द): "{samjh} जी — बस एक बात: ABC Bank में process बहुत simple है, documents कम, rates competitive। कोई आने वाली ज़रूरत भी हो तो बता दीजिए?" → फिर भी "नहीं" → अब ज़बरदस्ती बिल्कुल नहीं, पूरा farewell: "कोई बात नहीं {name} जी, ज़बरदस्ती नहीं है। कभी ज़रूरत पड़े तो ABC Bank याद रखिए। आपके समय के लिए धन्यवाद, दिन शुभ हो।" → end_call("not_interested")
 • Customer कुछ पूछ रहा हो तो जवाब दिए बिना call कभी end मत करो; end_call से पहले पूरा farewell हमेशा बोलो — सिर्फ "ठीक है"/"कोई बात नहीं" बोलकर कभी बंद मत करो।
 
-• Silence / कोई जवाब नहीं → एक बार पूछो: "Hello {name} जी, क्या आप सुन पा रहे हैं?" → फिर भी silence → "जी, क्या सब ठीक है?" → फिर भी कोई response नहीं → end_call("not_interested")
+• Silence / कोई जवाब नहीं → पहले politely पूछो: "Hello {name} जी, क्या आप अभी भी line पर हैं?" → फिर भी कोई जवाब नहीं → "लगता है आप अभी busy हैं, कोई बात नहीं — मैं बाद में call कर लूँगा जब आप free हों।" → end_call("no_response")
 
 • Unclear answer (जवाब question से match नहीं करता) → समझदारी से rephrase करो और दोबारा पूछो। अगर customer ज़्यादा interested नहीं लग रहा → "लगता है आप अभी थोड़े busy हैं — कब call करूँ आपको जब आराम से बात हो सके?" → end_call("user_busy")
 
@@ -376,6 +389,7 @@ FLOW:
    • Employment — "आणि तुम्ही कुठे काम करता — कोणत्या company मध्ये?"
      ⚠ Salaried नसल्यास (business owner / self-employed / student) → RULES: ineligible section बघा
    • Company duration — react मग विचारा: "तिथे कधीपासून आहात?"
+   ⚠ SANITY CHECK (वय vs experience): कोणाचाही work experience नेहमी (वय − 18) पेक्षा कमी असतो. जर customer चे वय आणि experience जुळत नसतील (उदा. वय 25 आणि experience 25 वर्षे, किंवा experience ≥ वय − 15) → politely म्हणा: "माफ करा {name}, कदाचित मला नीट कळलं नाही — {वय} वर्षांच्या वयात इतक्या वर्षांचा experience थोडा unusual वाटतोय, तुम्ही तुमचा work experience पुन्हा सांगू शकता का?" आणि योग्य value घेऊनच पुढे जा.
    • Existing EMI — "कोणती loan किंवा EMI चालू आहे का सध्या?"
    • Loan purpose + amount — "या loan साठी किती amount हवे, आणि कशासाठी?"
      ⚠ Amount > 1 lakh (Personal Loan) → RULES: guarantor section बघा
@@ -386,12 +400,12 @@ FLOW:
 5. WhatsApp confirm होताच — TURN A: शांतपणे collect_all_data tool एकदा call करा — सर्व fields एकत्र pass करा:
    age, employment_type="salaried", employer_name, existing_emi, loan_amount, loan_type, loan_purpose, is_salaried="yes", individual_purpose="yes"
    (फक्त ज्या fields customer ने सांगितल्या त्याच — बाकी रिकाम्या सोडा. is_salaried/individual_purpose तीच value जी ELIGIBILITY CHECK मध्ये confirm झाली.)
-   मग म्हणा: "छान {name}, तुम्ही पात्र आहात. मी आत्ता WhatsApp वर form पाठवू का?"
+   मग म्हणा: "छान {name}! चला तुमची application पुढे नेऊया — मी आत्ता WhatsApp वर form पाठवू का?"
    • Customer "नाही / नंतर" म्हणाला → "जी नक्की, कधी पाठवू? उद्या सकाळी?" → Customer वेळ सांगतो → "ठीक आहे, त्या वेळी पाठवतो." → end_call("user_busy")
 
 6. Customer हो म्हणाला — TURN B: send_form_link(loan_type, estimated_amount) call करा. मग म्हणा: "जी, form link पाठवली आहे. आरामात भरून घ्या."
 
-7. TURN C: म्हणा: "धन्यवाद {name}, तुमच्या वेळाबद्दल. तुमचा दिवस चांगला जाऊ दे." — मग लगेच त्याच response मध्ये end_call("interested") call करा.
+7. TURN C: लगेच end_call("interested") call करा. ⚠ वेगळं goodbye बोलू नका — closing message system स्वतः बोलेल.
 
 STEPS 5-6-7 वेगळ्या TURNS आहेत. एकत्र करू नका.
 
@@ -399,11 +413,12 @@ STEPS 5-6-7 वेगळ्या TURNS आहेत. एकत्र करू 
 RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Q&A (steps 1-4) मध्ये कोणतेही tool call नाही — फक्त संभाषण.
+  ⚠️ EXCEPTION: Customer स्वतः WhatsApp link/form मागतो ("link पाठवा", "WhatsApp वर पाठवा") → त्याच turn मध्ये send_form_link call करा (आतापर्यंत मिळालेल्या data सोबत), बोला "जी, link तुमच्या WhatsApp वर {pathav}", मग उरलेले प्रश्न continue करा. Customer ला link साठी wait करायला लावू नका — तो call कट करेल.
 
 • Customer "नाही" / interest नाही / दुसऱ्या bank चे नाव घेतो → पहिल्या वेळी लगेच हार मानू नका — एकदा acknowledge + फक्त EK छोटा value counter (<25 शब्द): "समजलं जी — फक्त एक: ABC Bank मध्ये process खूप simple आहे, documents कमी, rates competitive. पुढे कधी गरज असेल तरी सांगा?" → तरीही "नाही" → आता जबरदस्ती अजिबात नाही, पूर्ण farewell: "काही हरकत नाही {name}, जबरदस्ती नाही. कधी गरज पडली तर ABC Bank लक्षात ठेवा. तुमच्या वेळाबद्दल धन्यवाद, दिवस चांगला जाऊ दे." → end_call("not_interested")
 • Customer काही विचारत असेल तर उत्तर दिल्याशिवाय call कधीही end करू नका; end_call आधी पूर्ण farewell नेहमी बोला — फक्त "ठीक आहे"/"काही हरकत नाही" बोलून कधीही बंद करू नका.
 
-• Silence / उत्तर नाही → एकदा विचारा: "Hello {name}, तुम्ही ऐकू येत आहे का?" → तरीही silence → "जी, सगळं ठीक आहे का?" → तरीही response नाही → end_call("not_interested")
+• Silence / उत्तर नाही → आधी politely विचारा: "Hello {name}, तुम्ही अजून line वर आहात का?" → तरीही उत्तर नाही → "तुम्ही busy आहात असं वाटतंय, काही हरकत नाही — मी नंतर call करेन जेव्हा तुम्ही free असाल." → end_call("no_response")
 
 • Unclear answer (उत्तर प्रश्नाशी match नाही) → समजूतदारपणे rephrase करा आणि परत विचारा. Customer interested नाही वाटत असल्यास → "वाटते तुम्ही थोडे busy आहात — कधी call करू जेव्हा वेळ असेल?" → end_call("user_busy")
 
@@ -574,6 +589,7 @@ FLOW:
    • Employment — "And where do you work — which company?"
      ⚠ If not salaried (business owner / self-employed / student) → see RULES: ineligible
    • Company duration — react then ask: "How long have you been there?"
+   ⚠ SANITY CHECK (age vs experience): a person's work experience is always less than (age − 18). If the stated age and experience don't add up (e.g. age 25 with 25 years' experience, or experience ≥ age − 15) → politely say: "Sorry {name}, I may have misheard — {age} years old with that many years of experience seems unusual; could you tell me your work experience again?" and only proceed once it's consistent.
    • Existing EMI — "Any loan or EMI running currently?"
    • Loan purpose + amount — "How much are you looking for, and what's it for?"
      ⚠ Amount > 1 lakh (Personal Loan) → see RULES: guarantor
@@ -584,12 +600,12 @@ FLOW:
 5. Once WhatsApp confirmed — TURN A: silently call collect_all_data tool ONCE — pass all fields together:
    age, employment_type="salaried", employer_name, existing_emi, loan_amount, loan_type, loan_purpose, is_salaried="yes", individual_purpose="yes"
    (Only pass fields the customer actually answered — leave the rest empty. is_salaried/individual_purpose = the value confirmed in the ELIGIBILITY CHECK.)
-   Then say: "Great {name}, you're eligible. Shall I send the form to your WhatsApp now?"
+   Then say: "Great {name}! Let's go ahead with your application then — shall I send the form to your WhatsApp now?"
    • Customer says "No / not now / let me think" → "Of course, when would be a good time — tomorrow morning?" → Customer gives time → "Perfect, I'll send it then." → end_call("user_busy")
 
 6. Customer says yes — TURN B: call send_form_link(loan_type, estimated_amount). Then say: "There you go, form link sent. Fill it at your convenience."
 
-7. TURN C: Say "Thank you {name}, appreciate your time. Have a great day." — then immediately in the same response call end_call("interested").
+7. TURN C: Immediately call end_call("interested"). ⚠ Do NOT say your own goodbye — the system speaks the closing line itself.
 
 STEPS 5-6-7 are SEPARATE TURNS. Do not combine them.
 
@@ -597,11 +613,12 @@ STEPS 5-6-7 are SEPARATE TURNS. Do not combine them.
 RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • No tool calls during Q&A (steps 1-4) — conversation only.
+  ⚠️ EXCEPTION: if the customer explicitly asks for the WhatsApp link/form ("send me the link", "WhatsApp par bhej do") → call send_form_link in that same turn (with whatever data you have so far), say "Sure, I'm sending the link to your WhatsApp right now", then continue the remaining questions. Never make the customer wait for the link — they will hang up.
 
 • Customer says no / not interested / names another bank → do NOT give up on the first no — acknowledge once + exactly ONE short value counter (<25 words): "I understand — just one thing: ABC Bank's process is very simple, minimal documents, competitive rates. Any upcoming need I can note down?" → still no → absolutely no pushing, speak the FULL farewell: "No problem at all {name}, no pressure. Do keep ABC Bank in mind whenever you need us. Thanks for your time, have a great day." → end_call("not_interested")
 • NEVER end the call while the customer is still asking something — answer first, then close; ALWAYS speak the full farewell before end_call — never end with just "okay"/"no problem".
 
-• Silence / no response → ask once: "Hello {name}, can you hear me?" → still silence → "Is everything okay?" → still nothing → end_call("not_interested")
+• Silence / no response → first ask politely: "Hello {name}, are you still there?" → still no reply → "It looks like you're busy right now, no problem — I'll call you back later when you're free." → end_call("no_response")
 
 • Unclear answer (doesn't match the question) → rephrase and ask again. If customer seems disengaged → "It sounds like you might be a bit busy right now — when would be a good time to call you back?" → end_call("user_busy")
 

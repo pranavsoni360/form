@@ -428,27 +428,57 @@ async def entrypoint(ctx: JobContext):
             logger.warning(f"Greeting failed: {e}")
 
         async def silence_monitor():
+            # Two-stage silence handling:
+            #   Stage 1 (after ~12s dead air): gently nudge — "are you still there?"
+            #   Stage 2 (another ~13s of silence): say "looks like you're busy,
+            #            I'll call you later" and hang up.
+            # agent_busy guards against counting the agent's own thinking/speaking
+            # as customer silence. last_speech_time is refreshed on every agent
+            # state change, so a customer reply (which triggers the agent) resets it.
+            NUDGE_AFTER = 12.0
+            HANGUP_AFTER = 13.0   # additional silence after the nudge
+            nudged = False
             while not session.call_ended:
                 await asyncio.sleep(3)
-                gap = asyncio.get_event_loop().time() - session.last_speech_time
-                if gap > 25 and not session.call_ended and not getattr(session, "agent_busy", False):
-                    logger.warning("Over 25s silence — hanging up.")
-                    if session.agent_session:
-                        try:
-                            farewell = {
-                                "hindi": "लगता है आप अभी व्यस्त हैं, धन्यवाद।",
-                                "marathi": "तुम्ही व्यस्त आहात असे वाटते, धन्यवाद.",
-                                "english": "It seems you are busy right now, thank you.",
-                            }.get(session.language, "Thank you!")
-                            await session.agent_session.say(farewell)
-                            await asyncio.sleep(3.0)
-                            session.call_outcome = "silence_timeout"
-                            await session.save_and_disconnect(delay=0)
-                        except Exception as e:
-                            logger.error(f"Error triggering silence end_call: {e}")
-                            session.call_outcome = "silence_timeout"
-                            await session.save_and_disconnect(delay=3.0)
+                if session.call_ended:
                     break
+                if getattr(session, "agent_busy", False):
+                    continue
+                gap = asyncio.get_event_loop().time() - session.last_speech_time
+                if not nudged:
+                    if gap > NUDGE_AFTER and session.agent_session:
+                        nudge = {
+                            "hindi": f"Hello {session.customer_name} जी, क्या आप अभी भी line पर हैं?",
+                            "marathi": f"Hello {session.customer_name}, तुम्ही अजून line वर आहात का?",
+                            "english": f"Hello {session.customer_name}, are you still there?",
+                        }.get(session.language, "Hello, are you still there?")
+                        logger.info("Silence >%.0fs — nudging customer.", NUDGE_AFTER)
+                        try:
+                            await session.agent_session.say(nudge, allow_interruptions=True)
+                        except Exception as e:
+                            logger.debug(f"silence nudge failed (non-fatal): {e}")
+                        nudged = True
+                        session.last_speech_time = asyncio.get_event_loop().time()
+                else:
+                    if gap <= NUDGE_AFTER:
+                        # Customer resumed — their turn refreshed last_speech_time.
+                        nudged = False
+                    elif gap > HANGUP_AFTER:
+                        logger.warning("Still silent after nudge — closing politely.")
+                        if session.agent_session:
+                            try:
+                                farewell = {
+                                    "hindi": "लगता है आप अभी busy हैं। कोई बात नहीं, मैं आपको बाद में call कर लूँगा जब आप free हों। धन्यवाद।",
+                                    "marathi": "तुम्ही busy आहात असं वाटतंय. काही हरकत नाही, मी तुम्हाला नंतर call करेन जेव्हा तुम्ही free असाल. धन्यवाद.",
+                                    "english": "It looks like you're busy right now. No problem, I'll call you back later when you're free. Thank you.",
+                                }.get(session.language, "It looks like you're busy, I'll call you back later. Thank you.")
+                                await session.agent_session.say(farewell, allow_interruptions=False)
+                                await asyncio.sleep(2.0)
+                            except Exception as e:
+                                logger.error(f"Error speaking silence farewell: {e}")
+                            session.call_outcome = "no_response"
+                            await session.save_and_disconnect(delay=0)
+                        break
 
         session.silence_monitor_task = asyncio.create_task(silence_monitor())
 

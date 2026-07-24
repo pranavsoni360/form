@@ -150,7 +150,10 @@ async def save_transcript(data: TranscriptPayload):
         now_ist(),
         duration_seconds,
         data.customer_interested,
-        data.whatsapp_form_sent,
+        # Preserve the sender's real result (whatsapp.py writes form_sent/form_status
+        # from the actual AiSensy accept/fail). Do NOT overwrite it with the voice
+        # agent's optimistic self-report (which only means "I called the tool").
+        call.get("form_sent") or False,
         data.loan_type or None,
         _safe_amount(data.loan_amount),
         json.dumps(existing_collected),
@@ -224,6 +227,38 @@ async def save_transcript(data: TranscriptPayload):
             logger.info(f"Backfilled loan_application {app_row['id']} with {len(source_fields)} fields from call data")
     except Exception as e:
         logger.warning(f"Could not backfill loan_application: {e}")
+
+    # ── Post-call WhatsApp safety net ──
+    # An interested customer who hangs up before the agent fires
+    # send_form_link (e.g. "haan link bhej do" → hang up 15s later) used to
+    # get NOTHING — form sending only existed inside the live call. If the
+    # call ended interested with no form sent, send it from here. Idempotent:
+    # skips when the agent already sent (payload flag) or a prior webhook
+    # already delivered (DB form_sent).
+    try:
+        if (
+            data.customer_interested
+            and not data.whatsapp_form_sent
+            and not call.get("form_sent")
+            and call.get("phone")
+        ):
+            from .whatsapp import send_whatsapp_form_impl
+            result = await send_whatsapp_form_impl({
+                "phone": call.get("phone"),
+                "customer_name": call.get("customer_name"),
+                "customer_type": data.customer_type,
+                "call_id": str(actual_uuid),
+                "loan_type": data.loan_type or call.get("loan_type") or "personal",
+                "estimated_amount": data.loan_amount or 0,
+                # DB collected_data was updated just above — impl reads it.
+                "collected_data": {},
+            })
+            logger.info(
+                f"Post-call WhatsApp safety net for {actual_uuid}: "
+                f"sent={result.get('whatsapp_sent')} ({result.get('message')})"
+            )
+    except Exception as e:
+        logger.error(f"Post-call WhatsApp safety net failed (non-fatal): {e}")
 
     # M3: enqueue immediate transcript analysis job. The job worker pool runs
     # Gemini categorization off the request thread so this webhook returns fast.

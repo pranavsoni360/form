@@ -4,7 +4,7 @@ import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
-import { getAccessToken } from "@/lib/auth";
+import { ensureValidToken } from "@/lib/auth";
 
 /**
  * /ops/* route group layout.
@@ -27,14 +27,25 @@ export default function OpsLayout({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = React.useState<"checking" | "authed" | "redirecting">("checking");
 
   React.useEffect(() => {
-    const token = getAccessToken("admin");
-    if (!token) {
-      setStatus("redirecting");
-      const dest = pathname && pathname.startsWith("/ops") ? pathname : "/ops";
-      router.replace(`/admin/login?redirect=${encodeURIComponent(dest)}`);
-      return;
-    }
-    setStatus("authed");
+    let cancelled = false;
+    (async () => {
+      // Validate the token (expiry-aware) and silently refresh a lapsed session
+      // via the httpOnly cookie. A missing/expired token with no valid refresh
+      // cookie → not authenticated → redirect to login. This closes the hole
+      // where a stale token slipped past a mere presence check.
+      const token = await ensureValidToken("admin");
+      if (cancelled) return;
+      if (!token) {
+        setStatus("redirecting");
+        const dest = pathname && pathname.startsWith("/ops") ? pathname : "/ops";
+        router.replace(`/admin/login?redirect=${encodeURIComponent(dest)}`);
+        return;
+      }
+      setStatus("authed");
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [router, pathname]);
 
   if (status !== "authed") {

@@ -210,7 +210,7 @@ def format_ist_time(dt) -> str:
         return dt
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(IST).strftime("%d %b, %I:%M %p")
+    return dt.astimezone(IST).strftime("%d %b %Y, %I:%M %p")
 
 
 def now_ist() -> datetime:

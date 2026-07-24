@@ -718,7 +718,7 @@ async def _check_lockout(username: str) -> None:
     row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", username)
     if row and row["locked_until"] and row["locked_until"] > now_utc():
         remaining = int((row["locked_until"] - now_utc()).total_seconds() / 60) + 1
-        raise HTTPException(status_code=423, detail=f"Account locked due to too many failed attempts. Try again in {remaining} minutes.")
+        raise HTTPException(status_code=423, detail=f"Too many failed attempts. Try again in {remaining} minute{'s' if remaining != 1 else ''}.")
 
 async def _record_failed_login(username: str) -> tuple[int, bool]:
     row = await db_pool.fetchrow("SELECT * FROM login_attempts WHERE username = $1", username)
@@ -1241,11 +1241,11 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
         attempts, locked = await _record_failed_login(payload.email)
         if locked:
-            raise HTTPException(423, f"Account locked after {MAX_LOGIN_ATTEMPTS} failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
+            raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
         if attempts >= WARN_AFTER_ATTEMPTS:
-            raise HTTPException(401, f"Invalid credentials. {remaining} attempt{'s' if remaining != 1 else ''} remaining before lockout.")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(401, f"Invalid username or password. {remaining} attempt{'s' if remaining != 1 else ''} remaining.")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
         raise HTTPException(status_code=403, detail="Account deactivated")
     await _clear_failed_logins(payload.email)
@@ -1272,11 +1272,11 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
         attempts, locked = await _record_failed_login(payload.username)
         if locked:
-            raise HTTPException(423, f"Account locked after {MAX_LOGIN_ATTEMPTS} failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
+            raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
         if attempts >= WARN_AFTER_ATTEMPTS:
-            raise HTTPException(401, f"Invalid credentials. {remaining} attempt{'s' if remaining != 1 else ''} remaining before lockout.")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(401, f"Invalid username or password. {remaining} attempt{'s' if remaining != 1 else ''} remaining.")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
         raise HTTPException(status_code=403, detail="Account deactivated")
     bank = await db_pool.fetchrow("SELECT * FROM banks WHERE id = $1 AND status = 'active'", row["bank_id"])
@@ -1433,9 +1433,9 @@ async def auth_me(credentials: HTTPAuthorizationCredentials = Depends(security))
 async def admin_login(payload: AdminLogin):
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
     if not row:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
     if not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
         raise HTTPException(status_code=403, detail="Account deactivated")
     token = jwt.encode({

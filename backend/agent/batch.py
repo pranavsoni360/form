@@ -767,7 +767,11 @@ async def batch_status(
 
     pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
     active_count = await _count(" AND status = 'Calling'")
-    failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected', 'Not Answered')")
+    # 'Not Answered' is broken out into its own count so the dashboard can show
+    # it as a separate card (it used to be folded into 'failed'). Keeping it out
+    # of 'failed' lets the tiles reconcile against the total.
+    failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected')")
+    not_answered_count = await _count(" AND status = 'Not Answered'")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
     total_count = await _count("")
 
@@ -778,6 +782,7 @@ async def batch_status(
         "pending": pending_count,
         "active_calls": active_count,
         "failed": failed_count,
+        "not_answered": not_answered_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
         "total": total_count,
     }

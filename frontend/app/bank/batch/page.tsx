@@ -280,6 +280,7 @@ export default function BatchPage() {
     { label: 'Pending',     value: batchStatus?.pending      ?? 0, accent: 'bg-amber-50 dark:bg-amber-950/30 border-l-4 border-l-amber-500' },
     { label: 'Completed',   value: batchStatus?.completed    ?? 0, accent: 'bg-emerald-50 dark:bg-emerald-950/30 border-l-4 border-l-emerald-500' },
     { label: 'Failed',      value: batchStatus?.failed       ?? 0, accent: 'bg-red-50 dark:bg-red-950/30 border-l-4 border-l-red-500' },
+    { label: 'Not Answered', value: batchStatus?.not_answered ?? 0, accent: 'bg-orange-50 dark:bg-orange-950/30 border-l-4 border-l-orange-500' },
     { label: 'Total',       value: batchStatus?.total        ?? 0, accent: 'bg-slate-50 dark:bg-slate-800/50 border-l-4 border-l-slate-400' },
   ];
 
@@ -350,7 +351,7 @@ export default function BatchPage() {
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               {statItems.map(({ label, value, accent }) => (
                 <div key={label} className={`rounded-lg px-4 py-3 border border-slate-200 dark:border-slate-800 ${accent}`}>
                   <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</p>

@@ -475,14 +475,25 @@ class Dispatcher:
                 "agent_type": call.get("agent_type"),
             })
 
-            # Validate phone (same as old loop)
-            if not phone or len(phone) < 10:
+            # Validate phone on DIGIT COUNT, not raw string length. A number like
+            # "+91 98765 43210" is 16 raw chars but formatting/spaces shouldn't
+            # count; conversely "1234567890.0" from Excel must not pass. We mirror
+            # the dialer's own normalisation (_to_e164) and count digits, so the
+            # "Invalid Phone" verdict matches what would actually be dialed.
+            phone_digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+            if len(phone_digits) < 10:
+                logger.warning(
+                    "Call %s marked Invalid Phone: customer=%r phone=%r (digits=%d)",
+                    call_uuid, name, phone, len(phone_digits),
+                )
                 await self.db_pool.execute(
                     """UPDATE agent_calls
                           SET status = 'Invalid Phone',
+                              error_message = $4,
                               retry_count = $1, updated_at = $2
                         WHERE id = $3""",
                     self.max_retries + 1, self.now_ist(), call_uuid,
+                    f"Phone had {len(phone_digits)} digits (need ≥10): {phone!r}",
                 )
                 await self._bump("failed")
                 await self._bump("completed")

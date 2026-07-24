@@ -20,7 +20,8 @@ function formatSavedStamp(input: string | number | Date): string {
   const d = new Date(input);
   if (isNaN(d.getTime())) return '';
   const now = new Date();
-  const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+    .replace(/\b([ap])m\b/i, (m) => m.toUpperCase());   // "pm" → "PM" to match spec
   const yest = new Date(now); yest.setDate(now.getDate() - 1);
   if (d.toDateString() === now.toDateString()) return `Today, ${time}`;
   if (d.toDateString() === yest.toDateString()) return `Yesterday, ${time}`;

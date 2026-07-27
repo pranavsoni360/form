@@ -23,7 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * VirtualVaani-style sidebar.
+ * Finix-style sidebar.
  *
  * Top: "vv" logo mark + VIRTUALVAANI / Admin Portal label
  * Body: NAVIGATION section header + nav items (icon + label + active pill)
@@ -101,7 +101,7 @@ export function Sidebar({ className }: { className?: string }) {
       <Link
         href="/ops"
         className="flex items-center gap-3 px-5 py-5"
-        aria-label="VirtualVaani Ops"
+        aria-label="Finix Ops"
       >
         <span className="grid h-10 w-10 place-items-center rounded-xl text-white shadow-sm"
           style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)' }}>
@@ -109,7 +109,7 @@ export function Sidebar({ className }: { className?: string }) {
         </span>
         <div className="leading-tight">
           <div className="text-[11px] font-bold uppercase tracking-wider text-foreground">
-            VirtualVaani
+            Finix
           </div>
           <div className="text-sm font-semibold tracking-tight text-foreground">
             Admin Portal

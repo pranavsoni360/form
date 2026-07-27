@@ -54,7 +54,7 @@ export function VendorShell({
             <Banknote className="h-5 w-5" />
           </span>
           <div className="leading-tight">
-            <div className="text-[11px] font-bold uppercase tracking-wider">VirtualVaani</div>
+            <div className="text-[11px] font-bold uppercase tracking-wider">Finix</div>
             <div className="text-sm font-semibold">Vendor Portal</div>
           </div>
         </Link>

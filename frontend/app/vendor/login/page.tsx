@@ -66,7 +66,7 @@ function VendorLoginForm() {
             vv
           </div>
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>VirtualVaani</div>
+            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>Finix</div>
             <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Vendor & NBFC Portal</div>
           </div>
         </div>
@@ -98,7 +98,7 @@ function VendorLoginForm() {
         </div>
 
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
-          © 2026 VirtualVaani · Authorized NBFC partners only
+          © 2026 Finix · Authorized NBFC partners only
         </p>
       </div>
 

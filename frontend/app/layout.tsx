@@ -35,7 +35,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "LOS — Loan Origination System",
   description:
-    "Multi-bank loan origination + voice-agent ops console. Powered by Vaani.",
+    "Multi-bank loan origination + voice-agent ops console. Powered by Finix.",
 };
 
 /**

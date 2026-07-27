@@ -81,6 +81,7 @@ async def _persist(db_pool, application_id, r: dict) -> None:
                      interest_rate=$8, pillar_scores=$9::jsonb, effective_weights=$10::jsonb,
                      missing_pillars=$11, incomplete=$12, raw_provider_data=$13::jsonb,
                      config_version=$14, reasons=$15::jsonb,
+                     offer_options=$16::jsonb, max_eligible_amount=$17,
                      error=NULL, scored_at=NOW(), updated_at=NOW()
                    WHERE application_id=$1""",
                 application_id,
@@ -90,6 +91,7 @@ async def _persist(db_pool, application_id, r: dict) -> None:
                 json.dumps(r["effective_weights"]), list(r["missing_pillars"]),
                 r["incomplete"], json.dumps(r["raw_provider_data"]),
                 r["config_version"], json.dumps(r.get("reasons") or {}),
+                json.dumps(r.get("offer") or {}), r.get("max_eligible_amount"),
             )
             # Mirror a headline onto loan_applications for the portal list/detail.
             await conn.execute(

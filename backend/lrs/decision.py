@@ -126,3 +126,80 @@ def decide(
         max_affordable_emi=round(max_emi, 2),
         capacity_amount=round(capacity, 2),
     )
+
+
+def foir_for_income(income: float, risk_cfg: dict | None = None) -> float:
+    """Income-slab FOIR: the share of net income allowed to go to EMIs.
+    Lower incomes get a tighter cap. Falls back to DEFAULT_FOIR if no slabs."""
+    rc = risk_cfg or scorecard.load_risk_premium()
+    slabs = rc.get("foir_slabs")
+    if not slabs:
+        return DEFAULT_FOIR
+    inc = max(0.0, float(income or 0))
+    for s in slabs:
+        mx = s.get("max_income")
+        if mx is None or inc <= float(mx):
+            return float(s["foir"])
+    return float(slabs[-1]["foir"])
+
+
+def build_offer(
+    total_score: float,
+    *,
+    product_key: str | None = None,
+    requested_amount: float,
+    net_monthly_income: float,
+    existing_emi: float = 0.0,
+    risk_cfg: dict | None = None,
+) -> dict:
+    """Bajaj-style multi-tenure offer: for each configured tenure, the ROI
+    (base + score-band premium + tenure premium), the max amount the borrower's
+    FOIR capacity supports (capped at the product limit), the request-bounded
+    recommended amount, and both EMIs. Also the headline 'max eligible amount'
+    (best capacity across tenures). Pure function — no DB."""
+    rc = risk_cfg or scorecard.load_risk_premium()
+    product_key = product_key or rc.get("default_product")
+    product = rc["products"].get(product_key) or rc["products"][rc["default_product"]]
+
+    band = _band_for(total_score, product["bands"])
+    base = float(product["base_roi"]) + float(band["risk_premium"])
+    foir = foir_for_income(net_monthly_income, rc)
+    max_emi = max(0.0, float(net_monthly_income or 0) * foir - max(0.0, existing_emi or 0.0))
+
+    prod_max = float(product["max_amount"])
+    prod_min = float(product["min_amount"])
+    req = float(requested_amount or 0)
+    max_tenure = int(product["max_tenure_months"])
+    tenures = rc.get("tenure_options_months") or [max_tenure]
+    tprem = rc.get("tenure_roi_premium") or {}
+
+    options = []
+    max_eligible = 0.0
+    for t in tenures:
+        t = int(t)
+        if t > max_tenure:
+            continue
+        roi = round(base + float(tprem.get(str(t), 0.0)), 2)
+        cap = max(0.0, min(principal_for_emi(max_emi, roi, t), prod_max))
+        max_eligible = max(max_eligible, cap)
+        rec = min(req, cap) if req > 0 else cap
+        rec = max(0.0, min(rec, prod_max))
+        options.append({
+            "tenure_months": t,
+            "interest_rate": roi,
+            "max_amount": round(cap, 2),           # most the borrower qualifies for at this tenure
+            "recommended_amount": round(rec, 2),   # bounded by what they asked for
+            "emi": round(emi(rec, roi, t), 2),      # EMI on the recommended amount
+            "emi_at_max": round(emi(cap, roi, t), 2),
+            "below_min": cap < prod_min,            # capacity can't meet the product floor
+        })
+
+    return {
+        "max_eligible_amount": round(min(max_eligible, prod_max), 2),
+        "foir_used": round(foir, 2),
+        "max_affordable_emi": round(max_emi, 2),
+        "product_key": product_key,
+        "product_min_amount": prod_min,
+        "product_max_amount": prod_max,
+        "options": options,
+    }

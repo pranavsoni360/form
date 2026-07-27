@@ -47,9 +47,19 @@ async def score_application(
     result = engine.score(inputs, config=config)
 
     dinp = normalize.decision_inputs(app, inputs)
+    # Income-slab FOIR so the headline recommendation matches the tenure offer grid.
+    foir = decision.foir_for_income(dinp.get("net_monthly_income", 0.0))
     d = decision.decide(
-        result.total_score, scorecard_cfg=config,
+        result.total_score, scorecard_cfg=config, foir=foir,
         missing_pillars=result.missing_pillars, **dinp,
+    )
+    # Bajaj-style multi-tenure offer (max-eligible + per-tenure ROI/amount/EMI).
+    offer = decision.build_offer(
+        result.total_score,
+        product_key=dinp.get("product_key"),
+        requested_amount=dinp.get("requested_amount", 0.0),
+        net_monthly_income=dinp.get("net_monthly_income", 0.0),
+        existing_emi=dinp.get("existing_emi", 0.0),
     )
 
     reasons = explain.build_reasons(
@@ -67,6 +77,8 @@ async def score_application(
         "recommended_emi": d.recommended_emi,
         "interest_rate": d.interest_rate,
         "risk_band": d.risk_band,
+        "max_eligible_amount": offer["max_eligible_amount"],
+        "offer": offer,
         "pillar_scores": result.pillar_scores,
         "effective_weights": result.effective_weights,
         "missing_pillars": result.missing_pillars,

@@ -209,6 +209,14 @@ export function LRSScorePanel({
 
   const decision = data.decision as string;
   const ds = DECISION_STYLE[decision] ?? DECISION_STYLE.refer;
+  // Keep the headline ROI/EMI consistent with the tenure table: source them from
+  // the offer option matching the recommended tenure (that row carries the
+  // tenure-based ROI premium). Fall back to the stored figures for old scores.
+  const recOpt = (data.offer_options?.options || []).find(
+    (o: any) => o.tenure_months === data.recommended_tenure_m
+  );
+  const headlineRoi = recOpt?.interest_rate ?? data.interest_rate;
+  const headlineEmi = recOpt?.emi ?? data.recommended_emi;
   const pillars: any[] = Object.values(data.pillar_scores || {}).sort(
     (a: any, b: any) => (b.weight ?? 0) - (a.weight ?? 0)
   );
@@ -240,8 +248,8 @@ export function LRSScorePanel({
         {[
           ["Recommended", formatCurrency(data.recommended_amount || 0)],
           ["Tenure", `${data.recommended_tenure_m || 0} mo`],
-          ["EMI", formatCurrency(data.recommended_emi || 0)],
-          ["Interest", `${data.interest_rate}%`],
+          ["EMI", formatCurrency(headlineEmi || 0)],
+          ["Interest", `${headlineRoi}%`],
         ].map(([label, val]) => (
           <div key={label} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-gray-800/50">
             <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>

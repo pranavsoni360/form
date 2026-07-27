@@ -753,6 +753,23 @@ export default function LoanApplication() {
     return '';
   };
 
+  // Guarantor field validation (only enforced when a guarantor is required,
+  // i.e. loan amount > ₹1 lakh). Empty is left to the Required check.
+  const guarantorNameError = (raw: string): string => {
+    const v = (raw || '').trim();
+    if (!v) return '';
+    if (!/^[A-Za-z][A-Za-z .'-]*$/.test(v)) return 'Name can only contain letters (no numbers or symbols).';
+    if (v.replace(/[^A-Za-z]/g, '').length < 2) return 'Enter the full name of the guarantor.';
+    return '';
+  };
+  const guarantorPhoneError = (raw: string): string => {
+    const d = (raw || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (!/^[6-9]\d{9}$/.test(d)) return 'Enter a valid 10-digit mobile number starting with 6-9.';
+    if (/^(\d)\1{9}$/.test(d)) return 'Enter a valid mobile number.';
+    return '';
+  };
+
   const step4Valid = () => {
     const isCD = (formData.consumer_loan_type || 'personal') === 'consumer_durable';
     // Single validate() call so its setErrors doesn't wipe the merged errors below.
@@ -760,13 +777,23 @@ export default function LoanApplication() {
     if (isCD) Object.assign(reqFields, { product_name: 'Required', brand: 'Required', quotation_amount: 'Required', dealer_name: 'Required' });
     const base = validate(reqFields);
     const loanAmt = parseFloat(formData.loan_amount_requested || '0');
-    const guarantorValid = loanAmt > 100000 ? validate({ guarantor_name: 'Required', guarantor_phone: 'Required' }) : true;
     const amtErr = loanAmountError();
     const criminalValid = formData.criminal_records === true;
-    // Merge range + criminal errors on top of the required-field errors.
+
+    // Guarantor: required + format, only when the loan exceeds ₹1 lakh.
+    let gnErr = '', gpErr = '';
+    if (loanAmt > 100000) {
+      gnErr = !String(formData.guarantor_name || '').trim() ? 'Required' : guarantorNameError(formData.guarantor_name);
+      gpErr = !String(formData.guarantor_phone || '').trim() ? 'Required' : guarantorPhoneError(formData.guarantor_phone);
+    }
+    const guarantorValid = !gnErr && !gpErr;
+
+    // Merge every non-required-field error on top of the base required errors.
     setErrors((p: any) => ({
       ...p,
       ...(amtErr ? { loan_amount_requested: amtErr } : {}),
+      ...(gnErr ? { guarantor_name: gnErr } : {}),
+      ...(gpErr ? { guarantor_phone: gpErr } : {}),
       ...(!criminalValid ? { criminal_records: 'You must confirm you have no pending criminal cases to proceed' } : {}),
     }));
     return base && !amtErr && guarantorValid && criminalValid;
@@ -1602,11 +1629,15 @@ export default function LoanApplication() {
                   <div className="p-5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <F label="Guarantor Name" required={required} error={errors.guarantor_name} fieldName="guarantor_name" fieldSources={formData.field_sources}>
-                        <input type="text" value={formData.guarantor_name || ''} onChange={e => onChange('guarantor_name', e.target.value)}
+                        <input type="text" value={formData.guarantor_name || ''}
+                          onChange={e => onChange('guarantor_name', e.target.value.replace(/[^A-Za-z .'-]/g, ''))}
+                          onBlur={() => setErrors((p: any) => ({ ...p, guarantor_name: guarantorNameError(formData.guarantor_name) }))}
                           className={inp(errors.guarantor_name)} placeholder="Full name of guarantor" disabled={disabled} />
                       </F>
                       <F label="Guarantor Phone Number" required={required} error={errors.guarantor_phone} fieldName="guarantor_phone" fieldSources={formData.field_sources}>
-                        <input type="tel" value={formData.guarantor_phone || ''} onChange={e => onChange('guarantor_phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        <input type="tel" value={formData.guarantor_phone || ''}
+                          onChange={e => onChange('guarantor_phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                          onBlur={() => setErrors((p: any) => ({ ...p, guarantor_phone: guarantorPhoneError(formData.guarantor_phone) }))}
                           className={inp(errors.guarantor_phone)} placeholder="10-digit mobile number" maxLength={10} inputMode="numeric" disabled={disabled} />
                       </F>
                     </div>

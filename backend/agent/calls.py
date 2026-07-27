@@ -95,8 +95,16 @@ async def list_calls(
         idx += 1
 
     if status:
-        conditions.append(f"status = ${idx}")
-        params.append(status)
+        # "Failed" is the umbrella for all hard-failure outcomes (Failed +
+        # Invalid Phone + Call Not Connected), so counts/filters/exports match
+        # the batch dashboards and Call Logs. Specific sub-statuses (e.g.
+        # "Invalid Phone") still filter exactly when selected.
+        if status == "Failed":
+            conditions.append(f"status = ANY(${idx}::text[])")
+            params.append(["Failed", "Invalid Phone", "Call Not Connected"])
+        else:
+            conditions.append(f"status = ${idx}")
+            params.append(status)
         idx += 1
     if category:
         conditions.append(f"category = ${idx}")
@@ -636,8 +644,16 @@ async def export_all_calls(
     idx = 2
 
     if status:
-        conditions.append(f"status = ${idx}")
-        params.append(status)
+        # "Failed" is the umbrella for all hard-failure outcomes (Failed +
+        # Invalid Phone + Call Not Connected), so counts/filters/exports match
+        # the batch dashboards and Call Logs. Specific sub-statuses (e.g.
+        # "Invalid Phone") still filter exactly when selected.
+        if status == "Failed":
+            conditions.append(f"status = ANY(${idx}::text[])")
+            params.append(["Failed", "Invalid Phone", "Call Not Connected"])
+        else:
+            conditions.append(f"status = ${idx}")
+            params.append(status)
         idx += 1
     if category:
         conditions.append(f"category = ${idx}")

@@ -91,8 +91,18 @@ async def send_form_link(context: RunContext, loan_type: str, estimated_amount: 
                 ssl=False,
             ) as resp:
                 backend_ok = resp.status == 200
+                # The endpoint ALWAYS returns HTTP 200 — even when AiSensy rejects
+                # the message it returns 200 with {"whatsapp_sent": false} (the
+                # loan_application is created, but nothing is delivered). So
+                # HTTP 200 alone is a false "success": trust the body's
+                # `whatsapp_sent`, which reflects the REAL WhatsApp delivery.
+                try:
+                    result = await resp.json()
+                except Exception:
+                    result = {}
+        whatsapp_delivered = bool(result.get("whatsapp_sent"))
 
-        if backend_ok:
+        if backend_ok and whatsapp_delivered:
             session.form_link_sent = True
             session.loan_type = loan_type
             session.loan_amount = estimated_amount
@@ -109,7 +119,15 @@ async def send_form_link(context: RunContext, loan_type: str, estimated_amount: 
             # leaves the agent silent through to room teardown.
             asyncio.create_task(_auto_end_after_form_send(session, grace=10.0))
             return "Form link sent successfully."
-        return "Failed to send form link."
+        # HTTP 200 but WhatsApp NOT delivered (or a non-200). Do NOT set
+        # form_link_sent — leaving it False lets the end_call fallback retry the
+        # send. Surface the real reason so the failure is visible, not silent.
+        logger.error(
+            f"send_form_link: WhatsApp NOT delivered "
+            f"(backend_ok={backend_ok}, whatsapp_sent={whatsapp_delivered}, "
+            f"reason={result.get('message') or result.get('status')})"
+        )
+        return "Form link could not be delivered on WhatsApp."
     except Exception as e:
         logger.error(f"send_form_link error: {e}")
         return f"Error: {str(e)}"
@@ -251,10 +269,16 @@ async def end_call(context: RunContext, reason: str) -> str:
                     timeout=aiohttp.ClientTimeout(total=10),
                     ssl=False,
                 ) as resp:
-                    # Only mark sent on success — an unchecked 4xx/5xx used to
-                    # set form_link_sent=True and the interested customer never
-                    # received anything while the record said they did.
-                    if resp.status == 200:
+                    # Only mark sent when WhatsApp was ACTUALLY delivered. The
+                    # endpoint returns HTTP 200 even when AiSensy rejects the
+                    # message (app created, nothing delivered), so trust the
+                    # body's `whatsapp_sent` flag — not the status code — or the
+                    # record says "sent" while the customer received nothing.
+                    try:
+                        fb_result = await resp.json()
+                    except Exception:
+                        fb_result = {}
+                    if resp.status == 200 and bool(fb_result.get("whatsapp_sent")):
                         session.form_link_sent = True
                         logger.info(
                             f"WhatsApp form link sent to {session.phone} via end_call fallback "
@@ -262,8 +286,9 @@ async def end_call(context: RunContext, reason: str) -> str:
                         )
                     else:
                         logger.error(
-                            f"end_call fallback form send returned {resp.status}: "
-                            f"{await resp.text()}"
+                            f"end_call fallback WhatsApp NOT delivered "
+                            f"(status={resp.status}, whatsapp_sent={fb_result.get('whatsapp_sent')}, "
+                            f"reason={fb_result.get('message') or fb_result.get('status')})"
                         )
         except Exception as e:
             logger.error(f"WhatsApp send failed: {e}")

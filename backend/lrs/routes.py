@@ -67,6 +67,44 @@ async def rescore(application_id: str):
     return {"ok": True, "total_score": result["total_score"], "decision": result["decision"]}
 
 
+# Statuses safe to bulk re-score after a scorecard change: only PRE-DECISION
+# applications. Anything an officer/supervisor has already acted on
+# (officer_approved / *_rejected / approved / disbursed) is deliberately left
+# frozen so a config tweak can never silently flip a decision already made.
+_RESCORABLE_STATUSES = ("draft", "submitted", "documents_submitted")
+
+
+@router.post("/rescore-pending")
+async def rescore_pending():
+    """Bulk re-score every already-scored, PRE-DECISION application against the
+    latest active config (use after editing the scorecard). Runs async via the
+    job queue with force=True; decided/disbursed applications are never touched."""
+    from agent import state as _state
+    from services.job_worker import enqueue_job
+    db_pool = _state.db_pool
+    rows = await db_pool.fetch(
+        """SELECT la.id
+             FROM loan_applications la
+             JOIN lrs_scores l ON l.application_id = la.id
+            WHERE la.status = ANY($1::text[])
+            ORDER BY la.created_at DESC
+            LIMIT 500""",
+        list(_RESCORABLE_STATUSES),
+    )
+    for r in rows:
+        await enqueue_job(
+            db_pool, job_type="lrs_score",
+            payload={"application_id": str(r["id"]), "force": True},
+        )
+    logger.info("rescore-pending: queued %d application(s)", len(rows))
+    return {
+        "ok": True,
+        "queued": len(rows),
+        "rescorable_statuses": list(_RESCORABLE_STATUSES),
+        "note": "Approved / rejected / disbursed applications are intentionally not re-scored.",
+    }
+
+
 # ── Scorecard config endpoints (bank-configurable) ────────────────────────────
 
 @router.get("/config")

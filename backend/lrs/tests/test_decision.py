@@ -65,7 +65,31 @@ def test_capacity_caps_recommended_amount():
 def test_tenure_clamped_to_product_max():
     r = decision.decide(
         80, product_key="personal_loan",
-        requested_amount=150000, requested_tenure_months=120,  # over 24 max
+        requested_amount=150000, requested_tenure_months=120,  # over the product max
         net_monthly_income=100000,
     )
-    assert r.recommended_tenure_m == 24
+    # personal_loan max_tenure_months is 36 (multi-tenure offer supports 12/24/36).
+    assert r.recommended_tenure_m == 36
+
+
+def test_build_offer_multi_tenure():
+    offer = decision.build_offer(
+        80, product_key="personal_loan",
+        requested_amount=100000, net_monthly_income=80000, existing_emi=0,
+    )
+    opts = offer["options"]
+    assert [o["tenure_months"] for o in opts] == [12, 24, 36]
+    # ROI rises with tenure (Bajaj-style tenure premium)
+    rois = [o["interest_rate"] for o in opts]
+    assert rois[0] < rois[1] < rois[2]
+    for o in opts:
+        assert o["emi"] <= offer["max_affordable_emi"] + 1          # affordable within FOIR
+        assert o["recommended_amount"] <= offer["product_max_amount"]  # never over product cap
+    assert 0 < offer["max_eligible_amount"] <= offer["product_max_amount"]
+
+
+def test_foir_slab_lowers_capacity_for_low_income():
+    # income-slab FOIR: <=25k -> 0.40, <=50k -> 0.50, else 0.55
+    assert decision.foir_for_income(20000) == 0.40
+    assert decision.foir_for_income(45000) == 0.50
+    assert decision.foir_for_income(80000) == 0.55

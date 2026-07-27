@@ -1,9 +1,11 @@
 ﻿# backend/agent/whatsapp.py
+import os
 import json
 import uuid
 import secrets
 import time
 import logging
+from datetime import timedelta
 
 import aiohttp
 from fastapi import APIRouter, Request
@@ -255,7 +257,45 @@ async def send_whatsapp_form(request: Request):
     aisensy_ok = False
     aisensy_msg_id = None       # AiSensy submitted_message_id (proof of accept)
     aisensy_fail_reason = None  # why the send did not succeed (for audit + UI)
-    if AISENSY_API_KEY and phone_norm:
+
+    # ── Dedup guard: don't re-send a form link to the same number within a
+    # cooldown window. Repeated sends to one number (from re-dials / retries /
+    # the agent invoking send_form_link more than once) trip WhatsApp/Meta's
+    # frequency protection ("not delivered to maintain healthy ecosystem
+    # engagement"), which then blocks EVEN legitimate first sends. We treat a
+    # recent SUCCESSFUL send as "already delivered" and skip re-firing.
+    # Window defaults to 24h (Meta's own session window). QA DB is exempt so the
+    # test team can re-send from one number repeatedly.
+    _skip_send = False
+    if phone_norm and not await _is_qa_db():
+        try:
+            cooldown_hours = int(os.getenv("FORM_RESEND_COOLDOWN_HOURS", "24"))
+        except ValueError:
+            cooldown_hours = 24
+        if cooldown_hours > 0:
+            recent = await _state.db_pool.fetchrow(
+                """SELECT sent_at FROM whatsapp_messages
+                     WHERE phone = $1 AND message_type = 'form_link'
+                       AND status = 'sent' AND sent_at IS NOT NULL
+                       AND sent_at > $2
+                     ORDER BY sent_at DESC LIMIT 1""",
+                phone_norm,
+                now_ist() - timedelta(hours=cooldown_hours),
+            )
+            if recent:
+                _skip_send = True
+                aisensy_ok = True  # already delivered — treat as success
+                logger.info(
+                    "Form link to %s skipped — already sent %s (within %dh cooldown)",
+                    phone_norm, recent["sent_at"], cooldown_hours,
+                )
+                print(
+                    f"[AiSensy Form] SKIPPED (dedup) dest={phone_norm} "
+                    f"last_sent={recent['sent_at']} cooldown={cooldown_hours}h",
+                    flush=True,
+                )
+
+    if not _skip_send and AISENSY_API_KEY and phone_norm:
         wa_phone = "".join(filter(str.isdigit, phone_norm))
         if len(wa_phone) == 10:
             wa_phone = f"91{wa_phone}"
@@ -345,7 +385,9 @@ async def send_whatsapp_form(request: Request):
     # Brings the previously-unused delivery-tracking table to life so we keep a
     # per-attempt record (message id on success, reason on failure). A future
     # AiSensy delivery-receipt webhook can UPDATE delivered_at on this row.
-    if phone_norm:
+    # Skip when we short-circuited on the dedup guard — no attempt was made, so
+    # a new audit row would double-count the earlier successful send.
+    if phone_norm and not _skip_send:
         try:
             await _state.db_pool.execute(
                 """INSERT INTO whatsapp_messages

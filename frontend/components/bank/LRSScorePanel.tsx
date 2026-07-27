@@ -250,6 +250,47 @@ export function LRSScorePanel({
         ))}
       </div>
 
+      {/* Max eligible + Bajaj-style tenure options */}
+      {data.offer_options?.options?.length > 0 && (
+        <div className="mt-5 border-t border-slate-100 pt-4 dark:border-gray-700/50">
+          <div className="mb-3 flex items-end justify-between">
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loan Offer</div>
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400">Eligible up to</div>
+              <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                {formatCurrency(data.offer_options.max_eligible_amount ?? data.max_eligible_amount ?? 0)}
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-slate-100 dark:border-gray-700/60">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wider text-slate-400 dark:bg-gray-800/50">
+                  <th className="px-3 py-2 font-medium">Tenure</th>
+                  <th className="px-3 py-2 text-right font-medium">Interest</th>
+                  <th className="px-3 py-2 text-right font-medium">Loan Amount</th>
+                  <th className="px-3 py-2 text-right font-medium">Monthly EMI</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-gray-700/50">
+                {data.offer_options.options.map((o: any) => (
+                  <tr key={o.tenure_months} className="text-gray-700 dark:text-gray-300">
+                    <td className="px-3 py-2 font-medium">{o.tenure_months} months</td>
+                    <td className="px-3 py-2 text-right">{o.interest_rate}%</td>
+                    <td className="px-3 py-2 text-right">{formatCurrency(o.recommended_amount)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-gray-900 dark:text-white">{formatCurrency(o.emi)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1.5 text-[10px] text-slate-400">
+            Longer tenure → lower EMI, slightly higher interest.
+            {data.offer_options.foir_used != null && ` FOIR ${Math.round(data.offer_options.foir_used * 100)}% of net income.`}
+          </p>
+        </div>
+      )}
+
       {/* Why this score (explainability) */}
       {data.reasons?.summary && (
         <div className="mt-5 border-t border-slate-100 pt-4 dark:border-gray-700/50">

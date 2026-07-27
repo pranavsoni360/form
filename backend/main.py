@@ -3398,6 +3398,11 @@ async def submit_form_session(session_token: str, request: Request):
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
+    if app_row.get("pan_mismatch_locked"):
+        raise HTTPException(
+            status_code=423,
+            detail="Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting."
+        )
     # Server-side product-wise loan amount guard (mirrors the client validation).
     _validate_loan_amount(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──

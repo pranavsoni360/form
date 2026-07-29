@@ -120,7 +120,7 @@ function PillarParamTable({ pillar }: { pillar: any }) {
                   <td className="py-1.5 text-right">
                     {param.present && param.score != null ? Math.round(param.score) : "—"}
                   </td>
-                  <td className="py-1.5 text-right text-slate-500 dark:text-gray-400">{param.weight}%</td>
+                  <td className="py-1.5 text-right text-slate-500 dark:text-gray-400">{Math.round((param.weight ?? 0) * 10) / 10}%</td>
                   <td className="py-1.5 text-right font-medium text-indigo-600 dark:text-indigo-400">
                     {param.present && param.score != null
                       ? `+${(((param.score ?? 0) * (param.weight ?? 0)) / 100).toFixed(1)}`

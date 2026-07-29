@@ -60,7 +60,7 @@ export default function VendorApplicationsPage() {
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         {q.isLoading ? (
           <div className="py-12 text-center text-sm text-slate-500">Loading…</div>
         ) : apps.length === 0 ? (
@@ -69,7 +69,7 @@ export default function VendorApplicationsPage() {
             <div className="mt-1 text-xs">When a bank assigns a loan to your vendor, it'll appear here.</div>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 dark:bg-gray-800/50">
               <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
                 <th className="px-5 py-3 font-medium">Applicant</th>

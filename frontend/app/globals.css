@@ -214,3 +214,9 @@
 .dark input::placeholder,
 .dark textarea::placeholder { color: hsl(217 14% 50%); }
 .dark select option { background-color: hsl(222 47% 9%); }
+
+/* ── Responsive safety nets (global) ─────────────────────────────────────────
+   Media never forces horizontal overflow; long words/URLs wrap instead of
+   pushing the layout wide on small screens. Data tables opt into horizontal
+   scroll via their own overflow-x-auto containers (per component). */
+img, svg, video, canvas { max-width: 100%; height: auto; }

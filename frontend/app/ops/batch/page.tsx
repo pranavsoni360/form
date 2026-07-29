@@ -796,7 +796,7 @@ function BatchDetailDialog({
           {(q.error as Error).message}
         </div>
       ) : (
-        <div className="max-h-[60vh] overflow-y-auto">
+        <div className="max-h-[60vh] overflow-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-[10px] uppercase tracking-[0.14em] text-muted-foreground">

@@ -162,7 +162,7 @@ export default function BankApplicationsListPage() {
         </div>
 
         {/* Table */}
-        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
           {q.isLoading ? (
             <div className="grid place-items-center py-16">
               <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -172,7 +172,7 @@ export default function BankApplicationsListPage() {
               {apps.length === 0 ? "No applications assigned to your bank yet." : `No results for "${search || filter}".`}
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
                 <tr className="text-left text-xs uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   <th className="px-5 py-3 font-semibold">Applicant</th>

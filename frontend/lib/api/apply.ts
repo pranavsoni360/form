@@ -71,6 +71,15 @@ export async function submitFormSession(sessionToken: string) {
   });
 }
 
+// Customer soft-delete of their own application (status -> 'withdrawn').
+export async function withdrawApplication(sessionToken: string, reason?: string) {
+  return apiFetch("/api/withdraw-application", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_token: sessionToken, reason }),
+  });
+}
+
 export async function uploadDocumentSession(
   sessionToken: string,
   documentType: string,

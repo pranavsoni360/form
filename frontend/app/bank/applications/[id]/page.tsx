@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { API_URL, getApplicationDetail, officerApprove, officerReject, supervisorApprove, supervisorReject, initiateDisbursement, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate, formatDateTime, maskPAN, maskAadhaar } from '@/lib/api';
-import { ArrowLeft, User, Briefcase, FileText, ClipboardCheck, CheckCircle2, XCircle, Clock, AlertTriangle, Eye, CreditCard, Shield, Upload, Loader2, ChevronDown, ChevronUp, Banknote } from 'lucide-react';
+import { API_URL, getApplicationDetail, officerApprove, officerReject, supervisorApprove, supervisorReject, initiateDisbursement, cancelApplication, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate, formatDateTime, maskPAN, maskAadhaar } from '@/lib/api';
+import { ArrowLeft, User, Briefcase, FileText, ClipboardCheck, CheckCircle2, XCircle, Clock, AlertTriangle, Eye, CreditCard, Shield, Upload, Loader2, ChevronDown, ChevronUp, Banknote, Ban } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 import { AssignVendorPanel } from '@/components/bank/AssignVendorPanel';
@@ -32,6 +32,8 @@ export default function ApplicationDetailPage() {
   const [notes, setNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [showReject, setShowReject] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [showCancel, setShowCancel] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ personal: true, employment: true, kyc: true, documents: true, ai: true });
 
   useEffect(() => {
@@ -65,6 +67,8 @@ export default function ApplicationDetailPage() {
       setNotes('');
       setRejectionReason('');
       setShowReject(false);
+      setCancelReason('');
+      setShowCancel(false);
     } catch (err: any) {
       alert(err.message || 'Action failed');
     } finally { setActionLoading(false); }
@@ -96,6 +100,10 @@ export default function ApplicationDetailPage() {
   const canSupervisorAct = isSupervisor && ['officer_approved', 'documents_submitted'].includes(app.status);
   
   const canDisburse = isSupervisor && app.status === 'officer_approved';
+
+  // Cancel: any bank user, any stage BEFORE money is out (disbursed_at signals
+  // "money out"), and not already cancelled/withdrawn.
+  const canCancel = isOfficer && !app.disbursed_at && !['cancelled', 'withdrawn'].includes(app.status);
 
   const Section = ({ title, icon: Icon, sectionKey, children }: { title: string; icon: any; sectionKey: string; children: React.ReactNode }) => (
     <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm dark:shadow-gray-900/30 overflow-hidden transition-colors">
@@ -324,7 +332,7 @@ export default function ApplicationDetailPage() {
         </div>
 
         {/* Action Panel */}
-        {(canOfficerAct || canSupervisorAct || canDisburse) && (
+        {(canOfficerAct || canSupervisorAct || canDisburse || canCancel) && (
           <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm dark:shadow-gray-900/30 p-5 transition-colors">
             <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Actions</h3>
             <div className="space-y-3">
@@ -334,6 +342,11 @@ export default function ApplicationDetailPage() {
               {showReject && (
                 <input value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} placeholder="Rejection reason (required)..."
                   className="w-full px-4 py-3 border border-red-300 dark:border-red-700 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm focus:ring-2 focus:ring-red-500 outline-none" />
+              )}
+
+              {showCancel && (
+                <input value={cancelReason} onChange={e => setCancelReason(e.target.value)} placeholder="Cancellation reason (optional)..."
+                  className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm focus:ring-2 focus:ring-slate-500 outline-none" />
               )}
 
               <div className="flex flex-wrap gap-2">
@@ -362,6 +375,12 @@ export default function ApplicationDetailPage() {
                   <button onClick={() => handleAction(() => initiateDisbursement(token, appId, notes))} disabled={actionLoading}
                     className="px-4 py-2 bg-cyan-600 text-white text-sm font-medium rounded-lg hover:bg-cyan-700 disabled:opacity-50 flex items-center gap-1">
                     <Banknote className="w-4 h-4" /> Approve & Disburse
+                  </button>
+                )}
+                {canCancel && (
+                  <button onClick={() => { if (showCancel) handleAction(() => cancelApplication(token, appId, cancelReason)); else setShowCancel(true); }} disabled={actionLoading}
+                    className="px-4 py-2 bg-slate-700 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center gap-1">
+                    {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />} {showCancel ? 'Confirm Cancel' : 'Cancel Application'}
                   </button>
                 )}
               </div>

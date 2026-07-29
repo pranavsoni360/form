@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_URL } from '@/lib/api/index'
+import { API_URL, withdrawApplication } from '@/lib/api/index'
 import { SESSION_KEYS } from '@/lib/utils/constants';
-import { Loader2, X, ChevronRight, FileText, Edit3, CheckCircle, Clock, AlertCircle, TrendingUp, Phone } from 'lucide-react';
+import { Loader2, X, ChevronRight, FileText, Edit3, CheckCircle, Clock, AlertCircle, TrendingUp, Phone, Trash2 } from 'lucide-react';
 
 // ── Status configuration ────────────────────────────────────────────────────
 const STATUS: Record<string, { label: string; color: string; light: string; dot: string; step: number; msg: string }> = {
@@ -19,6 +19,8 @@ const STATUS: Record<string, { label: string; color: string; light: string; dot:
   vendor_assigned:     { label: 'Processing',      color: '#D97706', light: '#FFFBEB', dot: '#FCD34D', step: 6, msg: 'NBFC partner is processing disbursement' },
   vendor_rejected:     { label: 'NBFC Declined',   color: '#DC2626', light: '#FEF2F2', dot: '#FCA5A5', step: -1, msg: 'Contact your bank for alternate options' },
   disbursed:           { label: 'Disbursed',        color: '#059669', light: '#F0FDF4', dot: '#6EE7B7', step: 7, msg: 'Loan credited to your account' },
+  cancelled:           { label: 'Cancelled',        color: '#64748B', light: '#F8FAFC', dot: '#CBD5E1', step: -1, msg: 'This application was cancelled by the bank' },
+  withdrawn:           { label: 'Deleted',          color: '#64748B', light: '#F8FAFC', dot: '#CBD5E1', step: -1, msg: 'You deleted this application' },
 };
 
 const STEPS = ['Filling', 'Submitted', 'Review', 'Approved', 'NBFC', 'Done'];
@@ -29,21 +31,49 @@ export default function CustomerDashboard() {
   const [loading, setLoading] = useState(true);
   const [app, setApp]   = useState<any>(null);
   const [drawer, setDrawer] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const s = sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
     if (!s) { router.push('/'); return; }
     fetch(`${API_URL}/api/get-application?session_token=${s}`)
       .then(r => { if (r.status === 401) { router.push('/'); return null; } return r.json(); })
-      .then(d => { if (d?.status === 'success') setApp(d.data); })
+      .then(d => {
+        // A withdrawn application is "deleted" from the customer's point of
+        // view — clear the session and send them home.
+        if (d?.status === 'success' && d.data?.status === 'withdrawn') {
+          sessionStorage.removeItem(SESSION_KEYS.LOAN_SESSION);
+          router.push('/');
+          return;
+        }
+        if (d?.status === 'success') setApp(d.data);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
+  const handleDelete = async () => {
+    const s = sessionStorage.getItem(SESSION_KEYS.LOAN_SESSION);
+    if (!s) { router.push('/'); return; }
+    setDeleting(true);
+    try {
+      await withdrawApplication(s);
+      sessionStorage.removeItem(SESSION_KEYS.LOAN_SESSION);
+      router.push('/');
+    } catch (err: any) {
+      alert(err?.message || 'Could not delete the application. Please try again.');
+      setDeleting(false);
+      setShowDelete(false);
+    }
+  };
+
   const s = app ? (STATUS[app.status] || STATUS.draft) : null;
   const isDraft    = app?.status === 'draft';
   const isRejected = app && ['officer_rejected','supervisor_rejected','vendor_rejected'].includes(app.status);
-  const isDisbursed = app?.status === 'disbursed';
+  const isDisbursed = app?.status === 'disbursed' || !!app?.disbursed_at;
+  // Customer can delete (soft-withdraw) any time before money is out.
+  const canDelete = !!app && !isDisbursed && !['withdrawn', 'cancelled'].includes(app.status);
   const stepIdx = s ? Math.max(0, STEP_MAP.indexOf(s.step)) : 0;
   const pct = isRejected ? 100 : Math.round((stepIdx / (STEPS.length - 1)) * 100);
   const formProgress = Math.round(((app?.highest_step || 1) / 6) * 100);
@@ -160,9 +190,42 @@ export default function CustomerDashboard() {
   );
 
   // ── Main page ──────────────────────────────────────────────────────────────
+  // ── Delete confirmation ──────────────────────────────────────────────────
+  const DeleteConfirm = () => !showDelete ? null : (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-5"
+      style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(6px)' }}
+      onClick={e => { if (e.target === e.currentTarget && !deleting) setShowDelete(false); }}>
+      <div className="w-full max-w-sm bg-white rounded-2xl overflow-hidden" style={{ boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div className="px-5 pt-5 pb-4 text-center">
+          <div className="mx-auto mb-3 w-12 h-12 rounded-full flex items-center justify-center" style={{ background: '#FEF2F2' }}>
+            <Trash2 className="w-5 h-5" style={{ color: '#DC2626' }} />
+          </div>
+          <p className="font-bold text-base" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Delete application?</p>
+          <p className="text-sm mt-1.5" style={{ color: '#64748B', fontFamily: 'var(--font-body)' }}>
+            Your loan application {app?.loan_id ? <span className="font-semibold" style={{ color: '#0F172A' }}>{app.loan_id}</span> : ''} will be removed and you'll be signed out. This can't be undone from your side.
+          </p>
+        </div>
+        <div className="flex gap-2 px-5 pb-5">
+          <button onClick={() => setShowDelete(false)} disabled={deleting}
+            className="flex-1 py-3 rounded-xl text-sm font-semibold transition hover:opacity-80 disabled:opacity-50"
+            style={{ background: '#F1F5F9', color: '#64748B', fontFamily: 'var(--font-heading)' }}>
+            Keep it
+          </button>
+          <button onClick={handleDelete} disabled={deleting}
+            className="flex-1 py-3 rounded-xl text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+            style={{ background: '#DC2626', fontFamily: 'var(--font-heading)' }}>
+            {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            {deleting ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <>
       <StatusDrawer />
+      <DeleteConfirm />
       <div className="min-h-screen" style={{ background: '#EEF2F9' }}>
 
         {/* ── TOP SECTION ── */}
@@ -309,6 +372,16 @@ export default function CustomerDashboard() {
                     Sign out
                   </button>
                 </div>
+
+                {/* Delete application (soft-delete) */}
+                {canDelete && (
+                  <button onClick={() => setShowDelete(true)}
+                    className="mt-1 flex w-full items-center justify-center gap-2 py-3 rounded-xl text-xs font-semibold transition hover:opacity-80"
+                    style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', fontFamily: 'var(--font-body)' }}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete this application
+                  </button>
+                )}
               </>
             )}
           </div>

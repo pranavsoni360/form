@@ -931,6 +931,13 @@ class OfficerRejectRequest(BaseModel):
     notes: Optional[str] = None
     rejection_reason: Optional[str] = None
 
+class CancelApplicationRequest(BaseModel):
+    reason: Optional[str] = None
+
+class WithdrawApplicationRequest(BaseModel):
+    session_token: str
+    reason: Optional[str] = None
+
 class GenerateFormLinksRequest(BaseModel):
     customers: List[CustomerData]
     bank_id: Optional[str] = None
@@ -1959,6 +1966,46 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
             except Exception as e:
                 print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
+
+@app.post("/api/bank/applications/{app_id}/cancel")
+async def cancel_application(app_id: str, body: CancelApplicationRequest, user: dict = Depends(get_bank_officer)):
+    """Staff-initiated cancel: void an application (duplicate, data error, customer
+    request over phone, etc.). Allowed at ANY stage before money is out.
+
+    "Money out" is signalled by disbursed_at IS NOT NULL (the bank-side status
+    stays 'approved' even after vendor disbursement — see routers/vendors.py), so
+    a disbursed loan can never be cancelled here. Sets status='cancelled' and
+    records the actor + reason in the status_transitions audit log."""
+    bank_id = uuid.UUID(user["bank_id"])
+    actor_id = uuid.UUID(user["id"])
+    app_row = await db_pool.fetchrow(
+        "SELECT * FROM loan_applications WHERE id = $1 AND bank_id = $2",
+        uuid.UUID(app_id), bank_id
+    )
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found or not in your bank")
+    current_status = app_row["status"]
+    if app_row.get("disbursed_at") is not None:
+        raise HTTPException(status_code=400, detail="Cannot cancel a disbursed loan — funds have already been released.")
+    if current_status in ("cancelled", "withdrawn"):
+        raise HTTPException(status_code=400, detail=f"Application is already '{current_status}'.")
+    changed_by_type = "bank_supervisor" if user["role"] == "bank_supervisor" else "bank_officer"
+    await db_pool.execute(
+        """UPDATE loan_applications
+           SET status = 'cancelled', cancelled_at = $1, cancellation_reason = $2
+           WHERE id = $3""",
+        now_utc(), body.reason, uuid.UUID(app_id)
+    )
+    await record_transition(uuid.UUID(app_id), current_status, "cancelled", changed_by_type, actor_id, body.reason)
+    if app_row["phone"]:
+        message = (
+            f"Dear {app_row['customer_name']},\n\n"
+            f"Your loan application has been cancelled.\n\n"
+            f"Loan ID: {app_row['loan_id']}\n"
+            f"{('Reason: ' + body.reason) if body.reason else 'Please contact your branch for details.'}\n\n- Your Bank"
+        )
+        await send_whatsapp_message(app_row["phone"], message)
+    return {"status": "success", "message": "Application cancelled", "new_status": "cancelled"}
 
 # ============================================
 # FORM TOKEN & APPLICATION ENDPOINTS (EXISTING)
@@ -3164,6 +3211,43 @@ async def get_application(session_token: str, request: Request):
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
     return {"status": "success", "data": app_dict, "session_valid_until": expires_at.isoformat()}
+
+@app.post("/api/withdraw-application")
+async def withdraw_application(body: WithdrawApplicationRequest):
+    """Customer-initiated soft-delete of their OWN application.
+
+    Auth mirrors /api/get-application (OTP-verified, non-expired, active loan
+    session). Sets status='withdrawn' — the application disappears from the
+    customer's view but the row + audit trail are preserved for compliance.
+    Only allowed before money is out (disbursed_at IS NULL) and while the app
+    is not already in a terminal cancelled/withdrawn state."""
+    session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", body.session_token)
+    if not session or not session["otp_verified"]:
+        raise HTTPException(status_code=401, detail="Invalid session. Please login again.")
+    expires_at = session["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now_utc():
+        raise HTTPException(status_code=401, detail="Session expired. Please login again.")
+    last_activity = session["last_activity_at"]
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    if (now_utc() - last_activity).total_seconds() > 300:
+        raise HTTPException(status_code=401, detail="Session inactive for 5 minutes. Please re-verify.")
+    app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    current_status = app_row["status"]
+    if app_row.get("disbursed_at") is not None:
+        raise HTTPException(status_code=400, detail="A disbursed loan cannot be deleted. Please contact your branch.")
+    if current_status in ("cancelled", "withdrawn"):
+        raise HTTPException(status_code=400, detail="This application has already been removed.")
+    await db_pool.execute(
+        "UPDATE loan_applications SET status = 'withdrawn', withdrawn_at = $1 WHERE id = $2",
+        now_utc(), session["application_id"]
+    )
+    await record_transition(session["application_id"], current_status, "withdrawn", "customer", None, body.reason)
+    return {"status": "success", "message": "Application deleted"}
 
 @app.post("/api/session-keepalive")
 async def session_keepalive(request: Request):

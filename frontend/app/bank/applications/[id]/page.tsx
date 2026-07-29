@@ -179,7 +179,8 @@ export default function ApplicationDetailPage() {
         )}
 
         {/* LRS Credit Assessment */}
-        {token && <LRSScorePanel token={token} applicationId={appId} canRescore={isOfficer} />}
+        {token && <LRSScorePanel token={token} applicationId={appId} canRescore={isOfficer}
+          applicant={{ name: app.customer_name, loanId: app.loan_id, phone: app.phone }} />}
 
         {/* Personal Details */}
         <Section title="Personal Details" icon={User} sectionKey="personal">

@@ -531,7 +531,7 @@ const autoSendOTP = async (phone: string) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Middle Name">
                   <input type="text" value={formData.middle_name || ''} onChange={e => onChange('middle_name', e.target.value)} className={inp('')} placeholder="Optional" />
                 </F>
@@ -540,7 +540,7 @@ const autoSendOTP = async (phone: string) => {
                 </F>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Date of Birth" required error={errors.date_of_birth}>
                   <input type="date" value={formData.date_of_birth || ''} onChange={e => onChange('date_of_birth', e.target.value)} className={inp(errors.date_of_birth)} max={new Date().toISOString().split('T')[0]} />
                 </F>
@@ -552,7 +552,7 @@ const autoSendOTP = async (phone: string) => {
                 </F>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Marital Status">
                   <select value={formData.marital_status || ''} onChange={e => onChange('marital_status', e.target.value)} className={inp('')}>
                     <option value="">Select</option>
@@ -585,7 +585,7 @@ const autoSendOTP = async (phone: string) => {
             <div className="space-y-5">
               <h2 className="text-xl font-bold text-gray-900">Occupation Details</h2>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Qualification" required error={errors.qualification}>
                   <select value={formData.qualification || ''} onChange={e => onChange('qualification', e.target.value)} className={inp(errors.qualification)}>
                     <option value="">Select</option>
@@ -600,7 +600,7 @@ const autoSendOTP = async (phone: string) => {
                 </F>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Industry Type" required error={errors.industry_type}>
                   <select value={formData.industry_type || ''} onChange={e => onChange('industry_type', e.target.value)} className={inp(errors.industry_type)}>
                     <option value="">Select</option>
@@ -615,7 +615,7 @@ const autoSendOTP = async (phone: string) => {
                 </F>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Employer Name">
                   <input type="text" value={formData.employer_name || ''} onChange={e => onChange('employer_name', e.target.value)} className={inp('')} placeholder="Company / Business name" />
                 </F>
@@ -624,7 +624,7 @@ const autoSendOTP = async (phone: string) => {
                 </F>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Total Work Experience (yrs)" required error={errors.total_work_experience}>
                   <input type="number" step="0.5" min="0" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" />
                 </F>
@@ -633,7 +633,7 @@ const autoSendOTP = async (phone: string) => {
                 </F>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <F label="Residential Status" required error={errors.residential_status}>
                   <select value={formData.residential_status || ''} onChange={e => onChange('residential_status', e.target.value)} className={inp(errors.residential_status)}>
                     <option value="">Select</option>
@@ -663,7 +663,7 @@ const autoSendOTP = async (phone: string) => {
 
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-blue-800">Loan Details</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <F label="Loan Amount (₹)" required error={errors.loan_amount_requested}>
                     <input type="number" value={formData.loan_amount_requested || formData.loan_amount || ''} onChange={e => onChange('loan_amount_requested', e.target.value)} className={inp(errors.loan_amount_requested)} placeholder="e.g. 500000" />
                   </F>
@@ -687,7 +687,7 @@ const autoSendOTP = async (phone: string) => {
 
               <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-4">
                 <p className="text-sm font-semibold text-green-800">Financial Details</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <F label="Monthly Gross Income (₹)" required error={errors.monthly_gross_income}>
                     <input type="number" value={formData.monthly_gross_income || ''} onChange={e => onChange('monthly_gross_income', e.target.value)} className={inp(errors.monthly_gross_income)} placeholder="Before deductions" />
                   </F>
@@ -695,7 +695,7 @@ const autoSendOTP = async (phone: string) => {
                     <input type="number" value={formData.monthly_deductions || ''} onChange={e => onChange('monthly_deductions', e.target.value)} className={inp('')} placeholder="Tax, PF etc." />
                   </F>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <F label="Existing Monthly EMIs (₹)">
                     <input type="number" value={formData.monthly_emi_existing || ''} onChange={e => onChange('monthly_emi_existing', e.target.value)} className={inp('')} placeholder="0 if none" />
                   </F>

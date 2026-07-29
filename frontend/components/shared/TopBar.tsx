@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { getAccessToken, logout } from "@/lib/auth";
 import { API_URL } from "@/lib/api";
 import { ConnectionDot } from "./ConnectionDot";
+import { MobileNav } from "./MobileNav";
 
 /**
  * VirtualVaani-style top bar.
@@ -444,9 +445,12 @@ export function TopBar({ title }: { title?: string }) {
   const crumbs = derivedCrumbs(pathname || "/ops");
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card/80 px-8 backdrop-blur-md">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-card/80 px-4 backdrop-blur-md sm:gap-4 lg:px-8">
+      {/* Mobile hamburger — hidden on desktop (sidebar is visible there) */}
+      <MobileNav />
+
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-1.5 text-sm" aria-label="Breadcrumb">
+      <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
         {crumbs.map((c, i) => (
           <React.Fragment key={c.href + i}>
             {i > 0 && (

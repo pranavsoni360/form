@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
  * white text, slightly inset radius.
  */
 
-type NavItem = {
+export type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -43,9 +43,9 @@ type NavItem = {
 // "Show me state" (Dashboard / Live) → "Show me data" (Calls / Recordings /
 // Callbacks / Analytics) → "Take action" (Batch / Exports) → "Show me the
 // system" (Phones / Workers / Errors / Funnel).
-type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
+export type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
 
-const NAV_GROUPS: ReadonlyArray<NavGroup> = [
+export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   {
     label: "Overview",
     items: [
@@ -93,7 +93,8 @@ export function Sidebar({ className }: { className?: string }) {
   return (
     <aside
       className={cn(
-        "flex h-screen w-64 shrink-0 sticky top-0 flex-col border-r border-border bg-card",
+        // Hidden on mobile/tablet — the hamburger MobileNav takes over there.
+        "hidden h-screen w-64 shrink-0 sticky top-0 flex-col border-r border-border bg-card lg:flex",
         className
       )}
     >

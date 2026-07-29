@@ -24,7 +24,7 @@ export function AppShell({
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar title={subtitle} />
-        <main className="bg-dotgrid relative flex-1 px-8 py-7">
+        <main className="bg-dotgrid relative flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
           {/* Page heading — VirtualVaani always shows page title + small
               registered/count subtitle just above the action button row. */}
           <div className="mb-6">

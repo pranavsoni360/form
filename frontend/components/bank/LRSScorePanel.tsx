@@ -194,13 +194,13 @@ export function LRSScorePanel({
     }).join("");
 
     const paramSections = pillars.map((p: any) => {
-      const kids = Object.values(p.children || {});
+      const kids = Object.entries(p.children || {});
       if (!kids.length) return "";
-      const rows = kids.map((c: any) => {
+      const rows = kids.map(([ck, c]: [string, any]) => {
         const val = c.value != null ? esc(c.value) : "";
         const band = c.rating ? (val ? " · " : "") + esc(c.rating) : "";
         const points = c.present && c.score != null ? "+" + (((c.score ?? 0) * (c.weight ?? 0)) / 100).toFixed(1) : "—";
-        return `<tr><td>${esc(c.title || "")}</td><td class="r">${(val + band) || "—"}</td><td class="r">${c.present && c.score != null ? Math.round(c.score) : "—"}</td><td class="r">${pct(c.weight ?? 0)}</td><td class="r">${points}</td></tr>`;
+        return `<tr><td>${esc(c.title || ck)}</td><td class="r">${(val + band) || "—"}</td><td class="r">${c.present && c.score != null ? Math.round(c.score) : "—"}</td><td class="r">${pct(c.weight ?? 0)}</td><td class="r">${points}</td></tr>`;
       }).join("");
       return `<h4>${esc(p.title)} · ${Math.round(p.score ?? 0)}/100</h4><table><thead><tr><th>Parameter</th><th class="r">Value · Band</th><th class="r">Score</th><th class="r">Weight</th><th class="r">Points</th></tr></thead><tbody>${rows}</tbody></table>`;
     }).join("");

@@ -99,9 +99,10 @@ function PillarParamTable({ pillar }: { pillar: any }) {
             <thead>
               <tr className="text-left text-[9px] uppercase tracking-wider text-slate-400">
                 <th className="pb-1.5 font-medium">Parameter</th>
-                <th className="pb-1.5 text-right font-medium">Value</th>
+                <th className="pb-1.5 text-right font-medium">Value · Band</th>
                 <th className="pb-1.5 text-right font-medium">Score</th>
                 <th className="pb-1.5 text-right font-medium">Weight</th>
+                <th className="pb-1.5 text-right font-medium">Points</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-gray-800">
@@ -112,20 +113,26 @@ function PillarParamTable({ pillar }: { pillar: any }) {
                     {param.children && <span className="ml-1 text-[9px] text-slate-400">(composite)</span>}
                   </td>
                   <td className="py-1.5 text-right">
-                    {param.value != null
-                      ? String(param.value)
-                      : param.rating
-                      ? param.rating
-                      : "—"}
+                    {param.value != null ? <span>{String(param.value)}</span> : null}
+                    {param.rating ? <span className="text-slate-400">{param.value != null ? " · " : ""}{param.rating}</span> : null}
+                    {param.value == null && !param.rating ? "—" : null}
                   </td>
                   <td className="py-1.5 text-right">
                     {param.present && param.score != null ? Math.round(param.score) : "—"}
                   </td>
                   <td className="py-1.5 text-right text-slate-500 dark:text-gray-400">{param.weight}%</td>
+                  <td className="py-1.5 text-right font-medium text-indigo-600 dark:text-indigo-400">
+                    {param.present && param.score != null
+                      ? `+${(((param.score ?? 0) * (param.weight ?? 0)) / 100).toFixed(1)}`
+                      : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p className="mt-2 text-[10px] text-slate-400">
+            Points = score × weight ÷ 100 — this parameter&apos;s contribution to the 100-point total.
+          </p>
         </div>
       )}
     </div>
@@ -137,7 +144,7 @@ export function LRSScorePanel({
 }: { token: string; applicationId: string; canRescore?: boolean }) {
   const qc = useQueryClient();
 
-  const [showFormula, setShowFormula] = React.useState(false);
+  const [showFormula, setShowFormula] = React.useState(true);  // expanded by default — show the full "why" up front
 
   const q = useQuery({
     queryKey: ["lrs", applicationId],

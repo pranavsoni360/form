@@ -1007,6 +1007,32 @@ export default function ScorecardPage() {
           </div>
         )}
 
+        {/* ── How scoring works (transparency) ── */}
+        <section className="sc-card mb-5" style={{ padding: '1rem' }}>
+          <div className="flex flex-wrap items-baseline justify-between gap-1 mb-2">
+            <h2 className="sc-eyebrow">How Scoring Works</h2>
+            <span className="sc-hint hidden sm:inline">what your edits change</span>
+          </div>
+          <p style={{ color: 'var(--ink-muted)', fontSize: '.82rem', lineHeight: 1.6, margin: '0 0 .6rem' }}>
+            Each applicant earns a <b style={{ color: 'var(--ink)' }}>0–100 score</b>. Every parameter maps its value to a
+            0–100 sub-score via its bands (tap the info icon on any parameter to see its exact bands), then rolls up by weight:
+          </p>
+          <code style={{ display: 'block', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: '.8rem',
+            background: 'var(--ground, rgba(0,0,0,.03))', border: '1px solid var(--line, rgba(0,0,0,.08))',
+            borderRadius: '8px', padding: '.6rem .8rem', color: 'var(--ink)', overflowX: 'auto' }}>
+            Total = Σ ( parameter_score × weight ÷ 100 )
+          </code>
+          <p style={{ color: 'var(--ink-muted)', fontSize: '.82rem', lineHeight: 1.6, margin: '.6rem 0 0' }}>
+            The total drives a <b style={{ color: 'var(--ink)' }}>decision</b> (thresholds below), then a risk-based
+            <b style={{ color: 'var(--ink)' }}> interest rate</b> and a <b style={{ color: 'var(--ink)' }}>loan offer</b>
+            {' '}(amount / tenure / EMI, from the applicant&apos;s income &amp; repayment capacity). The full per-applicant
+            {' '}&ldquo;why this score&rdquo; breakdown appears on each application&apos;s <b style={{ color: 'var(--ink)' }}>LRS Credit Assessment</b> panel.
+          </p>
+          <p style={{ color: 'var(--ink-muted)', fontSize: '.72rem', opacity: .8, margin: '.6rem 0 0' }}>
+            Saving here changes scoring for <b>new</b> and <b>re-scored</b> applications only — existing scores stay frozen until re-run.
+          </p>
+        </section>
+
         {/* ── Decision thresholds ── */}
         <section className="sc-card mb-5" style={{ padding: '1rem' }}>
           <div className="flex flex-wrap items-baseline justify-between gap-1 mb-1">

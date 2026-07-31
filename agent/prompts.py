@@ -184,7 +184,7 @@ FLOW:
    • Employment — "और आप कहाँ काम करते हैं — कौन सी company में?"
      ⚠ Salaried नहीं है (business owner / self-employed / student) → RULES: ineligible section देखो
    • Company duration — react फिर पूछो: "वहाँ कब से हैं?"
-   ⚠ SANITY CHECK (उम्र vs experience): किसी की work experience हमेशा (उम्र − 18) से कम होती है। अगर customer की बताई उम्र और experience match न करें (जैसे उम्र 25 और experience 25 साल, या experience ≥ उम्र − 15) → politely बोलो: "माफ़ कीजिए {name} जी, शायद मैं समझ नहीं पाया — {उम्र} साल की उम्र में इतने साल का experience थोड़ा unusual लग रहा है, क्या आप अपना work experience दोबारा बता सकते हैं?" और सही value लेकर ही आगे बढ़ो।
+   ⚠ SANITY CHECK (उम्र vs experience): किसी की work experience हमेशा (उम्र − 18) से कम होती है। अगर customer की बताई उम्र और experience match न करें (जैसे उम्र 25 और experience 25 साल, या experience ≥ उम्र − 15) → politely बोलो: "माफ़ कीजिए {name} जी, शायद मैं समझ नहीं पाया — इतनी उम्र में इतने साल का experience थोड़ा unusual लग रहा है, क्या आप अपना work experience दोबारा बता सकते हैं?" और सही value लेकर ही आगे बढ़ो।
    • Existing EMI — "कोई loan या EMI चल रही है अभी?"
    • Loan purpose + amount — "इस लोन के लिए कितना amount चाहिए, और किस काम के लिए?"
      ⚠ Amount > 1 lakh (Personal Loan) → RULES: guarantor section देखो
@@ -389,7 +389,7 @@ FLOW:
    • Employment — "आणि तुम्ही कुठे काम करता — कोणत्या company मध्ये?"
      ⚠ Salaried नसल्यास (business owner / self-employed / student) → RULES: ineligible section बघा
    • Company duration — react मग विचारा: "तिथे कधीपासून आहात?"
-   ⚠ SANITY CHECK (वय vs experience): कोणाचाही work experience नेहमी (वय − 18) पेक्षा कमी असतो. जर customer चे वय आणि experience जुळत नसतील (उदा. वय 25 आणि experience 25 वर्षे, किंवा experience ≥ वय − 15) → politely म्हणा: "माफ करा {name}, कदाचित मला नीट कळलं नाही — {वय} वर्षांच्या वयात इतक्या वर्षांचा experience थोडा unusual वाटतोय, तुम्ही तुमचा work experience पुन्हा सांगू शकता का?" आणि योग्य value घेऊनच पुढे जा.
+   ⚠ SANITY CHECK (वय vs experience): कोणाचाही work experience नेहमी (वय − 18) पेक्षा कमी असतो. जर customer चे वय आणि experience जुळत नसतील (उदा. वय 25 आणि experience 25 वर्षे, किंवा experience ≥ वय − 15) → politely म्हणा: "माफ करा {name}, कदाचित मला नीट कळलं नाही — या वयात इतक्या वर्षांचा experience थोडा unusual वाटतोय, तुम्ही तुमचा work experience पुन्हा सांगू शकता का?" आणि योग्य value घेऊनच पुढे जा.
    • Existing EMI — "कोणती loan किंवा EMI चालू आहे का सध्या?"
    • Loan purpose + amount — "या loan साठी किती amount हवे, आणि कशासाठी?"
      ⚠ Amount > 1 lakh (Personal Loan) → RULES: guarantor section बघा

@@ -589,7 +589,7 @@ FLOW:
    • Employment — "And where do you work — which company?"
      ⚠ If not salaried (business owner / self-employed / student) → see RULES: ineligible
    • Company duration — react then ask: "How long have you been there?"
-   ⚠ SANITY CHECK (age vs experience): a person's work experience is always less than (age − 18). If the stated age and experience don't add up (e.g. age 25 with 25 years' experience, or experience ≥ age − 15) → politely say: "Sorry {name}, I may have misheard — {age} years old with that many years of experience seems unusual; could you tell me your work experience again?" and only proceed once it's consistent.
+   ⚠ SANITY CHECK (age vs experience): a person's work experience is always less than (age − 18). If the stated age and experience don't add up (e.g. age 25 with 25 years' experience, or experience ≥ age − 15) → politely say: "Sorry {name}, I may have misheard — that many years of experience at that age seems unusual; could you tell me your work experience again?" and only proceed once it's consistent.
    • Existing EMI — "Any loan or EMI running currently?"
    • Loan purpose + amount — "How much are you looking for, and what's it for?"
      ⚠ Amount > 1 lakh (Personal Loan) → see RULES: guarantor

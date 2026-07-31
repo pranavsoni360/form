@@ -2614,6 +2614,54 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         )
     return {"status": "uploaded", "url": file_url, "filename": file.filename, "size": len(file_content)}
 
+
+async def send_submission_confirmation(app_like) -> None:
+    """Fire the AiSensy loan-submission confirmation (AISENSY_SUBMISSION_CAMPAIGN,
+    e.g. 'loan_submition_confirmation1') when a customer submits their form.
+
+    Best-effort + non-blocking: any failure is logged, never raised — form
+    submission must always succeed even if WhatsApp is down or the template
+    is misconfigured. Shared by BOTH submit paths (/api/submit-form token flow
+    and /api/submit-form-session OTP flow) so the confirmation is identical.
+
+    Template params (3): [first_name, loan_id, loan_type_label].
+    """
+    try:
+        if not (AISENSY_API_KEY and AISENSY_SUBMISSION_CAMPAIGN):
+            logger.info(
+                f"[Submission WhatsApp] Skipped — campaign={AISENSY_SUBMISSION_CAMPAIGN or 'not set'} "
+                f"api_key={'set' if AISENSY_API_KEY else 'missing'}"
+            )
+            return
+        phone = (app_like.get("phone") or "").strip()
+        if not phone:
+            logger.info("[Submission WhatsApp] Skipped — no phone on application")
+            return
+        customer_name = (app_like.get("customer_name") or "Customer").strip()
+        first_name = customer_name.split()[0] if customer_name else "Customer"
+        loan_id = app_like.get("loan_id") or ""
+        raw_loan_type = app_like.get("consumer_loan_type") or "personal"
+        loan_type_label = "Consumer Durable Loan" if raw_loan_type == "consumer_durable" else "Personal Loan"
+        phone_formatted = "".join(filter(str.isdigit, phone))
+        if len(phone_formatted) == 10:
+            phone_formatted = f"91{phone_formatted}"
+        payload = {
+            "apiKey": AISENSY_API_KEY,
+            "campaignName": AISENSY_SUBMISSION_CAMPAIGN,
+            "destination": phone_formatted,
+            "userName": AISENSY_USERNAME,
+            "templateParams": [first_name, loan_id, loan_type_label],
+            "source": "loan-form-submission",
+            "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
+            "paramsFallbackValue": {"FirstName": first_name},
+        }
+        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
+            logger.info(f"[Submission WhatsApp] {phone_formatted} -> {resp.status_code} | {resp.text}")
+    except Exception as e:
+        logger.warning(f"[Submission WhatsApp] Failed (non-blocking): {e}")
+
+
 @app.post("/api/submit-form")
 async def submit_form(token: str, request: Request):
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
@@ -2647,13 +2695,10 @@ async def submit_form(token: str, request: Request):
         await enqueue_lrs_scoring(db_pool, app_uuid)
     except Exception as e:
         logger.warning(f"LRS enqueue failed (non-blocking): {e}")
-    la = float(token_row["loan_amount"]) if token_row["loan_amount"] else 0
-    message = (
-        f"Dear {token_row['customer_name']},\n\nYour loan application has been submitted successfully!\n\n"
-        f"Loan ID: {token_row['loan_id']}\nAmount: Rs.{la:,.2f}\n\n"
-        f"Our team will review within 24-48 hours.\n\n- Your Bank Name"
-    )
-    await send_whatsapp_message(token_row["phone"], message)
+    # Submission confirmation via AiSensy campaign (loan_submition_confirmation1).
+    # Replaces the old free-text send so both submit paths use the same
+    # approved template. Best-effort — never blocks submission.
+    await send_submission_confirmation(app_data)
     return {"status": "submitted", "message": "Application submitted successfully", "loan_id": token_row["loan_id"], "application_id": app_data["id"]}
 
 # ============================================
@@ -3512,36 +3557,9 @@ async def submit_form_session(session_token: str, request: Request):
         await enqueue_lrs_scoring(db_pool, app_row["id"])
     except Exception as e:
         logger.warning(f"LRS enqueue failed (non-blocking): {e}")
-    # Send confirmation via AiSensy
-    try:
-        customer_name = app_row["customer_name"] or "Customer"
-        first_name = customer_name.strip().split()[0]
-        loan_id = app_row["loan_id"] or ""
-        phone = app_row["phone"] or ""
-        raw_loan_type = app_row.get("consumer_loan_type") or "personal"
-        loan_type_label = "Consumer Durable Loan" if raw_loan_type == "consumer_durable" else "Personal Loan"
-        if AISENSY_API_KEY and AISENSY_SUBMISSION_CAMPAIGN and phone:
-            phone_formatted = "".join(filter(str.isdigit, phone))
-            if len(phone_formatted) == 10:
-                phone_formatted = f"91{phone_formatted}"
-            payload = {
-                "apiKey": AISENSY_API_KEY,
-                "campaignName": AISENSY_SUBMISSION_CAMPAIGN,
-                "destination": phone_formatted,
-                "userName": AISENSY_USERNAME,
-                "templateParams": [first_name, loan_id, loan_type_label],
-                "source": "loan-form-submission",
-                "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
-                "paramsFallbackValue": {"FirstName": first_name},
-            }
-            async with httpx.AsyncClient(verify=False, timeout=10) as client:
-                resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
-                body = resp.text
-                logger.info(f"[Submission WhatsApp] {phone_formatted} -> {resp.status_code} | {body}")
-        else:
-            logger.info(f"[Submission WhatsApp] Skipped — campaign={AISENSY_SUBMISSION_CAMPAIGN or 'not set'} api_key={'set' if AISENSY_API_KEY else 'missing'}")
-    except Exception as e:
-        logger.warning(f"[Submission WhatsApp] Failed (non-blocking): {e}")
+    # Submission confirmation via AiSensy campaign (shared helper — same
+    # loan_submition_confirmation1 template as the token flow).
+    await send_submission_confirmation(app_row)
     return {"status": "submitted", "message": "Application submitted successfully", "loan_id": app_row["loan_id"]}
 
 # ============================================

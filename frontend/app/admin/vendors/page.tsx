@@ -63,7 +63,7 @@ export default function AdminVendorsPage() {
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card">
         {vendorsQ.isLoading ? (
           <div className="py-12 text-center text-sm text-muted-foreground">Loading…</div>
         ) : vendors.length === 0 ? (
@@ -71,7 +71,7 @@ export default function AdminVendorsPage() {
             No vendors yet. Click <em>New vendor</em> to onboard one.
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-muted/40">
               <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Name</th>

@@ -9,7 +9,9 @@ export type ApplicationStatus =
   | "documents_submitted"
   | "approved"
   | "supervisor_rejected"
-  | "disbursed";
+  | "disbursed"
+  | "cancelled"
+  | "withdrawn";
 
 export type AISuggestion = "approve" | "deny" | "review";
 
@@ -23,6 +25,8 @@ export const STATUS_LABELS: Record<string, string> = {
   approved: "Approved",
   supervisor_rejected: "Rejected",
   disbursed: "Disbursed",
+  cancelled: "Cancelled",
+  withdrawn: "Withdrawn",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
@@ -41,6 +45,8 @@ export const STATUS_COLORS: Record<string, string> = {
   supervisor_rejected:
     "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
   disbursed: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+  cancelled: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300",
+  withdrawn: "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-400",
 };
 
 export const SUGGESTION_COLORS: Record<string, string> = {

@@ -607,7 +607,7 @@ function DesignReference() {
           <div>
             <CardTitle className="text-base">Design language</CardTitle>
             <CardDescription className="text-xs">
-              VirtualVaani aesthetic · Sen font · cream + dark navy + admin purple
+              Finix aesthetic · Sen font · cream + dark navy + admin purple
             </CardDescription>
           </div>
         </div>

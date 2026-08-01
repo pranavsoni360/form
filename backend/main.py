@@ -294,7 +294,7 @@ VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VGIL")
 VG_BANK_NAME = os.getenv("VG_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
 VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "true" only when needed for testing without VG API access
 
-# ── Code List API (lrsAnalysisSummary dropdown codes) ──
+# ── Code List API (dropdown lookup codes) ──
 CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", _CODE_LIST_API_URL_DEFAULT)
 print(f"[config] APP_NETWORK={APP_NETWORK} VG_API_BASE={VG_API_BASE} CODE_LIST_API_URL={CODE_LIST_API_URL}")
 _code_list_cache: dict[str, tuple[float, list]] = {}  # cache_key -> (expiry_timestamp, data)
@@ -930,6 +930,13 @@ class OfficerReviewRequest(BaseModel):
 class OfficerRejectRequest(BaseModel):
     notes: Optional[str] = None
     rejection_reason: Optional[str] = None
+
+class CancelApplicationRequest(BaseModel):
+    reason: Optional[str] = None
+
+class WithdrawApplicationRequest(BaseModel):
+    session_token: str
+    reason: Optional[str] = None
 
 class GenerateFormLinksRequest(BaseModel):
     customers: List[CustomerData]
@@ -1960,6 +1967,46 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
                 print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
 
+@app.post("/api/bank/applications/{app_id}/cancel")
+async def cancel_application(app_id: str, body: CancelApplicationRequest, user: dict = Depends(get_bank_officer)):
+    """Staff-initiated cancel: void an application (duplicate, data error, customer
+    request over phone, etc.). Allowed at ANY stage before money is out.
+
+    "Money out" is signalled by disbursed_at IS NOT NULL (the bank-side status
+    stays 'approved' even after vendor disbursement — see routers/vendors.py), so
+    a disbursed loan can never be cancelled here. Sets status='cancelled' and
+    records the actor + reason in the status_transitions audit log."""
+    bank_id = uuid.UUID(user["bank_id"])
+    actor_id = uuid.UUID(user["id"])
+    app_row = await db_pool.fetchrow(
+        "SELECT * FROM loan_applications WHERE id = $1 AND bank_id = $2",
+        uuid.UUID(app_id), bank_id
+    )
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found or not in your bank")
+    current_status = app_row["status"]
+    if app_row.get("disbursed_at") is not None:
+        raise HTTPException(status_code=400, detail="Cannot cancel a disbursed loan — funds have already been released.")
+    if current_status in ("cancelled", "withdrawn"):
+        raise HTTPException(status_code=400, detail=f"Application is already '{current_status}'.")
+    changed_by_type = "bank_supervisor" if user["role"] == "bank_supervisor" else "bank_officer"
+    await db_pool.execute(
+        """UPDATE loan_applications
+           SET status = 'cancelled', cancelled_at = $1, cancellation_reason = $2
+           WHERE id = $3""",
+        now_utc(), body.reason, uuid.UUID(app_id)
+    )
+    await record_transition(uuid.UUID(app_id), current_status, "cancelled", changed_by_type, actor_id, body.reason)
+    if app_row["phone"]:
+        message = (
+            f"Dear {app_row['customer_name']},\n\n"
+            f"Your loan application has been cancelled.\n\n"
+            f"Loan ID: {app_row['loan_id']}\n"
+            f"{('Reason: ' + body.reason) if body.reason else 'Please contact your branch for details.'}\n\n- Your Bank"
+        )
+        await send_whatsapp_message(app_row["phone"], message)
+    return {"status": "success", "message": "Application cancelled", "new_status": "cancelled"}
+
 # ============================================
 # FORM TOKEN & APPLICATION ENDPOINTS (EXISTING)
 # ============================================
@@ -2567,6 +2614,54 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         )
     return {"status": "uploaded", "url": file_url, "filename": file.filename, "size": len(file_content)}
 
+
+async def send_submission_confirmation(app_like) -> None:
+    """Fire the AiSensy loan-submission confirmation (AISENSY_SUBMISSION_CAMPAIGN,
+    e.g. 'loan_submition_confirmation1') when a customer submits their form.
+
+    Best-effort + non-blocking: any failure is logged, never raised — form
+    submission must always succeed even if WhatsApp is down or the template
+    is misconfigured. Shared by BOTH submit paths (/api/submit-form token flow
+    and /api/submit-form-session OTP flow) so the confirmation is identical.
+
+    Template params (3): [first_name, loan_id, loan_type_label].
+    """
+    try:
+        if not (AISENSY_API_KEY and AISENSY_SUBMISSION_CAMPAIGN):
+            logger.info(
+                f"[Submission WhatsApp] Skipped — campaign={AISENSY_SUBMISSION_CAMPAIGN or 'not set'} "
+                f"api_key={'set' if AISENSY_API_KEY else 'missing'}"
+            )
+            return
+        phone = (app_like.get("phone") or "").strip()
+        if not phone:
+            logger.info("[Submission WhatsApp] Skipped — no phone on application")
+            return
+        customer_name = (app_like.get("customer_name") or "Customer").strip()
+        first_name = customer_name.split()[0] if customer_name else "Customer"
+        loan_id = app_like.get("loan_id") or ""
+        raw_loan_type = app_like.get("consumer_loan_type") or "personal"
+        loan_type_label = "Consumer Durable Loan" if raw_loan_type == "consumer_durable" else "Personal Loan"
+        phone_formatted = "".join(filter(str.isdigit, phone))
+        if len(phone_formatted) == 10:
+            phone_formatted = f"91{phone_formatted}"
+        payload = {
+            "apiKey": AISENSY_API_KEY,
+            "campaignName": AISENSY_SUBMISSION_CAMPAIGN,
+            "destination": phone_formatted,
+            "userName": AISENSY_USERNAME,
+            "templateParams": [first_name, loan_id, loan_type_label],
+            "source": "loan-form-submission",
+            "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
+            "paramsFallbackValue": {"FirstName": first_name},
+        }
+        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
+            logger.info(f"[Submission WhatsApp] {phone_formatted} -> {resp.status_code} | {resp.text}")
+    except Exception as e:
+        logger.warning(f"[Submission WhatsApp] Failed (non-blocking): {e}")
+
+
 @app.post("/api/submit-form")
 async def submit_form(token: str, request: Request):
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
@@ -2600,13 +2695,10 @@ async def submit_form(token: str, request: Request):
         await enqueue_lrs_scoring(db_pool, app_uuid)
     except Exception as e:
         logger.warning(f"LRS enqueue failed (non-blocking): {e}")
-    la = float(token_row["loan_amount"]) if token_row["loan_amount"] else 0
-    message = (
-        f"Dear {token_row['customer_name']},\n\nYour loan application has been submitted successfully!\n\n"
-        f"Loan ID: {token_row['loan_id']}\nAmount: Rs.{la:,.2f}\n\n"
-        f"Our team will review within 24-48 hours.\n\n- Your Bank Name"
-    )
-    await send_whatsapp_message(token_row["phone"], message)
+    # Submission confirmation via AiSensy campaign (loan_submition_confirmation1).
+    # Replaces the old free-text send so both submit paths use the same
+    # approved template. Best-effort — never blocks submission.
+    await send_submission_confirmation(app_data)
     return {"status": "submitted", "message": "Application submitted successfully", "loan_id": token_row["loan_id"], "application_id": app_data["id"]}
 
 # ============================================
@@ -3165,6 +3257,43 @@ async def get_application(session_token: str, request: Request):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
     return {"status": "success", "data": app_dict, "session_valid_until": expires_at.isoformat()}
 
+@app.post("/api/withdraw-application")
+async def withdraw_application(body: WithdrawApplicationRequest):
+    """Customer-initiated soft-delete of their OWN application.
+
+    Auth mirrors /api/get-application (OTP-verified, non-expired, active loan
+    session). Sets status='withdrawn' — the application disappears from the
+    customer's view but the row + audit trail are preserved for compliance.
+    Only allowed before money is out (disbursed_at IS NULL) and while the app
+    is not already in a terminal cancelled/withdrawn state."""
+    session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", body.session_token)
+    if not session or not session["otp_verified"]:
+        raise HTTPException(status_code=401, detail="Invalid session. Please login again.")
+    expires_at = session["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now_utc():
+        raise HTTPException(status_code=401, detail="Session expired. Please login again.")
+    last_activity = session["last_activity_at"]
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    if (now_utc() - last_activity).total_seconds() > 300:
+        raise HTTPException(status_code=401, detail="Session inactive for 5 minutes. Please re-verify.")
+    app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    current_status = app_row["status"]
+    if app_row.get("disbursed_at") is not None:
+        raise HTTPException(status_code=400, detail="A disbursed loan cannot be deleted. Please contact your branch.")
+    if current_status in ("cancelled", "withdrawn"):
+        raise HTTPException(status_code=400, detail="This application has already been removed.")
+    await db_pool.execute(
+        "UPDATE loan_applications SET status = 'withdrawn', withdrawn_at = $1 WHERE id = $2",
+        now_utc(), session["application_id"]
+    )
+    await record_transition(session["application_id"], current_status, "withdrawn", "customer", None, body.reason)
+    return {"status": "success", "message": "Application deleted"}
+
 @app.post("/api/session-keepalive")
 async def session_keepalive(request: Request):
     """Refresh a loan session's inactivity timer (last_activity_at) WITHOUT
@@ -3398,6 +3527,11 @@ async def submit_form_session(session_token: str, request: Request):
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
+    if app_row.get("pan_mismatch_locked"):
+        raise HTTPException(
+            status_code=423,
+            detail="Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting."
+        )
     # Server-side product-wise loan amount guard (mirrors the client validation).
     _validate_loan_amount(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
@@ -3423,36 +3557,9 @@ async def submit_form_session(session_token: str, request: Request):
         await enqueue_lrs_scoring(db_pool, app_row["id"])
     except Exception as e:
         logger.warning(f"LRS enqueue failed (non-blocking): {e}")
-    # Send confirmation via AiSensy
-    try:
-        customer_name = app_row["customer_name"] or "Customer"
-        first_name = customer_name.strip().split()[0]
-        loan_id = app_row["loan_id"] or ""
-        phone = app_row["phone"] or ""
-        raw_loan_type = app_row.get("consumer_loan_type") or "personal"
-        loan_type_label = "Consumer Durable Loan" if raw_loan_type == "consumer_durable" else "Personal Loan"
-        if AISENSY_API_KEY and AISENSY_SUBMISSION_CAMPAIGN and phone:
-            phone_formatted = "".join(filter(str.isdigit, phone))
-            if len(phone_formatted) == 10:
-                phone_formatted = f"91{phone_formatted}"
-            payload = {
-                "apiKey": AISENSY_API_KEY,
-                "campaignName": AISENSY_SUBMISSION_CAMPAIGN,
-                "destination": phone_formatted,
-                "userName": AISENSY_USERNAME,
-                "templateParams": [first_name, loan_id, loan_type_label],
-                "source": "loan-form-submission",
-                "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {},
-                "paramsFallbackValue": {"FirstName": first_name},
-            }
-            async with httpx.AsyncClient(verify=False, timeout=10) as client:
-                resp = await client.post("https://backend.api-wa.co/campaign/virtual-galaxy-infotech/api/v2", json=payload)
-                body = resp.text
-                logger.info(f"[Submission WhatsApp] {phone_formatted} -> {resp.status_code} | {body}")
-        else:
-            logger.info(f"[Submission WhatsApp] Skipped — campaign={AISENSY_SUBMISSION_CAMPAIGN or 'not set'} api_key={'set' if AISENSY_API_KEY else 'missing'}")
-    except Exception as e:
-        logger.warning(f"[Submission WhatsApp] Failed (non-blocking): {e}")
+    # Submission confirmation via AiSensy campaign (shared helper — same
+    # loan_submition_confirmation1 template as the token flow).
+    await send_submission_confirmation(app_row)
     return {"status": "submitted", "message": "Application submitted successfully", "loan_id": app_row["loan_id"]}
 
 # ============================================
@@ -3648,88 +3755,6 @@ async def seed_mock_data(admin: dict = Depends(get_current_admin)):
         "applications": created_apps,
         "note": "Use the username/password pairs above to log in as bank users. Passwords are shown once here."
     }
-
-# ============================================
-# API PAYLOAD BUILDER (lrsAnalysisSummary)
-# ============================================
-# TODO(lrs-integration): wire this into a background task fired on form submission
-# once the bank provides the public lrsAnalysisSummary endpoint URL. The response
-# should populate system_suggestion / system_score / system_suggestion_reason on
-# the loan_applications row. Not called from any route yet.
-
-def build_api_payload(app_data: dict) -> dict:
-    """Convert loan_applications row → lrsAnalysisSummary API payload (42 fields)."""
-    # Take the last 10 digits — lstrip("91") treats it as a char set, not a prefix.
-    _digits = ''.join(c for c in (app_data.get("phone") or "") if c.isdigit())
-    phone = _digits[-10:] if len(_digits) >= 10 else _digits
-    # Concatenate address parts for API.  Permanent is the source-of-truth
-    # (auto-filled from Aadhaar); current either mirrors it (when the
-    # legacy-named ``same_as_current`` flag is set, which now semantically
-    # means "current == permanent") or is user-entered.
-    per_parts = [app_data.get("permanent_house", ""), app_data.get("permanent_street", ""),
-                 app_data.get("permanent_landmark", ""), app_data.get("permanent_locality", "")]
-    perm_addr = ", ".join([p for p in per_parts if p and str(p).strip()])
-    per_state = app_data.get("permanent_state_code", "")
-    per_city = app_data.get("permanent_city_code", "")
-    is_same = app_data.get("same_as_current", False)
-    if is_same:
-        current_addr = perm_addr
-        curr_state = per_state
-        curr_city = per_city
-    else:
-        cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
-                     app_data.get("current_landmark", ""), app_data.get("current_locality", "")]
-        current_addr = ", ".join([p for p in cur_parts if p and str(p).strip()])
-        curr_state = app_data.get("current_state_code", "")
-        curr_city = app_data.get("current_city_code", "")
-    # Repayment period: years → months
-    years = app_data.get("repayment_period_years")
-    months = str(int(float(years) * 12)) if years else ""
-    return {
-        "panNo": app_data.get("pan_number", ""),
-        "firstName": app_data.get("first_name", ""),
-        "middleName": app_data.get("middle_name", ""),
-        "lastName": app_data.get("last_name", ""),
-        "dateOfBirth": app_data.get("date_of_birth", ""),
-        "phoneNo": phone,
-        "gender": app_data.get("gender", ""),
-        "maritalStatus": app_data.get("marital_status", ""),
-        "enqId": app_data.get("loan_id", ""),
-        "currentAddress1": current_addr or app_data.get("current_address", ""),
-        "pinCode": (app_data.get("permanent_pincode", "") if is_same else app_data.get("current_pincode", "")),
-        "curr_state": curr_state,
-        "curr_city": curr_city,
-        "curr_country": "1",
-        "permanentAddress1": perm_addr or app_data.get("permanent_address", ""),
-        "per_state": per_state,
-        "per_city": per_city,
-        "per_country": "1",
-        "qualification": app_data.get("qualification", ""),
-        "occupation": app_data.get("occupation", ""),
-        "industryType": app_data.get("industry_type", ""),
-        "employmentType": app_data.get("employment_type", ""),
-        "employerName": app_data.get("employer_name", ""),
-        "designation": app_data.get("designation", ""),
-        "totalWorkExp": str(app_data.get("total_work_experience", "")),
-        "totalWorkExpCurOrg": str(app_data.get("experience_current_org", "")),
-        "residentialStatus": app_data.get("residential_status", ""),
-        "tenureStatbility": app_data.get("tenure_stability", ""),
-        "employerAddress": app_data.get("employer_address", ""),
-        "requestedLoanAmt": str(app_data.get("loan_amount_requested", "")),
-        "loanRepaymentPeriod": months,
-        "purposeOfLoan": app_data.get("purpose_of_loan", ""),
-        "scheme": app_data.get("scheme", ""),
-        "monthlyGrossIncome": str(app_data.get("monthly_gross_income", "")),
-        "monthlyDeduction": str(app_data.get("monthly_deductions", "")),
-        "monthlyEMI": str(app_data.get("monthly_emi_existing", "")),
-        "monthlyNetIncome": str(app_data.get("monthly_net_income", "")),
-        "salarySlip": app_data.get("salary_slips_url", ""),
-        "itrDocument": app_data.get("itr_form16_url", ""),
-        "bankStatementDocument": app_data.get("bank_statements_url", ""),
-        "itrJsonData": {},
-        "bankStatementJsonData": {},
-    }
-
 
 # ============================================
 # ENTRY POINT

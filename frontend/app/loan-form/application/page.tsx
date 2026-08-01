@@ -800,7 +800,7 @@ export default function LoanApplication() {
   };
 
   const handleNext = () => {
-    if (currentStep === 1 && nameMatchLocked) {
+    if (nameMatchLocked) {
       setNameMatchError(e => e); // re-show popup if dismissed
       return;
     }
@@ -820,6 +820,10 @@ export default function LoanApplication() {
   };
 
   const handleSubmit = async () => {
+    if (nameMatchLocked) {
+      alert('Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting.');
+      return;
+    }
     if (!agreed) { alert('Please agree to the declaration'); return; }
     setSubmitting(true);
     const session = getSession();
@@ -1029,7 +1033,7 @@ export default function LoanApplication() {
                 return (
                   <div key={i} className="flex flex-col items-center" style={{ width: `${100 / steps.length}%` }}>
                     <div
-                      onClick={() => { if (isReachable) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0, 0); } }}
+                      onClick={() => { if (isReachable && !(nameMatchLocked && stepNum > 1)) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0, 0); } }}
                       className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-bold z-10 transition-all duration-200 select-none"
                       style={{
                         background: isActive ? '#1A1A2E' : isCompleted ? '#059669' : '#F1F5F9',
@@ -1783,20 +1787,30 @@ export default function LoanApplication() {
                   <span className="text-sm" style={{ color: '#1D4ED8', fontFamily: 'var(--font-body)' }}>I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
                 </label>
               </div>
-              <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
-                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: '#D97706' }} />
-                <p className="text-xs" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
-              </div>
+              {nameMatchLocked ? (
+                <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-heading)' }}>Application Locked — Submission Not Allowed</p>
+                    <p className="text-xs mt-1" style={{ color: '#B91C1C', fontFamily: 'var(--font-body)' }}>This application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: '#D97706' }} />
+                  <p className="text-xs" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
+                </div>
+              )}
               <div className="flex gap-4">
                 <button onClick={() => { autoSave(); setCurrentStep(5); window.scrollTo(0, 0); }}
                   className="flex-1 py-4 rounded-xl font-semibold transition hover:opacity-80"
                   style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)', border: '1px solid #E2E8F0' }}>
                   ← Previous
                 </button>
-                <button onClick={handleSubmit} disabled={submitting || !agreed}
-                  className="flex-1 py-4 rounded-xl font-semibold text-white transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-                  style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', fontFamily: 'var(--font-heading)' }}>
-                  {submitting ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Submitting...</span></> : 'Submit Application →'}
+                <button onClick={handleSubmit} disabled={submitting || !agreed || nameMatchLocked}
+                  className="flex-1 py-4 rounded-xl font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  style={{ background: nameMatchLocked ? '#DC2626' : 'linear-gradient(135deg, #059669 0%, #047857 100%)', fontFamily: 'var(--font-heading)' }}>
+                  {nameMatchLocked ? 'Submission Locked' : submitting ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Submitting...</span></> : 'Submit Application →'}
                 </button>
               </div>
             </div>

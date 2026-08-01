@@ -79,6 +79,7 @@ export {
   supervisorReject,
   requestDocuments,
   initiateDisbursement,
+  cancelApplication,
   getLRSScore,
   rescoreLRS,
 } from "./bank";
@@ -92,6 +93,7 @@ export {
   autoSaveSession,
   verifyPANSession,
   submitFormSession,
+  withdrawApplication,
   uploadDocumentSession,
   aadhaarLink,
   aadhaarDocuments,

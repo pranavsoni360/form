@@ -144,7 +144,7 @@ export default function CallsPage() {
             <p className="text-sm text-gray-500 dark:text-gray-400">No calls found</p>
           </div>
         ) : (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700/50">
               <thead className="bg-gray-50 dark:bg-dark-section">
                 <tr>

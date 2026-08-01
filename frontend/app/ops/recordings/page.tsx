@@ -120,7 +120,7 @@ export default function OpsRecordingsPage() {
         />
 
         {/* Table */}
-        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
           {calls.isLoading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 5 }).map((_, i) => (
@@ -144,7 +144,7 @@ export default function OpsRecordingsPage() {
               </div>
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
                   <Th>Customer</Th>

@@ -1,13 +1,20 @@
 {
-  "config_version": "v2-2026-07",
-  "_note": "SMALL-TICKET UNSECURED (Rs 10k-2L). Score-band → interest + amount/tenure bounds per product. final_roi = base_roi + risk_premium. ROI values are SENSIBLE DEFAULTS for unsecured small loans — tune to the bank's actual rate card. Bands cover 0..100 with no gaps.",
+  "config_version": "v3-2026-07",
+  "_note": "SMALL-TICKET UNSECURED. Score-band → interest + amount/tenure bounds per product. final_roi = base_roi + risk_premium(band) + tenure_roi_premium(tenure). Amount bounds aligned to the loan-form product cap (Rs 20k-1L). FOIR is income-slab based (foir_slabs, top-level). Bands cover 0..100 with no gaps. Tune all values to the bank's actual rate card.",
   "default_product": "personal_loan",
+  "foir_slabs": [
+    { "max_income": 25000, "foir": 0.40 },
+    { "max_income": 50000, "foir": 0.50 },
+    { "max_income": null,  "foir": 0.55 }
+  ],
+  "tenure_options_months": [12, 24, 36],
+  "tenure_roi_premium": { "12": 0.0, "24": 0.5, "36": 1.0 },
   "products": {
     "personal_loan": {
       "base_roi": 16.0,
-      "min_amount": 10000,
-      "max_amount": 200000,
-      "max_tenure_months": 24,
+      "min_amount": 20000,
+      "max_amount": 100000,
+      "max_tenure_months": 36,
       "bands": [
         { "min_score": 85, "max_score": 100, "risk_premium": 0.0, "label": "Excellent" },
         { "min_score": 70, "max_score": 84.99, "risk_premium": 2.0, "label": "Very Good" },
@@ -18,9 +25,9 @@
     },
     "consumer_loan": {
       "base_roi": 14.0,
-      "min_amount": 5000,
-      "max_amount": 200000,
-      "max_tenure_months": 24,
+      "min_amount": 20000,
+      "max_amount": 100000,
+      "max_tenure_months": 36,
       "bands": [
         { "min_score": 85, "max_score": 100, "risk_premium": 0.0, "label": "Excellent" },
         { "min_score": 70, "max_score": 84.99, "risk_premium": 2.5, "label": "Very Good" },

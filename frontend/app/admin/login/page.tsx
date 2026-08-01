@@ -58,7 +58,7 @@ function AdminLoginInner() {
             vv
           </div>
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>VirtualVaani</div>
+            <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>Finix</div>
             <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Admin Portal</div>
           </div>
         </div>
@@ -89,7 +89,7 @@ function AdminLoginInner() {
         </div>
 
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
-          © 2026 VirtualVaani · Authorized personnel only
+          © 2026 Finix · Authorized personnel only
         </p>
       </div>
 

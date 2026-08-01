@@ -113,6 +113,20 @@ export async function initiateDisbursement(
   });
 }
 
+// Staff cancel — voids an application before disbursement. Works for both
+// bank_officer and bank_supervisor (backend enforces role + disbursed guard).
+export async function cancelApplication(
+  token: string,
+  appId: string,
+  reason?: string,
+) {
+  return apiFetch(`/api/bank/applications/${appId}/cancel`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ reason }),
+  });
+}
+
 // ── LRS (Loan Recommendation System) ──────────────
 export async function getLRSScore(token: string, appId: string) {
   return apiFetch(`/api/lrs/score/${appId}`, {

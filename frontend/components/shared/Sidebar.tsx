@@ -23,7 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * VirtualVaani-style sidebar.
+ * Finix-style sidebar.
  *
  * Top: "vv" logo mark + VIRTUALVAANI / Admin Portal label
  * Body: NAVIGATION section header + nav items (icon + label + active pill)
@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
  * white text, slightly inset radius.
  */
 
-type NavItem = {
+export type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -43,9 +43,9 @@ type NavItem = {
 // "Show me state" (Dashboard / Live) → "Show me data" (Calls / Recordings /
 // Callbacks / Analytics) → "Take action" (Batch / Exports) → "Show me the
 // system" (Phones / Workers / Errors / Funnel).
-type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
+export type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
 
-const NAV_GROUPS: ReadonlyArray<NavGroup> = [
+export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   {
     label: "Overview",
     items: [
@@ -93,7 +93,8 @@ export function Sidebar({ className }: { className?: string }) {
   return (
     <aside
       className={cn(
-        "flex h-screen w-64 shrink-0 sticky top-0 flex-col border-r border-border bg-card",
+        // Hidden on mobile/tablet — the hamburger MobileNav takes over there.
+        "hidden h-screen w-64 shrink-0 sticky top-0 flex-col border-r border-border bg-card lg:flex",
         className
       )}
     >
@@ -101,7 +102,7 @@ export function Sidebar({ className }: { className?: string }) {
       <Link
         href="/ops"
         className="flex items-center gap-3 px-5 py-5"
-        aria-label="VirtualVaani Ops"
+        aria-label="Finix Ops"
       >
         <span className="grid h-10 w-10 place-items-center rounded-xl text-white shadow-sm"
           style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)' }}>
@@ -109,7 +110,7 @@ export function Sidebar({ className }: { className?: string }) {
         </span>
         <div className="leading-tight">
           <div className="text-[11px] font-bold uppercase tracking-wider text-foreground">
-            VirtualVaani
+            Finix
           </div>
           <div className="text-sm font-semibold tracking-tight text-foreground">
             Admin Portal

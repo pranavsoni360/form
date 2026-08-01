@@ -188,7 +188,7 @@ export default function AdminApplicationsListPage() {
         </div>
 
         {/* Table */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-gray-800 dark:bg-gray-900">
           {q.isLoading ? (
             <div className="grid place-items-center py-16 text-sm text-slate-500">
               <Loader2 className="h-6 w-6 animate-spin" />
@@ -198,7 +198,7 @@ export default function AdminApplicationsListPage() {
               {apps.length === 0 ? "No applications yet." : `No applications match "${search || filter}".`}
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-slate-50 dark:bg-gray-800/50">
                 <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
                   <th className="px-5 py-3 font-medium">Applicant</th>

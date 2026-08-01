@@ -294,7 +294,7 @@ VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VGIL")
 VG_BANK_NAME = os.getenv("VG_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
 VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "true" only when needed for testing without VG API access
 
-# ── Code List API (lrsAnalysisSummary dropdown codes) ──
+# ── Code List API (dropdown lookup codes) ──
 CODE_LIST_API_URL = os.getenv("CODE_LIST_API_URL", _CODE_LIST_API_URL_DEFAULT)
 print(f"[config] APP_NETWORK={APP_NETWORK} VG_API_BASE={VG_API_BASE} CODE_LIST_API_URL={CODE_LIST_API_URL}")
 _code_list_cache: dict[str, tuple[float, list]] = {}  # cache_key -> (expiry_timestamp, data)
@@ -3755,88 +3755,6 @@ async def seed_mock_data(admin: dict = Depends(get_current_admin)):
         "applications": created_apps,
         "note": "Use the username/password pairs above to log in as bank users. Passwords are shown once here."
     }
-
-# ============================================
-# API PAYLOAD BUILDER (lrsAnalysisSummary)
-# ============================================
-# TODO(lrs-integration): wire this into a background task fired on form submission
-# once the bank provides the public lrsAnalysisSummary endpoint URL. The response
-# should populate system_suggestion / system_score / system_suggestion_reason on
-# the loan_applications row. Not called from any route yet.
-
-def build_api_payload(app_data: dict) -> dict:
-    """Convert loan_applications row → lrsAnalysisSummary API payload (42 fields)."""
-    # Take the last 10 digits — lstrip("91") treats it as a char set, not a prefix.
-    _digits = ''.join(c for c in (app_data.get("phone") or "") if c.isdigit())
-    phone = _digits[-10:] if len(_digits) >= 10 else _digits
-    # Concatenate address parts for API.  Permanent is the source-of-truth
-    # (auto-filled from Aadhaar); current either mirrors it (when the
-    # legacy-named ``same_as_current`` flag is set, which now semantically
-    # means "current == permanent") or is user-entered.
-    per_parts = [app_data.get("permanent_house", ""), app_data.get("permanent_street", ""),
-                 app_data.get("permanent_landmark", ""), app_data.get("permanent_locality", "")]
-    perm_addr = ", ".join([p for p in per_parts if p and str(p).strip()])
-    per_state = app_data.get("permanent_state_code", "")
-    per_city = app_data.get("permanent_city_code", "")
-    is_same = app_data.get("same_as_current", False)
-    if is_same:
-        current_addr = perm_addr
-        curr_state = per_state
-        curr_city = per_city
-    else:
-        cur_parts = [app_data.get("current_house", ""), app_data.get("current_street", ""),
-                     app_data.get("current_landmark", ""), app_data.get("current_locality", "")]
-        current_addr = ", ".join([p for p in cur_parts if p and str(p).strip()])
-        curr_state = app_data.get("current_state_code", "")
-        curr_city = app_data.get("current_city_code", "")
-    # Repayment period: years → months
-    years = app_data.get("repayment_period_years")
-    months = str(int(float(years) * 12)) if years else ""
-    return {
-        "panNo": app_data.get("pan_number", ""),
-        "firstName": app_data.get("first_name", ""),
-        "middleName": app_data.get("middle_name", ""),
-        "lastName": app_data.get("last_name", ""),
-        "dateOfBirth": app_data.get("date_of_birth", ""),
-        "phoneNo": phone,
-        "gender": app_data.get("gender", ""),
-        "maritalStatus": app_data.get("marital_status", ""),
-        "enqId": app_data.get("loan_id", ""),
-        "currentAddress1": current_addr or app_data.get("current_address", ""),
-        "pinCode": (app_data.get("permanent_pincode", "") if is_same else app_data.get("current_pincode", "")),
-        "curr_state": curr_state,
-        "curr_city": curr_city,
-        "curr_country": "1",
-        "permanentAddress1": perm_addr or app_data.get("permanent_address", ""),
-        "per_state": per_state,
-        "per_city": per_city,
-        "per_country": "1",
-        "qualification": app_data.get("qualification", ""),
-        "occupation": app_data.get("occupation", ""),
-        "industryType": app_data.get("industry_type", ""),
-        "employmentType": app_data.get("employment_type", ""),
-        "employerName": app_data.get("employer_name", ""),
-        "designation": app_data.get("designation", ""),
-        "totalWorkExp": str(app_data.get("total_work_experience", "")),
-        "totalWorkExpCurOrg": str(app_data.get("experience_current_org", "")),
-        "residentialStatus": app_data.get("residential_status", ""),
-        "tenureStatbility": app_data.get("tenure_stability", ""),
-        "employerAddress": app_data.get("employer_address", ""),
-        "requestedLoanAmt": str(app_data.get("loan_amount_requested", "")),
-        "loanRepaymentPeriod": months,
-        "purposeOfLoan": app_data.get("purpose_of_loan", ""),
-        "scheme": app_data.get("scheme", ""),
-        "monthlyGrossIncome": str(app_data.get("monthly_gross_income", "")),
-        "monthlyDeduction": str(app_data.get("monthly_deductions", "")),
-        "monthlyEMI": str(app_data.get("monthly_emi_existing", "")),
-        "monthlyNetIncome": str(app_data.get("monthly_net_income", "")),
-        "salarySlip": app_data.get("salary_slips_url", ""),
-        "itrDocument": app_data.get("itr_form16_url", ""),
-        "bankStatementDocument": app_data.get("bank_statements_url", ""),
-        "itrJsonData": {},
-        "bankStatementJsonData": {},
-    }
-
 
 # ============================================
 # ENTRY POINT

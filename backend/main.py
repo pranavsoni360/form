@@ -3493,7 +3493,14 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[PAN API] Error: {e}")
+            # Log the exception TYPE, not just str(e): transport failures
+            # (httpx.ConnectError, ReadTimeout, SSLError) stringify to "" and
+            # used to log a bare "[PAN API] Error:" with no cause, which made
+            # a VG-side outage indistinguishable from a bug in our code.
+            logger.error(
+                "[PAN API] %s calling %s/Pan: %s",
+                type(e).__name__, VG_API_BASE, e or "(no detail)", exc_info=True,
+            )
             raise HTTPException(status_code=503, detail="PAN verification service is temporarily unavailable. Please try again in a moment.")
 
     await db_pool.execute(

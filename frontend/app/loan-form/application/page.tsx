@@ -696,14 +696,28 @@ export default function LoanApplication() {
     return Object.keys(e).length === 0;
   };
 
+  // QA-only: let testers walk the whole form without live PAN/Aadhaar
+  // verification (VG DocVerify may be unreachable on QA). Gated on the QA host
+  // (finix.vgipl.com:8445) or NEXT_PUBLIC_LOS_ENV='qa' — can NEVER trigger on
+  // production, which runs on the default port with LOS_ENV != 'qa'.
+  const isQaEnv = () => {
+    if (process.env.NEXT_PUBLIC_LOS_ENV === 'qa') return true;
+    if (typeof window !== 'undefined' && window.location.port === '8445') return true;
+    return false;
+  };
+
   const step1Valid = () => {
-    if (!formData.pan_verified) {
+    const qaBypass = isQaEnv();
+    if (!qaBypass && !formData.pan_verified) {
       setErrors((p: any) => ({ ...p, pan_number: 'Please verify your PAN before proceeding' }));
       return false;
     }
-    if (!formData.aadhaar_verified) {
+    if (!qaBypass && !formData.aadhaar_verified) {
       setErrors((p: any) => ({ ...p, aadhaar_number: 'Please complete Aadhaar verification before proceeding' }));
       return false;
+    }
+    if (qaBypass && (!formData.pan_verified || !formData.aadhaar_verified)) {
+      console.warn('[QA] KYC verification gate bypassed — QA environment only.');
     }
     return validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
   };

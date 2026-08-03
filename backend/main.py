@@ -134,6 +134,47 @@ async def correlation_id_middleware(request: Request, call_next):
         correlation_id_var.reset(token)
 
 
+# ── Internal-only route guard ───────────────────────────────────────────────
+# These paths carry no application-level auth: they are webhooks the voice
+# agents post to, plus operator-triggered WhatsApp campaigns and a log-prune
+# mutation. Because uvicorn binds 0.0.0.0 and nginx proxies /api/ wholesale,
+# they were reachable by anyone on the internet — allowing mass WhatsApp sends
+# through our WABA (Meta-ban risk) and forged transcripts/guarantor consent.
+#
+# Legitimate callers are on-box (the agents use BACKEND_URL=127.0.0.1 and never
+# traverse nginx), so we allow a request only when its peer IS localhost AND it
+# carries no X-Forwarded-For. nginx-proxied traffic also arrives from 127.0.0.1
+# but always sets X-Forwarded-For, which is what distinguishes the two.
+# uvicorn runs without --proxy-headers, so request.client.host is the true peer.
+#
+# Returns 404 (not 403) so the surface isn't advertised to scanners.
+_LOCAL_ONLY_PATHS = frozenset({
+    "/api/agent/transcript",
+    "/api/agent/send-whatsapp-form",
+    "/api/agent/schedule-callback",
+    "/api/guarantor/transcript",
+    "/api/guarantor/consent",
+    "/api/send-campaign",
+    "/api/send-campaign-bulk",
+    "/api/ops/errors/cleanup",
+})
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+@app.middleware("http")
+async def restrict_internal_paths(request: Request, call_next):
+    if request.url.path.rstrip("/") in _LOCAL_ONLY_PATHS:
+        peer = request.client.host if request.client else ""
+        if peer not in _LOOPBACK or request.headers.get("x-forwarded-for"):
+            from fastapi.responses import JSONResponse
+            logger.warning(
+                "Blocked external call to internal-only path %s from %s",
+                request.url.path, request.headers.get("x-forwarded-for") or peer,
+            )
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await call_next(request)
+
+
 # M5: ops router — /healthz, /readyz, /version (no auth).
 # Mounted BEFORE the global exception handler is defined so the router's
 # explicit JSON responses always reach the client.

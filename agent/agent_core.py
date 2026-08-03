@@ -275,7 +275,11 @@ async def entrypoint(ctx: JobContext):
                     ),
                     google.beta.GeminiTTS(
                         model="gemini-2.5-flash-preview-tts",
-                        voice_name="Kore",
+                        # Gender-matched fallback so a mid-call Sarvam drop doesn't
+                        # flip the perceived voice: "Kore" is female, "Charon" is a
+                        # professional male voice. Without this, every male call fell
+                        # back to a female voice during a Sarvam WS hiccup.
+                        voice_name="Kore" if session.gender == "female" else "Charon",
                     ),
                 ]
             ),

@@ -507,10 +507,18 @@ class Dispatcher:
                 self.db_pool,
                 preferred_phone_id=self.preferred_phone_id,
             )
-            if trunk is None and not self.preferred_phone_id:
-                trunk = _env_fallback_trunk(self.sip_trunk_id_fallback)
+            # If every pooled number is merely COOLING DOWN, wait for one to free
+            # up rather than reaching for the env trunk. The env fallback exists
+            # for "phone_numbers is empty" (see _env_fallback_trunk) — trying it
+            # first meant that on a single-number pool (which cools down 180-300s
+            # after every call) we dialed SIP_TRUNK_ID instead of waiting. When
+            # that env value is stale, LiveKit rejects the call with
+            # "requested sip trunk does not exist" (Twirp 404) and the customer
+            # is never rung; the env trunk also carries no caller ID.
             if trunk is None:
                 trunk = await self._wait_for_cooldown_and_retry(call_uuid)
+            if trunk is None and not self.preferred_phone_id:
+                trunk = _env_fallback_trunk(self.sip_trunk_id_fallback)
             if trunk is None:
                 logger.error(
                     "No outbound trunk available for call %s — neither phone_numbers nor SIP_TRUNK_ID env",

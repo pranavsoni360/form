@@ -26,8 +26,11 @@ that is the ONLY place that needs to change once samples arrive (marked TODO).
 from __future__ import annotations
 
 import datetime as _dt
+import html as _html
+import json as _json
 import logging
 import os
+import re as _re
 from typing import Any
 
 import httpx
@@ -40,11 +43,16 @@ logger = logging.getLogger("lrs-vg-docverify")
 # SECURITY: these are the bank's shared credentials from the API doc. Prefer
 # setting them via environment / secrets manager before deploying; the defaults
 # exist only so the integration is functional out of the box in the VG env.
-_BASE_URL = os.getenv("VG_DOCVERIFY_BASE_URL", "http://10.200.10.43/VGDocverify").rstrip("/")
-_USER_ID = os.getenv("VG_DOCVERIFY_USER_ID", "3")
-_VERIFICATION_KEY = os.getenv("VG_DOCVERIFY_VERIFICATION_KEY", "CONV27032026")
-_BANK_NAME = os.getenv("VG_DOCVERIFY_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD.")
-_BANK_SHORT_CODE = os.getenv("VG_DOCVERIFY_BANK_SHORT_CODE", "VGIPL")
+_BASE_URL = os.getenv("VG_DOCVERIFY_BASE_URL", "https://vpays.in/VGDocverify").rstrip("/")
+_USER_ID = os.getenv("VG_DOCVERIFY_USER_ID", "25")
+_VERIFICATION_KEY = os.getenv("VG_DOCVERIFY_VERIFICATION_KEY", "COVAI27032026")
+_BANK_NAME = os.getenv("VG_DOCVERIFY_BANK_NAME", "Virtual Galaxy Fintech Pvt Ltd")
+_BANK_SHORT_CODE = os.getenv("VG_DOCVERIFY_BANK_SHORT_CODE", "VPAY")
+
+# ExperianReport SOAP method + inner request element. The element name comes from
+# the WSDL (?op=experianreport); overridable via env in case VG's is different.
+_EXPERIAN_METHOD = os.getenv("VG_EXPERIAN_METHOD", "experianreport")
+_EXPERIAN_ELEM = os.getenv("VG_EXPERIAN_ELEM", "experian")
 _APP_MODE = os.getenv("VG_DOCVERIFY_APP_MODE", "LRS")
 _REQUEST_FROM = os.getenv("VG_DOCVERIFY_REQUEST_FROM", "LRS")
 _DEVICE_ID = os.getenv("VG_DOCVERIFY_DEVICE_ID", "lrs-backend")
@@ -106,6 +114,93 @@ async def _post(url: str, api_code: str, ctx: FetchContext, fields: dict) -> dic
                     api_code, data.get("statusCode") if isinstance(data, dict) else "?")
         return None
     return result if isinstance(result, dict) else {"_list": result}
+
+
+# ── SOAP transport ────────────────────────────────────────────────────────────
+# The vpays.in VGKVerify/ProteanCredit .asmx endpoints are SOAP, not JSON: they
+# reject a JSON POST ("Root element is missing"). The real payload is a JSON
+# STRING returned inside the <MethodResponse> element of the SOAP envelope.
+# Verified live against ProteanCredit.asmx/experianreport and VGKVerify.asmx/Pan.
+
+def _soap_envelope(method: str, inner_element: str, rows: list[dict]) -> str:
+    """Build a SOAP 1.1 envelope: <method><obj><inner_element>…</inner_element></obj></method>."""
+    def _rowxml(row: dict) -> str:
+        cells = "".join(
+            f"<{k}>{_html.escape(str(v))}</{k}>" for k, v in row.items() if v is not None
+        )
+        return f"<{inner_element}>{cells}</{inner_element}>"
+    body = "".join(_rowxml(r) for r in rows)
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<soap:Body>"
+        f'<{method} xmlns="http://tempuri.org/">'
+        f"<obj>{body}</obj>"
+        f"</{method}>"
+        "</soap:Body></soap:Envelope>"
+    )
+
+
+def _extract_soap_payload(xml_text: str) -> dict | None:
+    """Pull the JSON payload VG returns inside the SOAP <...Response> element.
+
+    VG wraps a JSON string in the response body, e.g.
+      <PanResponse>{"statusCode":200,"data":{...}}</PanResponse>
+    (sometimes HTML-escaped). Returns the parsed dict, or None if empty/parse-fail.
+    Also surfaces SOAP <faultstring> as a raised error for the caller's retry.
+    """
+    if not xml_text:
+        return None
+    fault = _re.search(r"<faultstring>(.*?)</faultstring>", xml_text, _re.S)
+    if fault:
+        raise RuntimeError(f"SOAP fault: {_html.unescape(fault.group(1)).strip()[:300]}")
+    # Grab the text inside the first *Response element (any namespace prefix).
+    m = _re.search(r"<\w*Response[^>]*>(.*?)</\w*Response>", xml_text, _re.S)
+    inner = m.group(1) if m else xml_text
+    inner = _html.unescape(inner).strip()
+    if not inner:
+        return None
+    try:
+        parsed = _json.loads(inner)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else {"_list": parsed}
+
+
+async def _post_soap(
+    url: str, method: str, inner_element: str, ctx: FetchContext,
+    fields: dict, api_code: str | None = None,
+) -> dict | None:
+    """POST a SOAP request and return the parsed JSON payload (or None if absent).
+
+    Merges the shared credential block (incl. APICode) into the row, exactly like
+    the JSON path — the server requires APICode even though the WSDL omits it.
+    Raises on network / 5xx / SOAP fault so the job worker retries.
+    """
+    row = {**_common_params(api_code or method, ctx), **fields}
+    envelope = _soap_envelope(method, inner_element, [row])
+    headers = {
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": f'"http://tempuri.org/{method}"',
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(url, content=envelope.encode("utf-8"), headers=headers)
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.warning("VG SOAP %s call failed: %s", method, e)
+        raise
+    payload = _extract_soap_payload(resp.text)
+    if not payload:
+        logger.info("VG SOAP %s returned empty payload", method)
+        return None
+    # VG envelope: {"statusCode":200,"message":"SUCCESS","data":{...}}
+    sc = payload.get("statusCode")
+    if sc not in (200, 101, None):
+        logger.info("VG SOAP %s non-success statusCode=%s message=%s",
+                    method, sc, str(payload.get("message"))[:200])
+        return None
+    return payload
 
 
 # ── Small safe extractors ─────────────────────────────────────────────────────
@@ -178,18 +273,29 @@ class VGDocverifyClient:
     """
 
     async def experian_report(self, ctx: FetchContext) -> dict | None:
+        # SOAP on ProteanCredit.asmx. Returns {"statusCode":200,"data":
+        # {"jsonExperianReport": {...CAIS report...}}}. The inner request element
+        # name (_EXPERIAN_ELEM) is confirmable from ?op=experianreport; kept in an
+        # env override so it can be corrected without a code change.
         first, last = _split_name((ctx.app or {}).get("customer_name"))
-        return await _post(f"{_PROTEAN}/experianreport", "ExperianReport", ctx, {
-            "phoneNumber": ctx.phone or "",
-            "pan": ctx.pan or "",
-            "firstName": first,
-            "lastName": last,
-            "dateOfBirth": _fmt_date((ctx.app or {}).get("date_of_birth")),
-            "pincode": str((ctx.app or {}).get("pincode", "")),
-        })
+        return await _post_soap(
+            _PROTEAN, _EXPERIAN_METHOD, _EXPERIAN_ELEM, ctx,
+            {
+                "phoneNumber": ctx.phone or "",
+                "pan": ctx.pan or "",
+                "firstName": first,
+                "lastName": last,
+                "dateOfBirth": _fmt_date((ctx.app or {}).get("date_of_birth")),
+                "pincode": str((ctx.app or {}).get("pincode", "")),
+            },
+            api_code="ExperianReport",
+        )
 
     async def pan(self, ctx: FetchContext) -> dict | None:
-        return await _post(f"{_VGK}/Pan", "pancard", ctx, {"PanNo": ctx.pan or ""})
+        # SOAP on VGKVerify.asmx. Inner element <kpan>, needs PanNo + APICode.
+        return await _post_soap(
+            _VGK, "Pan", "kpan", ctx, {"PanNo": ctx.pan or ""}, api_code="pancard",
+        )
 
     async def pan_authentication(self, ctx: FetchContext) -> dict | None:
         return await _post(f"{_VGK}/PanAuthentication", "pan-authentication", ctx, {
@@ -237,12 +343,103 @@ _client = VGDocverifyClient()
 
 # ── Providers (mirror the mock provider names/pillars 1:1) ────────────────────
 
-class ExperianBureauProvider:
-    """Credit-bureau pillar, backed by the Experian Report endpoint.
+def _yyyymmdd_to_date(v: Any) -> _dt.date | None:
+    """CIBIL dates are ints like 20240119. Parse to a date (None if unusable)."""
+    s = str(v or "").strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        return _dt.date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    except ValueError:
+        return None
 
-    TODO: the response field paths below are best-guess names — replace with the
-    real ones from the vendor's sample response. Keys we can't find are omitted
-    (that parameter scores as absent and the pillar re-weights)."""
+
+def _derive_bureau_from_cais(report: dict) -> dict[str, Any]:
+    """Derive the credit_bureau pillar inputs from an Experian/CIBIL CAIS report.
+
+    VG's ExperianReport carries NO bureau score — only account details — so every
+    scorecard input is derived from CAIS_Account. `credit_score` is intentionally
+    NOT set (that parameter is disabled/absent and the pillar re-weights).
+    Verified against a real vpays.in response (report V2.4).
+    """
+    out: dict[str, Any] = {}
+    cais = report.get("CAIS_Account") or {}
+    summary = (cais.get("CAIS_Summary") or {}).get("Credit_Account") or {}
+    balances = (cais.get("CAIS_Summary") or {}).get("Total_Outstanding_Balance") or {}
+    accounts = cais.get("CAIS_Account_DETAILS") or []
+    if isinstance(accounts, dict):  # single-account payloads may not be a list
+        accounts = [accounts]
+
+    # active loans (direct)
+    active = _num(summary.get("CreditAccountActive"))
+    _set(out, "active_loans_count", active)
+
+    # credit history length: years since the earliest Open_Date across accounts
+    open_dates = [d for d in (_yyyymmdd_to_date(a.get("Open_Date")) for a in accounts) if d]
+    if open_dates:
+        earliest = min(open_dates)
+        today = _dt.date.today()
+        years = (today - earliest).days / 365.25
+        _set(out, "credit_history_years", round(years, 2))
+
+    # utilization: total outstanding / total sanctioned limit (revolving)
+    total_limit = sum(_num(a.get("Credit_Limit_Amount")) or 0 for a in accounts)
+    outstanding_all = _num(balances.get("Outstanding_Balance_All"))
+    if total_limit > 0 and outstanding_all is not None:
+        util = round(outstanding_all / total_limit * 100, 2)
+        _set(out, "credit_utilization_pct", util)
+        _set(out, "cc_utilization_pct", util)
+
+    # on-time payment %: share of reported months with Days_Past_Due == 0
+    total_months, ontime_months = 0, 0
+    for a in accounts:
+        for h in (a.get("CAIS_Account_History") or []):
+            dpd = _num(h.get("Days_Past_Due"))
+            if dpd is None:
+                continue
+            total_months += 1
+            if dpd == 0:
+                ontime_months += 1
+    if total_months > 0:
+        _set(out, "on_time_payment_pct", round(ontime_months / total_months * 100, 2))
+
+    # total existing EMI: sum of scheduled monthly payments (loans; cards report "")
+    total_emi = sum(_num(a.get("Scheduled_Monthly_Payment_Amount")) or 0 for a in accounts)
+    if total_emi > 0:
+        _set(out, "total_existing_emi", round(total_emi, 2))
+
+    # public records / derogatory: worst flag across summary + accounts
+    out["public_record_type"] = _cais_public_record_type(summary, accounts)
+    return out
+
+
+def _cais_public_record_type(summary: dict, accounts: list) -> str:
+    """Map CAIS default / suit-filed / write-off / settled flags → scorecard category."""
+    defaults = _num(summary.get("CreditAccountDefault")) or 0
+    suit_balance = _num(summary.get("CADSuitFiledCurrentBalance")) or 0
+    worst = "none"
+    for a in accounts:
+        if _dig(a, "SuitFiled_WillfulDefault", "SuitFiledWillfulDefaultWrittenOffStatus"):
+            worst = "civil_judgment_lt5"
+        wo = _dig(a, "Written_off_Settled_Status")
+        if wo:
+            worst = "civil_judgment_gt5" if worst == "none" else worst
+    if suit_balance > 0:
+        worst = "civil_judgment_lt5"
+    # A hard default with no explicit suit/writeoff still counts as adverse.
+    if defaults > 0 and worst == "none":
+        worst = "civil_judgment_gt5"
+    return worst
+
+
+class ExperianBureauProvider:
+    """Credit-bureau pillar, backed by VG's ExperianReport (CIBIL CAIS) endpoint.
+
+    The response is an account-level CAIS report with NO bureau score, so all
+    pillar inputs are DERIVED from the accounts (see _derive_bureau_from_cais):
+    payment history, utilization, credit-age, active loans, and derogatory flags.
+    `credit_score` is deliberately not populated — the scorecard re-weights it out.
+    """
     name = "bureau"
     pillar = "credit_bureau"
 
@@ -252,20 +449,12 @@ class ExperianBureauProvider:
         result = await _client.experian_report(ctx)
         if not result:
             return {}
-        out: dict[str, Any] = {}
-        # credit_bureau pillar input_keys (see scorecard.json)
-        _set(out, "credit_score", _num(_dig(result, "credit_score", "creditScore", "score", "bureauScore")))
-        _set(out, "on_time_payment_pct", _num(_dig(result, "on_time_payment_pct", "onTimePaymentPct", "paymentHistoryPct")))
-        _set(out, "credit_utilization_pct", _num(_dig(result, "credit_utilization_pct", "creditUtilizationPct", "utilizationPct")))
-        _set(out, "hard_inquiries_12m", _num(_dig(result, "hard_inquiries_12m", "enquiriesLast12Months", "enquiryCount")))
-        _set(out, "credit_history_years", _num(_dig(result, "credit_history_years", "creditHistoryYears", "oldestAccountYears")))
-        # existing-liabilities keys (used by personal_profile + normalize)
-        _set(out, "active_loans_count", _num(_dig(result, "active_loans_count", "activeAccounts", "openAccounts")))
-        _set(out, "cc_utilization_pct", _num(_dig(result, "cc_utilization_pct", "ccUtilizationPct")))
-        _set(out, "total_existing_emi", _num(_dig(result, "total_existing_emi", "totalEmi", "totalEMIAmount")))
-        # public records: map negative flags → scorecard category (default "none")
-        out["public_record_type"] = _public_record_type(result)
-        return out
+        # SOAP payload shape: {"statusCode":200,"data":{"jsonExperianReport":{...}}}
+        report = ((result.get("data") or {}).get("jsonExperianReport")) or {}
+        if not report:
+            logger.info("Experian: no jsonExperianReport in payload (keys=%s)", list(result)[:6])
+            return {}
+        return _derive_bureau_from_cais(report)
 
 
 class ITRIncomeProvider:

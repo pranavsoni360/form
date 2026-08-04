@@ -47,7 +47,9 @@ def test_zero_weight_only_present_pillar_no_zero_division():
     cfg["pillars"]["credit_bureau"]["weight"] = 0
     cfg["pillars"]["income"]["weight"] = 65      # enabled weights still sum to 100
     scorecard._validate_scorecard(cfg)            # config is legal
-    r = engine.score({"credit_score": 750}, config=cfg)  # only credit_bureau present
+    # credit_score is disabled, so use an enabled credit_bureau input to make
+    # the pillar present (on_time_payment_pct → payment_history param).
+    r = engine.score({"on_time_payment_pct": 99}, config=cfg)  # only credit_bureau present
     assert 0.0 <= r.total_score <= 100.0
     assert r.effective_weights == {"credit_bureau": 100.0}
 

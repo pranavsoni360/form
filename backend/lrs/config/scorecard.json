@@ -11,6 +11,8 @@
       "parameters": {
         "credit_score": {
           "title": "Credit Score", "weight": 18, "type": "range", "input_key": "credit_score",
+          "enabled": false,
+          "_note": "Disabled: VG ExperianReport returns a CIBIL CAIS account report with NO bureau score. The pillar is derived from payment history / utilization / credit-age / defaults instead (see vg_docverify._derive_bureau_from_cais). Re-enable if a score feed becomes available.",
           "bands": [
             { "from": 800, "to": 900, "score": 100, "rating": "Excellent", "approval": "Very High" },
             { "from": 750, "to": 799, "score": 80, "rating": "Very Good", "approval": "High" },

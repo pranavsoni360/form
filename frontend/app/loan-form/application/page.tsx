@@ -744,7 +744,22 @@ export default function LoanApplication() {
     }
     return ok;
   };
-  const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+  const step3Valid = () => {
+    const base = validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+    // Experience sanity: total must be > 0 for an employed applicant, and current-org
+    // experience can't exceed total. (These are salaried-only loans, so 0 is invalid.)
+    const totalExp = parseFloat(formData.total_work_experience);
+    const orgExp = parseFloat(formData.experience_current_org);
+    const extra: any = {};
+    if (formData.total_work_experience && !isNaN(totalExp) && totalExp <= 0) {
+      extra.total_work_experience = 'Experience cannot be zero for employed users.';
+    }
+    if (!isNaN(orgExp) && !isNaN(totalExp) && orgExp > totalExp) {
+      extra.experience_current_org = 'Current-org experience cannot exceed total experience.';
+    }
+    if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
+    return base && Object.keys(extra).length === 0;
+  };
 
   // Product-wise loan amount limits (max also enforced live by the ₹1 lakh cap).
   const LOAN_LIMITS: Record<string, { min: number; max: number; label: string }> = {
@@ -1384,8 +1399,8 @@ export default function LoanApplication() {
                 <F label="Designation" required error={errors.designation} fieldName="designation" fieldSources={formData.field_sources}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
-                <F label="Experience at Current Org (yrs)"><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp('')} placeholder="e.g. 2" /></F>
+                <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0.5" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
+                <F label="Experience at Current Org (yrs)" error={errors.experience_current_org}><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp(errors.experience_current_org)} placeholder="e.g. 2" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Residential Status" required error={errors.residential_status}>

@@ -1269,6 +1269,28 @@ def _validate_loan_amount(app: dict) -> None:
             detail=f"Loan Amount must be between ₹{_inr(lo)} and ₹{_inr(hi)} for the selected {limits['label']}.",
         )
 
+def _validate_experience(app: dict) -> None:
+    """Reject implausible work experience at submission (mirrors the client):
+    total experience must be > 0 for an employed applicant, and current-org
+    experience cannot exceed total. Fields are stored as free text, so parse
+    defensively and only enforce when a value is present."""
+    def _num(v):
+        if v is None or str(v).strip() == "":
+            return None
+        try:
+            return float(str(v).strip())
+        except (ValueError, TypeError):
+            return None
+    total = _num(app.get("total_work_experience"))
+    org = _num(app.get("experience_current_org"))
+    if total is not None and total <= 0:
+        raise HTTPException(status_code=400, detail="Experience cannot be zero for employed users.")
+    if total is not None and org is not None and org > total:
+        raise HTTPException(
+            status_code=400,
+            detail="Experience at current organisation cannot exceed total experience.",
+        )
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -3580,8 +3602,9 @@ async def submit_form_session(session_token: str, request: Request):
             status_code=423,
             detail="Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting."
         )
-    # Server-side product-wise loan amount guard (mirrors the client validation).
+    # Server-side guards (mirror the client validation).
     _validate_loan_amount(app_row)
+    _validate_experience(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

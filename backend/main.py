@@ -1638,22 +1638,30 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     bank = await db_pool.fetchrow("SELECT id FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not bank:
         raise HTTPException(status_code=404, detail="Bank not found")
+    # Trim and validate required fields
+    full_name = user.full_name.strip()
+    username = user.username.strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
     if user.role not in ("bank_officer", "bank_supervisor"):
         raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
     # Check for duplicate username
-    existing = await db_pool.fetchrow("SELECT id FROM bank_users WHERE username = $1", user.username)
+    existing = await db_pool.fetchrow("SELECT id FROM bank_users WHERE username = $1", username)
     if existing:
-        raise HTTPException(status_code=400, detail=f"Username '{user.username}' already exists")
+        raise HTTPException(status_code=400, detail=f"Username '{username}' already exists")
     # Check for duplicate email within this bank
-    existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", user.email, uuid.UUID(bank_id))
+    email = user.email.strip() if user.email else None
+    existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", email, uuid.UUID(bank_id))
     if existing_email:
-        raise HTTPException(status_code=400, detail=f"Email '{user.email}' already exists in this bank")
+        raise HTTPException(status_code=400, detail=f"Email '{email}' already exists in this bank")
     password = generate_random_password()
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     row = await db_pool.fetchrow(
         """INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role)
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, bank_id, username, email, full_name, role, is_active, created_at""",
-        uuid.UUID(bank_id), user.username, user.email, password_hash, user.full_name, user.role
+        uuid.UUID(bank_id), username, email, password_hash, full_name, user.role
     )
     user_dict = _row_to_dict(row)
     user_dict["generated_password"] = password  # Show only once

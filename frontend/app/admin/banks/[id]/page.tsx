@@ -43,10 +43,12 @@ export default function BankDetailPage() {
   };
 
   const handleCreateUser = async () => {
-    if (!userForm.full_name || !userForm.username) { setError('Name and username required'); return; }
+    const trimmedName = userForm.full_name.trim();
+    const trimmedUsername = userForm.username.trim();
+    if (!trimmedName || !trimmedUsername) { setError('Name and username are required'); return; }
     setCreating(true); setError('');
     try {
-      const data = await createBankUser(token, bankId, userForm);
+      const data = await createBankUser(token, bankId, { ...userForm, full_name: trimmedName, username: trimmedUsername, email: userForm.email.trim() });
       setCreatedCreds({ username: data.user.username, password: data.password });
       setShowCreateUser(false);
       setUserForm({ full_name: '', username: '', email: '', role: 'bank_officer' });

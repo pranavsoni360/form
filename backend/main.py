@@ -1291,6 +1291,29 @@ def _validate_experience(app: dict) -> None:
             detail="Experience at current organisation cannot exceed total experience.",
         )
 
+# Address fields: letters/digits/space and , . - / # only. Name-like parts
+# (street/landmark/locality) must also contain at least one letter so pure junk
+# ("&&&&&", "0000", "324235") is rejected; House/Flat No may be numeric.
+_ADDRESS_RE = re.compile(r"^[A-Za-z0-9\s,.\-/#]+$")
+
+def _validate_address(app: dict) -> None:
+    """Reject invalid address characters at submission (mirrors the client)."""
+    def _check(field: str, needs_letter: bool) -> None:
+        v = app.get(field)
+        if v is None or str(v).strip() == "":
+            return
+        s = str(v).strip()
+        if not _ADDRESS_RE.match(s) or (needs_letter and not any(c.isalpha() for c in s)):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid characters entered. Please enter a valid address.",
+            )
+    for scope in ("permanent", "current"):
+        _check(f"{scope}_house", False)
+        _check(f"{scope}_street", True)
+        _check(f"{scope}_landmark", True)
+        _check(f"{scope}_locality", True)
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -3605,6 +3628,7 @@ async def submit_form_session(session_token: str, request: Request):
     # Server-side guards (mirror the client validation).
     _validate_loan_amount(app_row)
     _validate_experience(app_row)
+    _validate_address(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

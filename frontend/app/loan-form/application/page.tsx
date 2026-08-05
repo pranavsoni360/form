@@ -742,6 +742,29 @@ export default function LoanApplication() {
     if (ok && !formData.same_as_current && !pincodeValid.current) {
       setErrors((p: any) => ({ ...p, current_pincode: 'Invalid pincode — no location found' })); return false;
     }
+    // Address character validation. Whitelist letters/digits/space and , . - / #
+    // (rejects "&&&&&"). Name-like parts (street/landmark/locality) must contain
+    // at least one letter so pure-numeric junk like "0000"/"324235" is rejected;
+    // House/Flat No may be numeric.
+    const ADDR_RE = /^[A-Za-z0-9\s,.\-/#]+$/;
+    const addrErrs: any = {};
+    const checkAddr = (field: string, needsLetter: boolean) => {
+      const v = String(formData[field] || '').trim();
+      if (!v) return; // empties handled by the Required check where applicable
+      if (!ADDR_RE.test(v) || (needsLetter && !/[A-Za-z]/.test(v))) {
+        addrErrs[field] = 'Invalid characters entered. Please enter a valid address.';
+      }
+    };
+    for (const s of (formData.same_as_current ? ['permanent'] : ['permanent', 'current'])) {
+      checkAddr(`${s}_house`, false);
+      checkAddr(`${s}_street`, true);
+      checkAddr(`${s}_landmark`, true);
+      checkAddr(`${s}_locality`, true);
+    }
+    if (Object.keys(addrErrs).length) {
+      setErrors((p: any) => ({ ...p, ...addrErrs }));
+      return false;
+    }
     return ok;
   };
   const step3Valid = () => {
@@ -1284,8 +1307,8 @@ export default function LoanApplication() {
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Landmark"><input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp('')} placeholder="e.g. Near Railway Station" /></F>
-                  <F label="Locality / Area"><input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp('')} placeholder="e.g. Andheri West" /></F>
+                  <F label="Landmark" error={errors.current_landmark}><input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp(errors.current_landmark)} placeholder="e.g. Near Railway Station" /></F>
+                  <F label="Locality / Area" error={errors.current_locality}><input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp(errors.current_locality)} placeholder="e.g. Andheri West" /></F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <F label="Pincode" required error={errors.current_pincode}>
@@ -1324,11 +1347,11 @@ export default function LoanApplication() {
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Landmark" fieldName="permanent_landmark" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp('')} placeholder="Optional" />
+                  <F label="Landmark" error={errors.permanent_landmark} fieldName="permanent_landmark" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp(errors.permanent_landmark)} placeholder="Optional" />
                   </F>
-                  <F label="Locality / Area" fieldName="permanent_locality" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp('')} placeholder="Optional" />
+                  <F label="Locality / Area" error={errors.permanent_locality} fieldName="permanent_locality" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp(errors.permanent_locality)} placeholder="Optional" />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">

@@ -637,11 +637,14 @@ async def export_all_calls(
     # no auth — operator access
 ):
     """Comprehensive Excel export with all call data."""
-    bank_uuid = None  # operator — no bank scoping
-    # bank_id IS NOT DISTINCT FROM matches NULL=NULL (operator) and uuid=uuid (bank user).
-    conditions = ["bank_id IS NOT DISTINCT FROM $1"]
-    params: list = [bank_uuid]
-    idx = 2
+    # Operator/admin endpoint — NO bank scoping (mirrors export_daily_report,
+    # which returns every call for the date). The previous
+    # `bank_id IS NOT DISTINCT FROM NULL` restricted results to operator-created
+    # rows only and returned "No data found" for any call tied to a bank, even
+    # when matching records existed.
+    conditions: list = []
+    params: list = []
+    idx = 1
 
     if status:
         # "Failed" is the umbrella for all hard-failure outcomes (Failed +
@@ -674,9 +677,9 @@ async def export_all_calls(
         except ValueError:
             pass
 
-    where = " AND ".join(conditions)
+    where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = await _state.db_pool.fetch(
-        f"SELECT * FROM agent_calls WHERE {where} ORDER BY created_at DESC",
+        f"SELECT * FROM agent_calls{where} ORDER BY created_at DESC",
         *params,
     )
     if not rows:

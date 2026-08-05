@@ -82,7 +82,7 @@ export default function BankDetailPage() {
       <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/admin/banks')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
+            <button onClick={() => router.back()} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
               <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
             </button>
             <div>

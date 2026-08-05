@@ -2019,8 +2019,10 @@ function RR({ label, value }: any) {
   );
 }
 function inp(error: string) {
-  const base = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 placeholder:text-[#94A3B8] border';
-  const ok   = 'border-[#E2E8F0] bg-[#FAFAFA] hover:border-[#94A3B8] focus:border-[#1A1A2E] focus:bg-white focus:shadow-[0_0_0_3px_rgba(26,26,46,0.06)]';
-  const err  = 'border-[#DC2626] bg-[#FFF5F5] animate-[shake_0.3s]';
+  // Explicit text colour in BOTH themes — without it the value inherits the
+  // page colour and is invisible (dark text on the dark-mode field until blur).
+  const base = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 border text-[#0F172A] dark:text-slate-100 placeholder:text-[#94A3B8] dark:placeholder:text-slate-500';
+  const ok   = 'border-[#E2E8F0] bg-[#FAFAFA] hover:border-[#94A3B8] focus:border-[#1A1A2E] focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500 dark:focus:border-blue-500 dark:focus:bg-slate-800 focus:shadow-[0_0_0_3px_rgba(26,26,46,0.06)]';
+  const err  = 'border-[#DC2626] bg-[#FFF5F5] dark:bg-red-950/30 dark:border-red-500 text-[#0F172A] dark:text-slate-100 animate-[shake_0.3s]';
   return `${base} ${error ? err : ok}`;
 }

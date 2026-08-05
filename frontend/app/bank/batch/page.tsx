@@ -263,7 +263,15 @@ export default function BatchPage() {
     try { await apiPost('/api/agent/emergency-stop'); notify('Emergency stop sent'); refresh(); }
     catch (err: any) { notify(err.message, false); } finally { setStopping(false); }
   };
-  const retryFailed   = async () => { setRetrying(true);  try { notify((await apiPost('/api/agent/batch-retry')).message   || 'Retrying'); refresh(); } catch (e: any) { notify(e.message, false); } finally { setRetrying(false); } };
+  const retryFailed   = async () => {
+    // Retry only the batch the operator has opened, so failed calls in the
+    // right batch are re-dialed (the endpoint otherwise guesses the most-recent
+    // completed batch). expandedBatch holds that batch's id.
+    if (!expandedBatch) { notify('Open the batch you want to retry (tap its row), then click Retry Failed', false); return; }
+    setRetrying(true);
+    try { notify((await apiPost(`/api/agent/batch-retry?batch_id=${encodeURIComponent(expandedBatch)}`)).message || 'Retrying'); refresh(); }
+    catch (e: any) { notify(e.message, false); } finally { setRetrying(false); }
+  };
   const cleanupStuck  = async () => { setCleaning(true);  try { notify((await apiPost('/api/agent/stale-cleanup')).message  || 'Cleaned'); refresh(); }  catch (e: any) { notify(e.message, false); } finally { setCleaning(false); } };
   const resumeCalling = async () => { setResuming(true);  try { notify((await apiPost('/api/agent/resume-calling')).message || 'Resumed'); refresh(); }  catch (e: any) { notify(e.message, false); } finally { setResuming(false); } };
 

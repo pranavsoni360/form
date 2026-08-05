@@ -45,10 +45,15 @@ export default function BankDetailPage() {
   const handleCreateUser = async () => {
     const trimmedName = userForm.full_name.trim();
     const trimmedUsername = userForm.username.trim();
-    if (!trimmedName || !trimmedUsername) { setError('Name and username are required'); return; }
+    const trimmedEmail = userForm.email.trim();
+    if (!trimmedName) { setError('Full name is required'); return; }
+    if (!/^[a-zA-Z\s.\-']{2,100}$/.test(trimmedName)) { setError('Full name may only contain letters, spaces, hyphens, apostrophes, or dots (2–100 chars)'); return; }
+    if (!trimmedUsername) { setError('Username is required'); return; }
+    if (!/^[a-z0-9_-]{3,50}$/.test(trimmedUsername)) { setError('Username must be 3–50 characters: lowercase letters, numbers, underscores, or hyphens only'); return; }
+    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) { setError('Enter a valid email address'); return; }
     setCreating(true); setError('');
     try {
-      const data = await createBankUser(token, bankId, { ...userForm, full_name: trimmedName, username: trimmedUsername, email: userForm.email.trim() });
+      const data = await createBankUser(token, bankId, { ...userForm, full_name: trimmedName, username: trimmedUsername, email: trimmedEmail });
       setCreatedCreds({ username: data.user.username, password: data.password });
       setShowCreateUser(false);
       setUserForm({ full_name: '', username: '', email: '', role: 'bank_officer' });

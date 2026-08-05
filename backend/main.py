@@ -1643,8 +1643,15 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     username = user.username.strip()
     if not full_name:
         raise HTTPException(status_code=400, detail="Full name is required")
+    if not re.match(r"^[a-zA-Z\s.\-']{2,100}$", full_name):
+        raise HTTPException(status_code=400, detail="Full name may only contain letters, spaces, hyphens, apostrophes, or dots (2–100 chars)")
     if not username:
         raise HTTPException(status_code=400, detail="Username is required")
+    if not re.match(r"^[a-z0-9_-]{3,50}$", username):
+        raise HTTPException(status_code=400, detail="Username must be 3–50 characters: lowercase letters, numbers, underscores, or hyphens only")
+    email = user.email.strip() if user.email else None
+    if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
     if user.role not in ("bank_officer", "bank_supervisor"):
         raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
     # Check for duplicate username
@@ -1652,7 +1659,6 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     if existing:
         raise HTTPException(status_code=400, detail=f"Username '{username}' already exists")
     # Check for duplicate email within this bank
-    email = user.email.strip() if user.email else None
     existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", email, uuid.UUID(bank_id))
     if existing_email:
         raise HTTPException(status_code=400, detail=f"Email '{email}' already exists in this bank")

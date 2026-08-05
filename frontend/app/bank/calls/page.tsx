@@ -34,21 +34,37 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
   'Scheduled':               { label: '📅 Scheduled',   color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
 };
 
-// The "Failed" tab groups all hard-failure statuses, matching the batch
-// dashboard's `failed` count (Failed + Invalid Phone + Call Not Connected) so
-// the two pages reconcile. Without this, Invalid-Phone / Not-Connected rows
-// land in no tab and the tab counts don't sum to the total.
-const FAILED_STATUSES = ['Failed', 'Invalid Phone', 'Call Not Connected'];
-const matchesFilter = (status: string, key: string) =>
-  key === 'Failed' ? FAILED_STATUSES.includes(status) : status === key;
+// Status groupings MUST match the batch dashboard's buckets (see
+// backend/agent/batch.py batch_status) so the two pages always reconcile:
+//   pending   = Pending + Calling + Scheduled + Called - Callback Requested
+//   completed = Called + Called - Interested + Called - Not Interested
+//   failed    = Failed + Invalid Phone + Call Not Connected
+//   not_answered = Not Answered
+// Every possible status lands in exactly one tab, so the tab counts sum to the
+// total and equal the batch dashboard's cards. "Interested" / "Not Interested"
+// are sub-views of completed; a bare "Called" (completed but uncategorised)
+// counts under "Completed" so nothing is orphaned.
+const FAILED_STATUSES    = ['Failed', 'Invalid Phone', 'Call Not Connected'];
+const PENDING_STATUSES   = ['Pending', 'Calling', 'Scheduled', 'Called - Callback Requested'];
+const COMPLETED_STATUSES = ['Called', 'Called - Interested', 'Called - Not Interested'];
+
+const matchesFilter = (status: string, key: string) => {
+  switch (key) {
+    case 'Failed':    return FAILED_STATUSES.includes(status);
+    case 'Pending':   return PENDING_STATUSES.includes(status);
+    case 'Completed': return COMPLETED_STATUSES.includes(status);
+    default:          return status === key;
+  }
+};
 
 const FILTERS: { key: string; label: string }[] = [
   { key: 'all',                    label: 'All' },
+  { key: 'Completed',              label: 'Completed' },
   { key: 'Called - Interested',    label: 'Interested' },
   { key: 'Called - Not Interested',label: 'Not Interested' },
   { key: 'Not Answered',           label: 'Not Answered' },
   { key: 'Failed',                 label: 'Failed' },
-  { key: 'Calling',                label: 'Calling' },
+  { key: 'Pending',                label: 'Pending' },
 ];
 
 export default function CallsPage() {

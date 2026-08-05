@@ -90,12 +90,13 @@ def test_every_config_input_key_is_producible():
 
 def test_golden_full_total():
     r = engine.score(GOOD_INPUTS)
-    # Hand-computed: Credit 87.43*35 + Income 99.2*30 + Banking 100*20 + Profile 96.2*15
-    assert r.pillar_scores["credit_bureau"]["score"] == pytest.approx(87.43, abs=0.02)
+    # credit_score disabled → credit_bureau rescales to 95.29 over weight 17.
+    # Credit 95.29*35 + Income 99.2*30 + Banking 100*20 + Profile 96.2*15 = 97.54
+    assert r.pillar_scores["credit_bureau"]["score"] == pytest.approx(95.29, abs=0.02)
     assert r.pillar_scores["income"]["score"] == pytest.approx(99.2, abs=0.05)
     assert r.pillar_scores["banking_behaviour"]["score"] == pytest.approx(100.0, abs=0.02)
     assert r.pillar_scores["personal_profile"]["score"] == pytest.approx(96.2, abs=0.05)
-    assert r.total_score == pytest.approx(94.79, abs=0.1)
+    assert r.total_score == pytest.approx(97.54, abs=0.1)
 
 
 def test_rollup_self_consistency():

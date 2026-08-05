@@ -26,9 +26,10 @@ GOOD_INPUTS = {
 
 
 def test_credit_bureau_pillar_exact_math():
-    """(80*18 + 100*7 + 80*4 + 100*3 + 100*2 + 100*1)/35 = 87.43"""
+    """credit_score is disabled (VG returns no bureau score), so the remaining
+    params rescale over weight 17: (100*7 + 80*4 + 100*3 + 100*2 + 100*1)/17 = 95.29"""
     r = engine.score(GOOD_INPUTS)
-    assert r.pillar_scores["credit_bureau"]["score"] == pytest.approx(87.43, abs=0.02)
+    assert r.pillar_scores["credit_bureau"]["score"] == pytest.approx(95.29, abs=0.02)
 
 
 def test_full_applicant_scores_high_and_complete():

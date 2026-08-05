@@ -696,14 +696,28 @@ export default function LoanApplication() {
     return Object.keys(e).length === 0;
   };
 
+  // QA-only: let testers walk the whole form without live PAN/Aadhaar
+  // verification (VG DocVerify may be unreachable on QA). Gated on the QA host
+  // (finix.vgipl.com:8445) or NEXT_PUBLIC_LOS_ENV='qa' — can NEVER trigger on
+  // production, which runs on the default port with LOS_ENV != 'qa'.
+  const isQaEnv = () => {
+    if (process.env.NEXT_PUBLIC_LOS_ENV === 'qa') return true;
+    if (typeof window !== 'undefined' && window.location.port === '8445') return true;
+    return false;
+  };
+
   const step1Valid = () => {
-    if (!formData.pan_verified) {
+    const qaBypass = isQaEnv();
+    if (!qaBypass && !formData.pan_verified) {
       setErrors((p: any) => ({ ...p, pan_number: 'Please verify your PAN before proceeding' }));
       return false;
     }
-    if (!formData.aadhaar_verified) {
+    if (!qaBypass && !formData.aadhaar_verified) {
       setErrors((p: any) => ({ ...p, aadhaar_number: 'Please complete Aadhaar verification before proceeding' }));
       return false;
+    }
+    if (qaBypass && (!formData.pan_verified || !formData.aadhaar_verified)) {
+      console.warn('[QA] KYC verification gate bypassed — QA environment only.');
     }
     return validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
   };
@@ -728,9 +742,47 @@ export default function LoanApplication() {
     if (ok && !formData.same_as_current && !pincodeValid.current) {
       setErrors((p: any) => ({ ...p, current_pincode: 'Invalid pincode — no location found' })); return false;
     }
+    // Address character validation. Whitelist letters/digits/space and , . - / #
+    // (rejects "&&&&&"). Name-like parts (street/landmark/locality) must contain
+    // at least one letter so pure-numeric junk like "0000"/"324235" is rejected;
+    // House/Flat No may be numeric.
+    const ADDR_RE = /^[A-Za-z0-9\s,.\-/#]+$/;
+    const addrErrs: any = {};
+    const checkAddr = (field: string, needsLetter: boolean) => {
+      const v = String(formData[field] || '').trim();
+      if (!v) return; // empties handled by the Required check where applicable
+      if (!ADDR_RE.test(v) || (needsLetter && !/[A-Za-z]/.test(v))) {
+        addrErrs[field] = 'Invalid characters entered. Please enter a valid address.';
+      }
+    };
+    for (const s of (formData.same_as_current ? ['permanent'] : ['permanent', 'current'])) {
+      checkAddr(`${s}_house`, false);
+      checkAddr(`${s}_street`, true);
+      checkAddr(`${s}_landmark`, true);
+      checkAddr(`${s}_locality`, true);
+    }
+    if (Object.keys(addrErrs).length) {
+      setErrors((p: any) => ({ ...p, ...addrErrs }));
+      return false;
+    }
     return ok;
   };
-  const step3Valid = () => validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+  const step3Valid = () => {
+    const base = validate({ qualification: 'Required', occupation: 'Required', industry_type: 'Required', employment_type: 'Required', designation: 'Required', total_work_experience: 'Required', residential_status: 'Required', tenure_stability: 'Required', employer_address: 'Required' });
+    // Experience sanity: total must be > 0 for an employed applicant, and current-org
+    // experience can't exceed total. (These are salaried-only loans, so 0 is invalid.)
+    const totalExp = parseFloat(formData.total_work_experience);
+    const orgExp = parseFloat(formData.experience_current_org);
+    const extra: any = {};
+    if (formData.total_work_experience && !isNaN(totalExp) && totalExp <= 0) {
+      extra.total_work_experience = 'Experience cannot be zero for employed users.';
+    }
+    if (!isNaN(orgExp) && !isNaN(totalExp) && orgExp > totalExp) {
+      extra.experience_current_org = 'Current-org experience cannot exceed total experience.';
+    }
+    if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
+    return base && Object.keys(extra).length === 0;
+  };
 
   // Product-wise loan amount limits (max also enforced live by the ₹1 lakh cap).
   const LOAN_LIMITS: Record<string, { min: number; max: number; label: string }> = {
@@ -1255,8 +1307,8 @@ export default function LoanApplication() {
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Landmark"><input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp('')} placeholder="e.g. Near Railway Station" /></F>
-                  <F label="Locality / Area"><input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp('')} placeholder="e.g. Andheri West" /></F>
+                  <F label="Landmark" error={errors.current_landmark}><input type="text" value={formData.current_landmark || ''} onChange={e => onChange('current_landmark', e.target.value)} className={inp(errors.current_landmark)} placeholder="e.g. Near Railway Station" /></F>
+                  <F label="Locality / Area" error={errors.current_locality}><input type="text" value={formData.current_locality || ''} onChange={e => onChange('current_locality', e.target.value)} className={inp(errors.current_locality)} placeholder="e.g. Andheri West" /></F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <F label="Pincode" required error={errors.current_pincode}>
@@ -1295,11 +1347,11 @@ export default function LoanApplication() {
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <F label="Landmark" fieldName="permanent_landmark" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp('')} placeholder="Optional" />
+                  <F label="Landmark" error={errors.permanent_landmark} fieldName="permanent_landmark" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.permanent_landmark || ''} onChange={e => onChange('permanent_landmark', e.target.value)} className={inp(errors.permanent_landmark)} placeholder="Optional" />
                   </F>
-                  <F label="Locality / Area" fieldName="permanent_locality" fieldSources={formData.field_sources}>
-                    <input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp('')} placeholder="Optional" />
+                  <F label="Locality / Area" error={errors.permanent_locality} fieldName="permanent_locality" fieldSources={formData.field_sources}>
+                    <input type="text" value={formData.permanent_locality || ''} onChange={e => onChange('permanent_locality', e.target.value)} className={inp(errors.permanent_locality)} placeholder="Optional" />
                   </F>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -1370,8 +1422,8 @@ export default function LoanApplication() {
                 <F label="Designation" required error={errors.designation} fieldName="designation" fieldSources={formData.field_sources}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
-                <F label="Experience at Current Org (yrs)"><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp('')} placeholder="e.g. 2" /></F>
+                <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0.5" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
+                <F label="Experience at Current Org (yrs)" error={errors.experience_current_org}><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp(errors.experience_current_org)} placeholder="e.g. 2" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Residential Status" required error={errors.residential_status}>
@@ -1967,8 +2019,10 @@ function RR({ label, value }: any) {
   );
 }
 function inp(error: string) {
-  const base = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 placeholder:text-[#94A3B8] border';
-  const ok   = 'border-[#E2E8F0] bg-[#FAFAFA] hover:border-[#94A3B8] focus:border-[#1A1A2E] focus:bg-white focus:shadow-[0_0_0_3px_rgba(26,26,46,0.06)]';
-  const err  = 'border-[#DC2626] bg-[#FFF5F5] animate-[shake_0.3s]';
+  // Explicit text colour in BOTH themes — without it the value inherits the
+  // page colour and is invisible (dark text on the dark-mode field until blur).
+  const base = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 border text-[#0F172A] dark:text-slate-100 placeholder:text-[#94A3B8] dark:placeholder:text-slate-500';
+  const ok   = 'border-[#E2E8F0] bg-[#FAFAFA] hover:border-[#94A3B8] focus:border-[#1A1A2E] focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500 dark:focus:border-blue-500 dark:focus:bg-slate-800 focus:shadow-[0_0_0_3px_rgba(26,26,46,0.06)]';
+  const err  = 'border-[#DC2626] bg-[#FFF5F5] dark:bg-red-950/30 dark:border-red-500 text-[#0F172A] dark:text-slate-100 animate-[shake_0.3s]';
   return `${base} ${error ? err : ok}`;
 }

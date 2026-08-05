@@ -9,6 +9,7 @@ import os
 import json
 import logging
 import asyncio
+import dataclasses
 
 from livekit import rtc
 from livekit.agents import JobContext, function_tool, RunContext, APIConnectOptions
@@ -83,21 +84,41 @@ if _SENTRY_DSN_AGENT:
 #   "WebSocket receive timeout" → retry → 5-6 s silence at call start
 #   "_SegmentSynchronizerImpl.resume called after close" warning cascade
 # Bumping to 30 s eliminates these without changing any other behaviour.
-# NOTE: inside TTSFallbackAdapter this is bypassed — the adapter passes its own
-# conn options (10 s timeout, no inner retries) so a dead Sarvam fails over to
-# Gemini TTS fast instead of stalling 30 s. _SARVAM_CONN still applies to any
-# direct _SarvamTTS use outside the adapter.
 _SARVAM_CONN = APIConnectOptions(timeout=30.0, max_retry=3, retry_interval=2.0)
+
+# Minimum receive timeout we will accept for Sarvam, even when a caller (the
+# TTSFallbackAdapter) supplies its own conn options.
+#
+# Why: TTSFallbackAdapter builds its own APIConnectOptions per attempt, so
+# `conn_options or _SARVAM_CONN` always took the adapter's value and the 30 s
+# fix above never applied on live calls — Sarvam was back to the library
+# default of 10 s. Measured on QA (48 calls, 2026-08-03): 18 "WebSocket receive
+# timeout" errors → 14 "switching to next TTS" events, i.e. ~29% of calls
+# audibly changed voice mid-conversation.
+#
+# We raise only the TIMEOUT and leave the adapter's retry policy alone, so the
+# adapter still owns when to give up and fail over to Gemini.
+_SARVAM_MIN_TIMEOUT = 20.0
+
+
+def _sarvam_conn(conn_options):
+    """Honour the caller's retry policy but never let Sarvam's receive timeout
+    drop below _SARVAM_MIN_TIMEOUT."""
+    if conn_options is None:
+        return _SARVAM_CONN
+    if conn_options.timeout >= _SARVAM_MIN_TIMEOUT:
+        return conn_options
+    return dataclasses.replace(conn_options, timeout=_SARVAM_MIN_TIMEOUT)
 
 
 class _SarvamTTS(sarvam.TTS):
-    """Drop-in wrapper that injects a 30-second receive timeout."""
+    """Drop-in wrapper that enforces a realistic Sarvam receive timeout."""
 
     def stream(self, *, conn_options=None):
-        return super().stream(conn_options=conn_options or _SARVAM_CONN)
+        return super().stream(conn_options=_sarvam_conn(conn_options))
 
     def synthesize(self, text, *, conn_options=None):
-        return super().synthesize(text, conn_options=conn_options or _SARVAM_CONN)
+        return super().synthesize(text, conn_options=_sarvam_conn(conn_options))
 
 # Wire agent → /api/internal/errors webhook (idempotent — silently no-ops if
 # LOS_BACKEND_URL / LOS_INTERNAL_HMAC_SECRET aren't set in .env.local).
@@ -249,17 +270,24 @@ async def entrypoint(ctx: JobContext):
                 ]
             ),
             # TTS fallback chain: Sarvam bulbul (primary) → Gemini TTS (backup).
-            # Sarvam's streaming WS intermittently drops mid-call ("Cannot write to
-            # closing transport") and its own 3 retries all hit the same dead
-            # service — the utterance was dropped and the agent went SILENT.
-            # FallbackAdapter tries Sarvam max twice with no inner retries
-            # (max_retry=0, 10s timeout per attempt), then switches to Gemini TTS
-            # (uses the existing GOOGLE_API_KEY; non-streaming, auto-wrapped in a
-            # StreamAdapter; 22050→24000 resampling is handled by the adapter).
-            # Tradeoff: during a Sarvam outage a sentence or two plays in the
-            # Gemini voice — always better than dead air on a live loan call.
+            # Sarvam's streaming WS intermittently drops or stalls mid-call, so we
+            # keep Gemini TTS as a backup (existing GOOGLE_API_KEY; non-streaming,
+            # auto-wrapped in a StreamAdapter; 22050→24000 resampling handled by
+            # the adapter). Dead air on a live loan call is worse than one
+            # sentence in the backup voice.
+            #
+            # Retry budget: the adapter's default is max_retry_per_tts=2, i.e. up
+            # to 3 Sarvam attempts plus 2s gaps. Combined with the 20s receive
+            # timeout enforced in _sarvam_conn that would be ~64s of silence
+            # before Gemini ever spoke. One generous attempt bounds the worst
+            # case at ~20s — better than the ~34s the old 3×10s budget allowed —
+            # while the longer timeout absorbs the slow-synthesis stalls that
+            # caused ~29% of QA calls to switch voice. Falling through to Gemini
+            # does NOT depend on this value (that's a separate loop in the
+            # adapter), so a genuinely dead Sarvam still fails over.
             tts=TTSFallbackAdapter(
-                [
+                max_retry_per_tts=0,
+                tts=[
                     _SarvamTTS(
                         model="bulbul:v3",
                         target_language_code=session.tts_language_code,

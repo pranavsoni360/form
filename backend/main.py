@@ -1269,6 +1269,51 @@ def _validate_loan_amount(app: dict) -> None:
             detail=f"Loan Amount must be between ₹{_inr(lo)} and ₹{_inr(hi)} for the selected {limits['label']}.",
         )
 
+def _validate_experience(app: dict) -> None:
+    """Reject implausible work experience at submission (mirrors the client):
+    total experience must be > 0 for an employed applicant, and current-org
+    experience cannot exceed total. Fields are stored as free text, so parse
+    defensively and only enforce when a value is present."""
+    def _num(v):
+        if v is None or str(v).strip() == "":
+            return None
+        try:
+            return float(str(v).strip())
+        except (ValueError, TypeError):
+            return None
+    total = _num(app.get("total_work_experience"))
+    org = _num(app.get("experience_current_org"))
+    if total is not None and total <= 0:
+        raise HTTPException(status_code=400, detail="Experience cannot be zero for employed users.")
+    if total is not None and org is not None and org > total:
+        raise HTTPException(
+            status_code=400,
+            detail="Experience at current organisation cannot exceed total experience.",
+        )
+
+# Address fields: letters/digits/space and , . - / # only. Name-like parts
+# (street/landmark/locality) must also contain at least one letter so pure junk
+# ("&&&&&", "0000", "324235") is rejected; House/Flat No may be numeric.
+_ADDRESS_RE = re.compile(r"^[A-Za-z0-9\s,.\-/#]+$")
+
+def _validate_address(app: dict) -> None:
+    """Reject invalid address characters at submission (mirrors the client)."""
+    def _check(field: str, needs_letter: bool) -> None:
+        v = app.get(field)
+        if v is None or str(v).strip() == "":
+            return
+        s = str(v).strip()
+        if not _ADDRESS_RE.match(s) or (needs_letter and not any(c.isalpha() for c in s)):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid characters entered. Please enter a valid address.",
+            )
+    for scope in ("permanent", "current"):
+        _check(f"{scope}_house", False)
+        _check(f"{scope}_street", True)
+        _check(f"{scope}_landmark", True)
+        _check(f"{scope}_locality", True)
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -3493,7 +3538,14 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[PAN API] Error: {e}")
+            # Log the exception TYPE, not just str(e): transport failures
+            # (httpx.ConnectError, ReadTimeout, SSLError) stringify to "" and
+            # used to log a bare "[PAN API] Error:" with no cause, which made
+            # a VG-side outage indistinguishable from a bug in our code.
+            logger.error(
+                "[PAN API] %s calling %s/Pan: %s",
+                type(e).__name__, VG_API_BASE, e or "(no detail)", exc_info=True,
+            )
             raise HTTPException(status_code=503, detail="PAN verification service is temporarily unavailable. Please try again in a moment.")
 
     await db_pool.execute(
@@ -3573,8 +3625,10 @@ async def submit_form_session(session_token: str, request: Request):
             status_code=423,
             detail="Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting."
         )
-    # Server-side product-wise loan amount guard (mirrors the client validation).
+    # Server-side guards (mirror the client validation).
     _validate_loan_amount(app_row)
+    _validate_experience(app_row)
+    _validate_address(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

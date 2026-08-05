@@ -803,9 +803,22 @@ async def trigger_batch_retry(
             detail=f"Calling not allowed outside {CALL_START_HOUR}AM-{CALL_END_HOUR % 24 or 12}AM IST.",
         )
 
-    # Find the batch
+    # Find the batch. batch_id may be the UUID (agent_batches.id) OR the string
+    # batch_id the frontend uses as its row key — accept both.
     if batch_id:
-        batch_row = await _state.db_pool.fetchrow("SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
+        batch_row = None
+        try:
+            batch_row = await _state.db_pool.fetchrow(
+                "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id)
+            )
+        except ValueError:
+            pass  # not a UUID — fall through to the string batch_id lookup
+        if batch_row is None:
+            batch_row = await _state.db_pool.fetchrow(
+                "SELECT * FROM agent_batches WHERE batch_id = $1", batch_id
+            )
+        if not batch_row:
+            raise HTTPException(status_code=404, detail=f"Batch not found: {batch_id}")
     else:
         batch_row = await _state.db_pool.fetchrow(
             "SELECT * FROM agent_batches WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1")

@@ -66,6 +66,17 @@ DEFAULT_CONCURRENCY = int(os.getenv("DISPATCHER_CONCURRENCY", "5"))
 # behavior in agent/batch.py:197 — keeps each cron tick bounded.
 MAX_CALLS_PER_RUN = int(os.getenv("DISPATCHER_MAX_CALLS_PER_RUN", "50"))
 
+# When every eligible trunk is busy-at-capacity (all channels in use) we have
+# no cooldown timestamp telling us when one frees, so we poll on this interval.
+# Short enough to grab a freed channel promptly, long enough not to hammer DB.
+TRUNK_BUSY_POLL_INTERVAL_S = float(os.getenv("DISPATCHER_BUSY_POLL_S", "5"))
+
+# Upper bound on how long a single call waits for a trunk to free before giving
+# up. Must exceed the worst realistic "call in progress (≤ wait_for_completion
+# timeout, 600s) + post-call cooldown (≤ 300s)" so an overflow call queued
+# behind a full pool is not failed prematurely.
+TRUNK_WAIT_DEADLINE_S = float(os.getenv("DISPATCHER_TRUNK_WAIT_S", "900"))
+
 
 # ============================================================================
 # Phone formatting
@@ -405,36 +416,67 @@ class Dispatcher:
         return self.counts
 
     async def _wait_for_cooldown_and_retry(self, call_uuid) -> Optional[dict]:
-        """All trunks busy? Distinguish 'cooling down' (temporary) from
-        'none configured' (permanent). Single-number pools hit the temporary
-        case after EVERY successful call (180-300s cooldown) — failing the
-        call there meant a re-uploaded batch never rang. Wait for the
-        earliest cooldown to expire (bounded), then re-acquire.
+        """Every eligible trunk is momentarily unavailable — either COOLING
+        DOWN (a future cooldown_until after a successful call) or BUSY at
+        capacity (active_calls >= pool.capacity, all channels in use). Both are
+        temporary, so wait for one to free and re-acquire rather than failing
+        the call. Only give up when NO eligible trunk is configured at all
+        (nothing to wait for) or the wait deadline is exceeded.
+
+        Cooling-down trunks have a known ETA (cooldown_until) so we sleep
+        exactly that long; busy-at-capacity trunks have no ETA (a call can run
+        up to the completion timeout) so we poll on a fixed interval.
+
+        Single-number pools hit the cooling case after EVERY successful call
+        (180-300s cooldown) and the busy case whenever a batch fans out wider
+        than the trunk's channel count — failing the call in either meant a
+        re-uploaded batch never rang.
         Returns a trunk dict or None (caller falls through to the fail path)."""
-        deadline = asyncio.get_event_loop().time() + 420  # > max cooldown (300s)
+        deadline = asyncio.get_event_loop().time() + TRUNK_WAIT_DEADLINE_S
         while not self._stopped:
-            # Seconds until the earliest eligible trunk frees up (DB clock, no skew).
-            q = """SELECT EXTRACT(EPOCH FROM (MIN(pn.cooldown_until) - NOW()))
+            # Does an eligible trunk for this call exist at all (ignoring the
+            # transient busy/cooldown state)? And of those merely cooling down,
+            # how long until the soonest frees? A busy-at-capacity trunk has no
+            # cooldown_until, so cooldown_s is NULL and we fall back to polling.
+            # The eligibility filter MUST mirror _acquire_trunk_from_db so we
+            # never wait for a trunk acquisition would skip (e.g. a number that
+            # is not auto_dial_eligible on the automatic path).
+            q = """SELECT COUNT(*) AS candidates,
+                          EXTRACT(EPOCH FROM (
+                              MIN(pn.cooldown_until)
+                                  FILTER (WHERE pn.cooldown_until > NOW())
+                              - NOW()
+                          )) AS cooldown_s
                      FROM phone_numbers pn
                      JOIN phone_pools pp ON pp.id = pn.pool_id
-                    WHERE pn.status = 'active'
-                      AND pn.cooldown_until > NOW()
-                      AND pn.active_calls < pp.capacity"""
+                    WHERE pn.status = 'active'"""
             args: list = []
             if self.preferred_phone_id:
                 q += " AND pn.id = $1"
                 args.append(uuid.UUID(self.preferred_phone_id))
-            wait_s = await self.db_pool.fetchval(q, *args)
-            if wait_s is None:
-                return None  # nothing is merely cooling down — genuinely no trunk
+            else:
+                q += " AND pn.auto_dial_eligible = TRUE"
+            row = await self.db_pool.fetchrow(q, *args)
+            if row is None or row["candidates"] == 0:
+                return None  # no eligible trunk exists — nothing to wait for
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
-                logger.error("Trunk cooldown wait exceeded 420s for call %s — giving up", call_uuid)
+                logger.error(
+                    "Trunk wait exceeded %.0fs for call %s — giving up",
+                    TRUNK_WAIT_DEADLINE_S, call_uuid,
+                )
                 return None
-            sleep_s = min(max(float(wait_s) + 1.0, 2.0), remaining)
+            cooldown_s = row["cooldown_s"]
+            if cooldown_s is not None and cooldown_s > 0:
+                sleep_s = float(cooldown_s) + 1.0        # wait exactly for cooldown
+                reason = "cooling down"
+            else:
+                sleep_s = TRUNK_BUSY_POLL_INTERVAL_S      # busy at capacity, no ETA
+                reason = "busy at capacity"
+            sleep_s = min(max(sleep_s, 2.0), remaining)
             logger.info(
-                "All trunks cooling down — waiting %.0fs for the pool to free up (call %s)",
-                sleep_s, call_uuid,
+                "All trunks %s — waiting %.0fs for the pool to free up (call %s)",
+                reason, sleep_s, call_uuid,
             )
             await asyncio.sleep(sleep_s)
             trunk = await _acquire_trunk_from_db(

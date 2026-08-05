@@ -1562,7 +1562,10 @@ async def admin_list_banks(admin: dict = Depends(get_current_admin)):
 @app.post("/api/admin/banks")
 async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_admin)):
     """Create a new bank."""
-    # Check for duplicate code
+    # Check for duplicate name or code
+    existing_name = await db_pool.fetchrow("SELECT id FROM banks WHERE LOWER(name) = LOWER($1)", bank.name)
+    if existing_name:
+        raise HTTPException(status_code=400, detail=f"Bank with name '{bank.name}' already exists")
     existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", bank.code)
     if existing:
         raise HTTPException(status_code=400, detail=f"Bank with code '{bank.code}' already exists")
@@ -1581,6 +1584,9 @@ async def admin_update_bank(bank_id: str, bank: BankUpdate, admin: dict = Depend
         raise HTTPException(status_code=404, detail="Bank not found")
     updates = {}
     if bank.name is not None:
+        dup_name = await db_pool.fetchrow("SELECT id FROM banks WHERE LOWER(name) = LOWER($1) AND id != $2", bank.name, uuid.UUID(bank_id))
+        if dup_name:
+            raise HTTPException(status_code=400, detail=f"Bank with name '{bank.name}' already exists")
         updates["name"] = bank.name
     if bank.code is not None:
         # Check for duplicate code (excluding this bank)

@@ -36,10 +36,19 @@ export default function BanksPage() {
   };
 
   const handleCreate = async () => {
-    if (!form.name || !form.code) { setError('Name and code are required'); return; }
+    const name = form.name.trim();
+    const code = form.code.trim();
+    const email = form.contact_email.trim();
+    const phone = form.contact_phone.trim();
+    if (!name) { setError('Bank name is required'); return; }
+    if (!/^[a-zA-Z0-9\s.\-&'(),]{2,255}$/.test(name)) { setError('Bank name contains invalid characters'); return; }
+    if (!code) { setError('Bank code is required'); return; }
+    if (!/^[A-Z0-9]{2,20}$/.test(code)) { setError('Code must be 2–20 uppercase letters or numbers only (e.g. HDFC)'); return; }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Enter a valid contact email address'); return; }
+    if (phone && !/^\+?[0-9\s\-]{7,15}$/.test(phone)) { setError('Contact phone must contain only digits, spaces, hyphens, or a leading +'); return; }
     setCreating(true); setError('');
     try {
-      await createBank(token, form);
+      await createBank(token, { ...form, name, code, contact_email: email, contact_phone: phone });
       setShowCreate(false);
       setForm({ name: '', code: '', contact_email: '', contact_phone: '', address: '' });
       await fetchBanks();

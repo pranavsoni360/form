@@ -1562,17 +1562,35 @@ async def admin_list_banks(admin: dict = Depends(get_current_admin)):
 @app.post("/api/admin/banks")
 async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_admin)):
     """Create a new bank."""
+    # Trim fields
+    name = bank.name.strip()
+    code = bank.code.strip()
+    contact_email = bank.contact_email.strip() if bank.contact_email else None
+    contact_phone = bank.contact_phone.strip() if bank.contact_phone else None
+    # Validate
+    if not name:
+        raise HTTPException(status_code=400, detail="Bank name is required")
+    if not re.match(r"^[a-zA-Z0-9\s.\-&'(),]{2,255}$", name):
+        raise HTTPException(status_code=400, detail="Bank name contains invalid characters")
+    if not code:
+        raise HTTPException(status_code=400, detail="Bank code is required")
+    if not re.match(r"^[A-Z0-9]{2,20}$", code):
+        raise HTTPException(status_code=400, detail="Code must be 2–20 uppercase letters or numbers only (e.g. HDFC)")
+    if contact_email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", contact_email):
+        raise HTTPException(status_code=400, detail="Enter a valid contact email address")
+    if contact_phone and not re.match(r"^\+?[0-9\s\-]{7,15}$", contact_phone):
+        raise HTTPException(status_code=400, detail="Contact phone must contain only digits, spaces, hyphens, or a leading +")
     # Check for duplicate name or code
-    existing_name = await db_pool.fetchrow("SELECT id FROM banks WHERE LOWER(name) = LOWER($1)", bank.name)
+    existing_name = await db_pool.fetchrow("SELECT id FROM banks WHERE LOWER(name) = LOWER($1)", name)
     if existing_name:
-        raise HTTPException(status_code=400, detail=f"Bank with name '{bank.name}' already exists")
-    existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", bank.code)
+        raise HTTPException(status_code=400, detail=f"Bank with name '{name}' already exists")
+    existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", code)
     if existing:
-        raise HTTPException(status_code=400, detail=f"Bank with code '{bank.code}' already exists")
+        raise HTTPException(status_code=400, detail=f"Bank with code '{code}' already exists")
     row = await db_pool.fetchrow(
         """INSERT INTO banks (name, code, contact_email, contact_phone, address, logo_url)
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
-        bank.name, bank.code, bank.contact_email, bank.contact_phone, bank.address, bank.logo_url
+        name, code, contact_email, contact_phone, bank.address, bank.logo_url
     )
     return {"bank": _row_to_dict(row)}
 

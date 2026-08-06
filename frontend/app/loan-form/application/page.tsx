@@ -1409,7 +1409,7 @@ export default function LoanApplication() {
                     {(codeLists[7] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
-                <F label="Occupation" required error={errors.occupation}>
+                <F label="Occupation" required error={errors.occupation} fieldName="occupation" fieldSources={formData.field_sources}>
                   <select value={formData.occupation || ''} onChange={e => onChange('occupation', e.target.value)} className={inp(errors.occupation)}>
                     <option value="">Select</option>
                     {(codeLists[8] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
@@ -1435,8 +1435,8 @@ export default function LoanApplication() {
                 <F label="Designation" required error={errors.designation} fieldName="designation" fieldSources={formData.field_sources}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0.5" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
-                <F label="Experience at Current Org (yrs)" error={errors.experience_current_org}><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp(errors.experience_current_org)} placeholder="e.g. 2" /></F>
+                <F label="Total Experience (yrs)" required error={errors.total_work_experience} fieldName="total_work_experience" fieldSources={formData.field_sources}><input type="number" step="0.5" min="0.5" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
+                <F label="Experience at Current Org (yrs)" error={errors.experience_current_org} fieldName="experience_current_org" fieldSources={formData.field_sources}><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp(errors.experience_current_org)} placeholder="e.g. 2" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Residential Status" required error={errors.residential_status}>

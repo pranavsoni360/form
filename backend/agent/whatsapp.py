@@ -40,6 +40,123 @@ async def _is_qa_db() -> bool:
     return _IS_QA_DB
 
 
+# ── Voice-call → loan-form code mapping ─────────────────────────────────────
+# The voice agent captures employment details as FREE TEXT (employment_type
+# ="salaried", business_type="IT", working_experience="5 years"). But the form's
+# Occupation / Employment Type / Industry Type are code_mst_id <select> dropdowns
+# (see _CODE_LIST_FALLBACKS in main.py). A free-text value never matches an
+# <option value>, so those dropdowns rendered BLANK even when the column held a
+# value — only the plain text fields (Employer Name, Designation) showed. These
+# mappers translate the call's free text into the dropdown codes so every
+# captured field auto-fills. Empty / unmappable input returns None → the field
+# stays blank; we never guess a value out of nothing.
+#
+# Codes are the exact code_mst_id values from _CODE_LIST_FALLBACKS:
+#   list 8  Occupation, list 9 Employment Type, list 10 Industry Type.
+
+_EMPLOYMENT_TYPE_CODES = {"260492", "260493", "260494", "260495", "260496", "260497"}
+_OCCUPATION_CODES = {
+    "131", "132", "133", "134", "135", "136", "137", "938", "939",
+    "940", "941", "1071", "1072", "260135", "260134",
+}
+_INDUSTRY_TYPE_CODES = {"260537", "260490", "260491", "260489", "260470"}
+
+
+def _has(text: str, *keys: str) -> bool:
+    return any(k in text for k in keys)
+
+
+def _map_employment_type(raw) -> "str | None":
+    """Free-text employment → code list 9. This is a salaried-only product;
+    when the agent only heard "salaried" without the firm type we default to
+    Private MNC (the most common salaried category) and let the applicant
+    correct it — the green "Voice Call" badge flags it for review."""
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if s in _EMPLOYMENT_TYPE_CODES:            # already a code — pass through
+        return s
+    t = s.lower()
+    if _has(t, "govt", "government", "public sector", "psu", "sarkari"):
+        return "260492"
+    if _has(t, "small") and _has(t, "salar", "job", "private", "firm"):
+        return "260494"
+    if _has(t, "freelanc", "gig", "contract worker"):
+        return "260497"
+    if _has(t, "self employ", "self-employ", "selfemploy", "business", "proprietor", "own business"):
+        return "260495"
+    if _has(t, "salar", "private", "mnc", "company", "job", "employee", "service"):
+        return "260493"                        # default salaried → Private MNC
+    return None
+
+
+def _map_occupation(raw, employment_code: "str | None" = None) -> "str | None":
+    """Free-text occupation → code list 8. If the call captured no explicit
+    occupation, derive it from the employment-type family (salaried → Service)
+    so a salaried applicant's Occupation isn't left blank."""
+    if raw:
+        s = str(raw).strip()
+        if s in _OCCUPATION_CODES:             # already a code — pass through
+            return s
+        t = s.lower()
+        if _has(t, "house wife", "housewife", "homemaker"):
+            return "133"
+        if _has(t, "student"):
+            return "136"
+        if _has(t, "retire"):
+            return "135"
+        if _has(t, "pension"):
+            return "938"
+        if _has(t, "unemploy", "jobless", "no job"):
+            return "940"
+        if _has(t, "farmer", "cultivat", "agricultur"):
+            return "941"
+        if _has(t, "professional", "doctor", "lawyer", "ca ", "architect"):
+            return "134"
+        if _has(t, "self employ", "self-employ", "freelanc"):
+            return "1071"
+        if _has(t, "business", "shop", "trader", "proprietor", "merchant"):
+            return "132"
+        if _has(t, "service", "salar", "job", "employee", "private", "govt"):
+            return "131"
+    # No usable occupation string — derive from employment type family.
+    if employment_code in ("260492", "260493", "260494"):
+        return "131"                           # salaried → Service
+    if employment_code in ("260495", "260496", "260497"):
+        return "1071"                          # self-employed / freelancer
+    return None
+
+
+def _map_industry_type(raw) -> "str | None":
+    """Free-text sector/business → code list 10."""
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if s in _INDUSTRY_TYPE_CODES:              # already a code — pass through
+        return s
+    t = f" {s.lower()} "
+    if _has(t, " it ", "software", "information technology", "developer", "programmer", " tech"):
+        return "260470"                        # IT Sector
+    if _has(t, "govt", "government", "health", "hospital", "medical", "bank", "finance",
+            "education", "teacher", "school", "college"):
+        return "260489"                        # Govt/Healthcare/Banking
+    if _has(t, "retail", "manufactur", "shop", "factory", "production", "store", "sales", "textile"):
+        return "260490"                        # Retail/Manufacturing
+    if _has(t, "construction", "tourism", "hotel", "travel", "real estate", "builder", "hospitality"):
+        return "260491"                        # Construction/Tourism
+    return "260537"                            # Other (captured but uncategorised)
+
+
+def _parse_years(raw) -> "str | None":
+    """Pull the first number out of a free-text experience string
+    ("5 years"/"5.5 saal"/"about 3") so the number input accepts it."""
+    if raw in (None, ""):
+        return None
+    import re
+    m = re.search(r"\d+(?:\.\d+)?", str(raw))
+    return m.group(0) if m else None
+
+
 @router.post("/send-whatsapp-form")
 async def send_whatsapp_form(request: Request):
     """Triggered by the AI voice agent's send_form_link tool.
@@ -163,6 +280,20 @@ async def send_whatsapp_form(request: Request):
             monthly_income = parse_num(collected.get("monthly_income"))
             existing_emi = parse_num(collected.get("existing_emi"))
 
+            # Normalize the call's free-text employment details into the form's
+            # dropdown codes so Occupation / Employment Type / Industry Type
+            # auto-fill instead of rendering blank (they only accept code_mst_id).
+            employment_type_code = _map_employment_type(collected.get("employment_type"))
+            occupation_code = _map_occupation(collected.get("occupation"), employment_type_code)
+            industry_type_code = _map_industry_type(
+                collected.get("business_type") or collected.get("sector")
+            )
+            total_exp_val = _parse_years(collected.get("working_experience"))
+            current_org_exp_val = _parse_years(
+                collected.get("experience_current_org")
+                or collected.get("current_org_experience")
+            )
+
             try:
                 row = await _state.db_pool.fetchrow(
                     """INSERT INTO loan_applications (
@@ -171,14 +302,16 @@ async def send_whatsapp_form(request: Request):
                         monthly_gross_income, monthly_emi_existing, current_address,
                         purpose_of_loan, loan_amount_requested, customer_type, industry_type,
                         total_work_experience, qualification, consumer_loan_type,
-                        guarantor_name, guarantor_phone
+                        guarantor_name, guarantor_phone,
+                        occupation, experience_current_org
                     ) VALUES (
                         $1, $2, $3, 1, 'draft', $4, $5,
                         $6, $7, $8, $9, $10,
                         $11, $12, $13,
                         $14, $15, $16, $17,
                         $18, $19, $20,
-                        $21, $22
+                        $21, $22,
+                        $23, $24
                     ) RETURNING id""",
                     customer_name or "Customer",
                     phone_norm,
@@ -189,37 +322,45 @@ async def send_whatsapp_form(request: Request):
                     customer_name or "",
                     collected.get("employer_name") or None,
                     collected.get("designation") or None,
-                    collected.get("employment_type") or None,
+                    employment_type_code,
                     monthly_income,
                     existing_emi,
                     collected.get("collected_address") or None,
                     collected.get("loan_purpose") or None,
                     loan_amount,
                     collected.get("customer_type") or "new",
-                    collected.get("business_type") or None,
-                    collected.get("working_experience") or None,
+                    industry_type_code,
+                    total_exp_val,
                     collected.get("qualification") or None,
                     _consumer_loan_type,
                     collected.get("guarantor_name") or None,
                     collected.get("guarantor_phone") or None,
+                    occupation_code,
+                    current_org_exp_val,
                 )
                 app_id = row["id"]
                 logger.info(f"Created loan_application {app_id} for {phone_norm} from call {call_id}")
 
-                # Save field_sources for "Voice Call" badges
+                # Save field_sources for "Voice Call" badges. The tooltip shows
+                # `original` — for the coded dropdowns we store the raw free text
+                # the customer actually said ("salaried", "IT") rather than the
+                # code, so it reads naturally. Coded fields are only badged when
+                # a code was resolved, so a blank dropdown never carries a badge.
                 source_fields = {}
                 field_map = {
                     "employer_name": collected.get("employer_name"),
                     "designation": collected.get("designation"),
-                    "employment_type": collected.get("employment_type"),
+                    "employment_type": collected.get("employment_type") if employment_type_code else None,
+                    "occupation": (collected.get("occupation") or collected.get("employment_type")) if occupation_code else None,
                     "monthly_gross_income": str(monthly_income) if monthly_income else None,
                     "monthly_emi_existing": str(existing_emi) if existing_emi else None,
                     "current_address": collected.get("collected_address"),
                     "purpose_of_loan": collected.get("loan_purpose"),
                     "loan_amount_requested": str(loan_amount) if loan_amount else None,
                     "customer_type": collected.get("customer_type"),
-                    "industry_type": collected.get("business_type"),
-                    "total_work_experience": collected.get("working_experience"),
+                    "industry_type": collected.get("business_type") if industry_type_code else None,
+                    "total_work_experience": total_exp_val,
+                    "experience_current_org": current_org_exp_val,
                     "qualification": collected.get("qualification"),
                     "consumer_loan_type": _consumer_loan_type,
                     "customer_name": customer_name,

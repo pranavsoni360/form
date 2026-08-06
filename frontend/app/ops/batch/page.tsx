@@ -284,7 +284,13 @@ export default function OpsBatchPage() {
   const stop = useMutation({
     mutationFn: postJson("/api/agent/emergency-stop"),
     onSuccess: (d) => {
-      toast.warning(d?.message || "Emergency stop activated");
+      const killed = d?.active_calls_killed ?? 0;
+      const base = d?.message || "Emergency stop activated";
+      toast.warning(
+        killed > 0
+          ? `${base} · ${killed} live call${killed === 1 ? "" : "s"} ended`
+          : base,
+      );
       refreshBatchViews();
     },
     onError: (e: Error) => toast.error(e.message),

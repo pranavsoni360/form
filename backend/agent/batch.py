@@ -854,39 +854,72 @@ async def trigger_batch_retry(
 
 @router.post("/emergency-stop")
 async def emergency_stop():
-    """Immediately stop all calling and kill active call if any."""
+    """Immediately stop all calling and kill every active call.
+
+    Order matters:
+      1. Set the DB flag so any call still queued behind the concurrency
+         semaphore skips itself on its next per-call re-check.
+      2. Signal every running Dispatcher to stop (`_stopped = True`). This is
+         the piece that was previously missing: without it, calls parked in
+         `_wait_for_cooldown_and_retry()` (`while not self._stopped`) kept
+         waiting for a trunk and would still DIAL after the stop, because they
+         had already passed the emergency-stop gate before parking.
+      3. Kill ALL rooms currently in 'Calling' — not just one. With
+         DISPATCHER_CONCURRENCY live calls in flight, a single LIMIT-1 delete
+         left the rest ringing.
+    """
     await set_emergency_stop(True)
     logger.warning("EMERGENCY STOP activated by operator")
 
-    bank_uuid = None  # operator — no bank scoping
-    # Kill active call
-    if bank_uuid:
-        active = await _state.db_pool.fetchrow(
-            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' AND bank_id = $1 LIMIT 1", bank_uuid)
-    else:
-        active = await _state.db_pool.fetchrow(
-            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' LIMIT 1")
-    room_deleted = False
-    if active and active["room_name"]:
-        try:
-            lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-            await lk.room.delete_room(api.DeleteRoomRequest(room=active["room_name"]))
-            await lk.aclose()
-            room_deleted = True
-            await _state.db_pool.execute(
-                """UPDATE agent_calls
-                   SET status = 'Failed', error_message = 'Emergency Stop',
-                       ended_at = $1, updated_at = $1
-                   WHERE id = $2""",
-                now_ist(), active["id"],
-            )
-        except Exception as e:
-            logger.error(f"Failed to delete room during emergency stop: {e}")
+    # 2. Signal in-flight dispatchers to stop picking up / waiting for work.
+    signaled = 0
+    try:
+        from services.dispatcher import manager as dispatcher_mgr
+        signaled = dispatcher_mgr.stop_all()
+        logger.warning("Emergency stop signaled %d active dispatcher(s)", signaled)
+    except Exception as e:
+        logger.error(f"Failed to signal dispatchers during emergency stop: {e}")
+
+    # 3. Kill EVERY active call (operator scope — no bank filter).
+    active_rows = await _state.db_pool.fetch(
+        "SELECT id, room_name FROM agent_calls WHERE status = 'Calling'")
+    rooms_deleted = 0
+    lk = None
+    try:
+        for active in active_rows:
+            if not active["room_name"]:
+                continue
+            try:
+                if lk is None:
+                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY,
+                                        api_secret=LIVEKIT_API_SECRET)
+                await lk.room.delete_room(api.DeleteRoomRequest(room=active["room_name"]))
+                rooms_deleted += 1
+                await _state.db_pool.execute(
+                    """UPDATE agent_calls
+                       SET status = 'Failed', error_message = 'Emergency Stop',
+                           ended_at = $1, updated_at = $1
+                       WHERE id = $2""",
+                    now_ist(), active["id"],
+                )
+            except Exception as e:
+                logger.error(f"Failed to delete room during emergency stop: {e}")
+    finally:
+        if lk is not None:
+            try:
+                await lk.aclose()
+            except Exception:
+                pass
 
     # Pause all running batches
     await _state.db_pool.execute("UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
     await release_batch_lock()
-    return {"status": "success", "message": "Emergency stop activated — all batches paused", "active_call_killed": room_deleted}
+    return {
+        "status": "success",
+        "message": "Emergency stop activated — all batches paused",
+        "active_calls_killed": rooms_deleted,
+        "dispatchers_signaled": signaled,
+    }
 
 
 @router.post("/resume-calling")

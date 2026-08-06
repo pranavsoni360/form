@@ -137,7 +137,16 @@ async def list_calls(
     if date:
         try:
             dt = _ist_midnight(date)
-            conditions.append(f"created_at >= ${idx} AND created_at < ${idx + 1}")
+            # Filter on the SAME instant the UI shows in "When" — started_at,
+            # falling back to created_at. A batch call is created (row inserted)
+            # at upload time but started (dialed) later, sometimes the next day;
+            # filtering created_at while displaying started_at made a call show
+            # under one date while its "When" showed the next. COALESCE keeps the
+            # filter and the displayed date in lockstep.
+            conditions.append(
+                f"COALESCE(started_at, created_at) >= ${idx} "
+                f"AND COALESCE(started_at, created_at) < ${idx + 1}"
+            )
             params.append(dt)
             params.append(dt + timedelta(days=1))
             idx += 2

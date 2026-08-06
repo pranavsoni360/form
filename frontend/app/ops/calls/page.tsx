@@ -648,6 +648,9 @@ function fmtWhen(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
     return d.toLocaleString("en-IN", {
+      // Pin to IST so the displayed day matches the backend's IST date filter
+      // (and stays correct regardless of the viewer's browser timezone).
+      timeZone: "Asia/Kolkata",
       day: "2-digit",
       month: "short",
       hour: "2-digit",

@@ -25,6 +25,18 @@ logger = logging.getLogger("agent-calls")
 router = APIRouter()
 
 
+def _ist_midnight(date_str: str) -> datetime:
+    """Parse a YYYY-MM-DD date as IST midnight (tz-aware).
+
+    created_at is a timestamptz and the UI shows the "When" column in IST, so a
+    date filter must define the day in IST too — otherwise a naive/UTC midnight
+    range is offset by 5.5h and records near the boundary leak into the adjacent
+    date (e.g. filtering 01-Aug also returned 02-Aug rows). NOTE: pytz needs
+    localize(); a plain replace(tzinfo=IST) applies a wrong +05:53 LMT offset.
+    """
+    return IST.localize(datetime.strptime(date_str, "%Y-%m-%d"))
+
+
 # ============================================================================
 # ALIAS ENDPOINTS (reference UI compatibility)
 # ============================================================================
@@ -124,7 +136,7 @@ async def list_calls(
         conditions.append("form_sent = false")
     if date:
         try:
-            dt = datetime.strptime(date, "%Y-%m-%d")
+            dt = _ist_midnight(date)
             conditions.append(f"created_at >= ${idx} AND created_at < ${idx + 1}")
             params.append(dt)
             params.append(dt + timedelta(days=1))
@@ -398,7 +410,7 @@ async def get_dashboard_stats(
 
     if date:
         try:
-            dt = datetime.strptime(date, "%Y-%m-%d")
+            dt = _ist_midnight(date)
             date_clause = f" AND created_at >= ${idx} AND created_at < ${idx + 1}"
             params.append(dt)
             params.append(dt + timedelta(days=1))
@@ -476,7 +488,7 @@ async def get_funnel(
 
     def _parse(d: str) -> Optional[datetime]:
         try:
-            return datetime.strptime(d, "%Y-%m-%d")
+            return _ist_midnight(d)
         except ValueError:
             return None
 
@@ -581,7 +593,7 @@ async def export_daily_report(
     if not date:
         date = now_ist().strftime("%Y-%m-%d")
     try:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = _ist_midnight(date)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format (YYYY-MM-DD)")
 
@@ -665,14 +677,14 @@ async def export_all_calls(
     if date_from:
         try:
             conditions.append(f"created_at >= ${idx}")
-            params.append(datetime.strptime(date_from, "%Y-%m-%d"))
+            params.append(_ist_midnight(date_from))
             idx += 1
         except ValueError:
             pass
     if date_to:
         try:
             conditions.append(f"created_at < ${idx}")
-            params.append(datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1))
+            params.append(_ist_midnight(date_to) + timedelta(days=1))
             idx += 1
         except ValueError:
             pass

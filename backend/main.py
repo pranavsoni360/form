@@ -1826,6 +1826,7 @@ async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCrede
     app_dict = _row_to_dict(app_row)
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
+    _attach_code_labels(app_dict)
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC", uuid.UUID(app_id)
     )
@@ -1871,6 +1872,7 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
     # Map aadhaar_number_encrypted back to aadhaar_number for display
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
+    _attach_code_labels(app_dict)
     # Get status history from status_transitions table
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC",
@@ -3062,6 +3064,50 @@ _CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
         {"code_mst_id": "1", "code_desc": "India"},
     ],
 }
+
+# ── Coded-column → human label resolution (read-only detail views) ──────────
+# The form's Occupation / Employment Type / Industry Type / Qualification /
+# Residential Status / Tenure / Purpose dropdowns store the raw code_mst_id
+# ("260493"), so bank/admin/vendor review screens showed the code instead of
+# "Salaried (Private MNC)". _attach_code_labels() resolves each to its label
+# from _CODE_LIST_FALLBACKS. Maps loan_applications column → Code List id.
+_APP_CODE_LABEL_FIELDS = {
+    "occupation": 8,
+    "employment_type": 9,
+    "industry_type": 10,
+    "qualification": 7,
+    "residential_status": 11,
+    "tenure_stability": 12,
+    "purpose_of_loan": 13,
+}
+
+
+def _code_label(list_id: int, code) -> "str | None":
+    """Resolve a code_mst_id to its description. Returns None when the value is
+    empty or not a known code (e.g. a free-text value from an older voice call),
+    so callers can fall back to the raw value."""
+    if code in (None, ""):
+        return None
+    s = str(code).strip()
+    for item in _CODE_LIST_FALLBACKS.get(list_id, []):
+        if item["code_mst_id"] == s:
+            return item["code_desc"]
+    return None
+
+
+def _attach_code_labels(app_dict: dict) -> dict:
+    """Add '<field>_label' for every coded column that resolves to a known code.
+    Additive — the raw code is left untouched so any write-back / logic keyed on
+    the code is unaffected. Detail views render `<field>_label || <field>`, so
+    free-text values (older voice-seeded rows) still display as-is."""
+    if not app_dict:
+        return app_dict
+    for field, list_id in _APP_CODE_LABEL_FIELDS.items():
+        label = _code_label(list_id, app_dict.get(field))
+        if label:
+            app_dict[f"{field}_label"] = label
+    return app_dict
+
 
 # City fallbacks keyed by state code_mst_id string (the param the front-end
 # passes when calling internal ID 6).  Only states whose district list appears

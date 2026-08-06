@@ -650,7 +650,10 @@ async def vendor_get_application(aid: str, vendor: dict = Depends(get_current_ve
     )
     if not row:
         raise HTTPException(404, "assignment not found for this vendor")
-    return _row(row)
+    # Resolve coded columns (employment_type, etc.) to human labels so the
+    # vendor screen shows "Salaried (Private MNC)" not "260493".
+    import main as _main
+    return _main._attach_code_labels(_row(row))
 
 
 def _require_active_assignment(conn, ava_uuid: uuid.UUID, vendor_uuid: uuid.UUID):

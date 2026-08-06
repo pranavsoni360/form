@@ -123,16 +123,16 @@ export default function AdminApplicationDetailPage() {
             <Field label="Marital Status" value={app.marital_status} />
             <Field label="Current Address" value={app.current_address} />
             <Field label="Permanent Address" value={app.same_as_current ? 'Same as current' : app.permanent_address} />
-            <Field label="Qualification" value={app.qualification} />
+            <Field label="Qualification" value={app.qualification_label || app.qualification} />
           </div>
         </Section>
 
         <Section title="Employment & Financial" icon={Briefcase} sectionKey="employment">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
-            <Field label="Employment Type" value={app.employment_type} />
+            <Field label="Employment Type" value={app.employment_type_label || app.employment_type} />
             <Field label="Employer" value={app.employer_name} />
             <Field label="Designation" value={app.designation} />
-            <Field label="Industry" value={app.industry_type} />
+            <Field label="Industry" value={app.industry_type_label || app.industry_type} />
             <Field label="Experience" value={app.total_work_experience ? `${app.total_work_experience} years` : null} />
             <Field label="Monthly Gross Income" value={app.monthly_gross_income ? formatCurrency(app.monthly_gross_income) : null} />
             <Field label="Monthly Deductions" value={app.monthly_deductions ? formatCurrency(app.monthly_deductions) : null} />
@@ -144,7 +144,7 @@ export default function AdminApplicationDetailPage() {
         <Section title="Loan Details" icon={Banknote} sectionKey="loan">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
             <Field label="Requested Amount" value={app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : null} />
-            <Field label="Purpose" value={app.purpose_of_loan} />
+            <Field label="Purpose" value={app.purpose_of_loan_label || app.purpose_of_loan} />
             <Field label="Tenure" value={app.repayment_period_years ? `${app.repayment_period_years} years` : null} />
             <Field label="Scheme" value={app.scheme} />
           </div>

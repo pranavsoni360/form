@@ -157,14 +157,25 @@ def _parse_years(raw) -> "str | None":
     return m.group(0) if m else None
 
 
-@router.post("/send-whatsapp-form")
-async def send_whatsapp_form(request: Request):
-    """Triggered by the AI voice agent's send_form_link tool.
-    Creates a loan_application from call data (so OTP flow works),
-    saves field_sources for 'Voice Call' badges, and sends WhatsApp."""
+async def send_whatsapp_form_impl(data: dict) -> dict:
+    """Core logic behind POST /send-whatsapp-form, callable in-process.
+
+    Creates a loan_application from call data (so the OTP flow works), saves
+    field_sources for 'Voice Call' badges, and sends the form link via AiSensy.
+    Returns {status, whatsapp_sent, message, form_url, application_id}.
+
+    Split out from the HTTP endpoint so server-side background paths that have
+    no FastAPI Request object can reuse the exact same behaviour:
+      • transcript.py — post-call safety net (customer hangs up before the
+        agent fires send_form_link);
+      • job_handlers.py — hot-lead safety net (Gemini rates the lead hot from
+        the transcript but no form was sent).
+
+    `data` is the same JSON body the endpoint receives:
+      {phone, customer_name, loan_type, call_id, collected_data?}.
+    """
     from main import save_field_sources
 
-    data = await request.json()
     phone = data.get("phone")
     customer_name = data.get("customer_name")
     loan_type = data.get("loan_type", "")
@@ -554,3 +565,12 @@ async def send_whatsapp_form(request: Request):
         "form_url": form_url,
         "application_id": str(app_id) if app_id else (call_id if agent_type == "account_opening" else None),
     }
+
+
+@router.post("/send-whatsapp-form")
+async def send_whatsapp_form(request: Request):
+    """Triggered by the AI voice agent's send_form_link tool. Thin HTTP shell:
+    parse the JSON body and delegate to send_whatsapp_form_impl (which the
+    server-side safety nets also call directly)."""
+    data = await request.json()
+    return await send_whatsapp_form_impl(data)

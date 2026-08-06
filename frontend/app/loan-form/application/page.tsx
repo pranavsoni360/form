@@ -780,6 +780,19 @@ export default function LoanApplication() {
     if (!isNaN(orgExp) && !isNaN(totalExp) && orgExp > totalExp) {
       extra.experience_current_org = 'Current-org experience cannot exceed total experience.';
     }
+    // Salaried-only eligibility. Dropdowns store code_mst_id (see the Code List
+    // API in backend/main.py): Employment Type must be a Salaried option
+    // (260492/260493/260494); non-earning occupations (Unemployed/Student/
+    // House Wife/Retired/Pensioner) are ineligible.
+    const SALARIED_EMPLOYMENT = ['260492', '260493', '260494'];
+    const INELIGIBLE_OCCUPATION = ['940', '136', '133', '135', '938'];
+    const salariedMsg = 'This loan product is available only for salaried applicants.';
+    if (formData.employment_type && !SALARIED_EMPLOYMENT.includes(String(formData.employment_type))) {
+      extra.employment_type = salariedMsg;
+    }
+    if (formData.occupation && INELIGIBLE_OCCUPATION.includes(String(formData.occupation))) {
+      extra.occupation = salariedMsg;
+    }
     if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
     return base && Object.keys(extra).length === 0;
   };

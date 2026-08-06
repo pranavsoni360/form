@@ -1314,6 +1314,22 @@ def _validate_address(app: dict) -> None:
         _check(f"{scope}_landmark", True)
         _check(f"{scope}_locality", True)
 
+# Salaried-only eligibility. occupation/employment_type store code_mst_id (see
+# the Code List API): Employment Type must be a Salaried option; non-earning
+# occupations can't be salaried. IDs mirror the frontend step-3 check.
+_SALARIED_EMPLOYMENT_IDS = {"260492", "260493", "260494"}   # Salaried Govt/PSU, Private MNC, Private Small Firm
+_INELIGIBLE_OCCUPATION_IDS = {"940", "136", "133", "135", "938"}  # Unemployed, Student, House Wife, Retired, Pensioner
+
+def _validate_employment(app: dict) -> None:
+    """Reject non-salaried applicants at submission (mirrors the client)."""
+    emp = str(app.get("employment_type") or "").strip()
+    occ = str(app.get("occupation") or "").strip()
+    msg = "This loan product is available only for salaried applicants."
+    if emp and emp not in _SALARIED_EMPLOYMENT_IDS:
+        raise HTTPException(status_code=400, detail=msg)
+    if occ and occ in _INELIGIBLE_OCCUPATION_IDS:
+        raise HTTPException(status_code=400, detail=msg)
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -3667,6 +3683,7 @@ async def submit_form_session(session_token: str, request: Request):
     _validate_loan_amount(app_row)
     _validate_experience(app_row)
     _validate_address(app_row)
+    _validate_employment(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

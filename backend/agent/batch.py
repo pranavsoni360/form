@@ -334,6 +334,7 @@ async def process_batch_run(batch_uuid_str: str = None):
         failed = counts.get("failed", 0)
 
     finally:
+        chain_next = False
         # Check if batch has any remaining pending calls
         if batch_row:
             remaining = await _state.db_pool.fetchval(
@@ -349,7 +350,32 @@ async def process_batch_run(batch_uuid_str: str = None):
                 )
                 logger.info(f"Batch {batch_id} fully completed")
             else:
-                logger.info(f"Batch {batch_id} paused — {remaining} calls remaining (will resume next cron)")
+                logger.info(f"Batch {batch_id} has {remaining} call(s) remaining — continuing immediately")
+
+            # Auto-chain: kick off the next run right away instead of waiting up
+            # to 5 min for the cron. This is what makes a freshly-uploaded batch
+            # start promptly once the current one finishes — strict FIFO is kept
+            # because process_batch_run() always picks the OLDEST 'running' batch,
+            # so batch #2 only begins after batch #1 is fully completed (and thus
+            # no longer 'running'). Chain only when there is DUE work across the
+            # running batches — Pending, or Scheduled/callback calls whose time
+            # has arrived (mirrors the dispatcher's own pending filter). Gating on
+            # due work (not merely 'remaining') means a batch with only
+            # future-scheduled calls does NOT spin the loop; the cron resumes it
+            # when those calls come due. Also gated on calling hours + emergency
+            # stop so it can never hot-loop outside those windows.
+            if is_within_calling_hours() and not await is_emergency_stop_active():
+                due_left = await _state.db_pool.fetchval(
+                    """SELECT COUNT(*)
+                         FROM agent_calls c
+                         JOIN agent_batches b ON b.batch_id = c.batch_id
+                        WHERE b.status = 'running'
+                          AND (c.status = 'Pending'
+                               OR (c.status IN ('Scheduled', 'Called - Callback Requested')
+                                   AND (c.scheduled_callback_at IS NULL
+                                        OR c.scheduled_callback_at <= NOW())))"""
+                )
+                chain_next = bool(due_left and due_left > 0)
 
         await release_batch_lock()
         try:
@@ -357,6 +383,10 @@ async def process_batch_run(batch_uuid_str: str = None):
         except UnboundLocalError:
             # No batch was processed (no batch_row); counts not defined
             pass
+
+        # Fire the next run AFTER the lock is released so it can acquire cleanly.
+        if chain_next:
+            asyncio.create_task(process_batch_run())
 
 # ============================================================================
 # BATCH MANAGEMENT ENDPOINTS

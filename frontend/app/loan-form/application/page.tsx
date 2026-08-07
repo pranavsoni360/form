@@ -742,6 +742,25 @@ export default function LoanApplication() {
       const v = String(formData[f] || '').trim();
       if (v && !NAME_RE.test(v)) extra[f] = nameMsg;
     });
+    // Date of Birth: must be a real past date and the applicant at least 18.
+    // Mirrors backend _validate_dob. (The picker's max=today only limits the UI
+    // and still allows today — a hard check is required.)
+    const dobStr = String(formData.date_of_birth || '').slice(0, 10);
+    if (dobStr) {
+      const todayStr = new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dobStr) || isNaN(Date.parse(dobStr))) {
+        extra.date_of_birth = 'Please enter a valid Date of Birth.';
+      } else if (dobStr >= todayStr) {
+        extra.date_of_birth = "Date of Birth cannot be today's date or a future date.";
+      } else {
+        const [y, mo, da] = dobStr.split('-').map(Number);
+        const t = new Date();
+        let age = t.getFullYear() - y;
+        if (t.getMonth() + 1 < mo || (t.getMonth() + 1 === mo && t.getDate() < da)) age--;
+        if (age < 18) extra.date_of_birth = 'Applicant must be at least 18 years old.';
+        else if (age > 100) extra.date_of_birth = 'Please enter a valid Date of Birth.';
+      }
+    }
     if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
     return base && Object.keys(extra).length === 0;
   };

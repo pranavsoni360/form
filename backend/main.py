@@ -1331,6 +1331,43 @@ def _validate_name(app: dict) -> None:
         if not _NAME_RE.match(str(v).strip()):
             raise HTTPException(status_code=400, detail=msg)
 
+# Minimum applicant age. 18 matches the agent's work-experience baseline
+# (a person can't have worked before ~18) and the ticket's "typically 18".
+_MIN_APPLICANT_AGE = 18
+_MAX_APPLICANT_AGE = 100  # sanity ceiling — catches typo'd birth years (e.g. 1900)
+
+def _validate_dob(app: dict) -> None:
+    """Reject a DOB that is today/future or outside the plausible age band
+    (mirrors the client). date_of_birth is a DATE column (datetime.date) but we
+    also accept an ISO string defensively."""
+    from datetime import date as _date, datetime as _dt
+    raw = app.get("date_of_birth")
+    if raw is None or str(raw).strip() == "":
+        return  # 'Required' is enforced on the client; empties skip here
+    if isinstance(raw, _dt):
+        dob = raw.date()
+    elif isinstance(raw, _date):
+        dob = raw
+    else:
+        try:
+            dob = _date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Please enter a valid Date of Birth.")
+    today = _date.today()
+    if dob >= today:
+        raise HTTPException(
+            status_code=400,
+            detail="Date of Birth cannot be today's date or a future date.",
+        )
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < _MIN_APPLICANT_AGE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Applicant must be at least {_MIN_APPLICANT_AGE} years old.",
+        )
+    if age > _MAX_APPLICANT_AGE:
+        raise HTTPException(status_code=400, detail="Please enter a valid Date of Birth.")
+
 # Salaried-only eligibility. occupation/employment_type store code_mst_id (see
 # the Code List API): Employment Type must be a Salaried option; non-earning
 # occupations can't be salaried. IDs mirror the frontend step-3 check.
@@ -3744,6 +3781,7 @@ async def submit_form_session(session_token: str, request: Request):
         )
     # Server-side guards (mirror the client validation).
     _validate_name(app_row)
+    _validate_dob(app_row)
     _validate_loan_amount(app_row)
     _validate_experience(app_row)
     _validate_address(app_row)

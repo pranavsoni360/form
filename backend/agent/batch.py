@@ -344,8 +344,12 @@ async def process_batch_run(batch_uuid_str: str = None):
                 call_batch_id,
             )
             if remaining == 0:
+                # Only auto-complete a batch that is still 'running'. If the
+                # operator stopped it mid-run (status='stopped'), leave that
+                # terminal state intact instead of overwriting it with
+                # 'completed'.
                 await _state.db_pool.execute(
-                    "UPDATE agent_batches SET status = 'completed' WHERE id = $1",
+                    "UPDATE agent_batches SET status = 'completed' WHERE id = $1 AND status = 'running'",
                     uuid.UUID(batch_id),
                 )
                 logger.info(f"Batch {batch_id} fully completed")
@@ -804,6 +808,7 @@ async def batch_status(
     failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected')")
     not_answered_count = await _count(" AND status = 'Not Answered'")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
+    cancelled_count = await _count(" AND status = 'Cancelled'")
     total_count = await _count("")
 
     return {
@@ -815,6 +820,7 @@ async def batch_status(
         "failed": failed_count,                             # grouped (matches Call Logs 'Failed' filter)
         "not_answered": not_answered_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
+        "cancelled": cancelled_count,                       # calls skipped because the batch was stopped
         "total": total_count,
     }
 
@@ -960,6 +966,109 @@ async def resume_calling():
     resumed = int(result.split()[-1]) if result else 0
     logger.info(f"Emergency stop deactivated, {resumed} batches resumed")
     return {"status": "success", "message": f"Calling resumed. {resumed} batch(es) reactivated."}
+
+
+@router.post("/stop-batch")
+async def stop_batch(batch_id: str):
+    """Stop ONE specific batch (targeted, unlike the global emergency-stop).
+
+    Unblocks the queue for a freshly-uploaded batch: the stopped batch leaves the
+    'running' set, so process_batch_run's auto-chain immediately picks up the next
+    batch — no waiting for the old one to drain. Steps:
+      1. status -> 'stopped' so the cron / auto-chain never selects it again.
+      2. Signal its dispatcher (if actively dialing) to stop picking up work.
+      3. Kill its in-flight 'Calling' rooms.
+      4. Cancel its not-yet-dialed calls so they are never placed.
+    Accepts either the batch UUID (id) or the string batch_id.
+    """
+    # Resolve by UUID id first, then fall back to the string batch_id.
+    row = None
+    try:
+        row = await _state.db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
+    except ValueError:
+        row = None
+    if row is None:
+        row = await _state.db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE batch_id = $1", batch_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    b = _row_to_dict(row)
+    batch_uuid = row["id"]
+    call_batch_id = b.get("batch_id") or str(batch_uuid)
+
+    if b.get("status") not in ("running", "paused", "pending"):
+        return {"status": "noop",
+                "message": f"Batch is '{b.get('status')}' — nothing to stop."}
+
+    # 1. Take it out of the 'running' set so cron/auto-chain skip it.
+    await _state.db_pool.execute(
+        "UPDATE agent_batches SET status = 'stopped' WHERE id = $1", batch_uuid)
+
+    # 2. Signal the dispatcher for this batch (only if it's actively dialing).
+    dispatcher_signaled = False
+    try:
+        from services.dispatcher import manager as dispatcher_mgr
+        dispatcher_signaled = dispatcher_mgr.stop_one(str(batch_uuid))
+    except Exception as e:
+        logger.error(f"stop_batch: failed to signal dispatcher: {e}")
+
+    # 3. Kill every in-flight 'Calling' room belonging to this batch.
+    active_rows = await _state.db_pool.fetch(
+        "SELECT id, room_name FROM agent_calls WHERE batch_id = $1 AND status = 'Calling'",
+        call_batch_id,
+    )
+    in_flight_killed = 0
+    lk = None
+    try:
+        for a in active_rows:
+            if not a["room_name"]:
+                continue
+            try:
+                if lk is None:
+                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY,
+                                        api_secret=LIVEKIT_API_SECRET)
+                await lk.room.delete_room(api.DeleteRoomRequest(room=a["room_name"]))
+                in_flight_killed += 1
+                await _state.db_pool.execute(
+                    """UPDATE agent_calls
+                          SET status = 'Failed', error_message = 'Batch stopped',
+                              ended_at = $1, updated_at = $1
+                        WHERE id = $2""",
+                    now_ist(), a["id"],
+                )
+            except Exception as e:
+                logger.error(f"stop_batch: room delete failed: {e}")
+    finally:
+        if lk is not None:
+            try:
+                await lk.aclose()
+            except Exception:
+                pass
+
+    # 4. Cancel the calls that were never dialed so they can't be placed later.
+    result = await _state.db_pool.execute(
+        """UPDATE agent_calls
+              SET status = 'Cancelled', error_message = 'Batch stopped', updated_at = $1
+            WHERE batch_id = $2
+              AND status IN ('Pending', 'Scheduled', 'Called - Callback Requested')""",
+        now_ist(), call_batch_id,
+    )
+    cancelled = int(result.split()[-1]) if result else 0
+
+    logger.warning(
+        "Batch %s STOPPED by operator — in_flight_killed=%d, cancelled=%d, dispatcher_signaled=%s",
+        batch_uuid, in_flight_killed, cancelled, dispatcher_signaled,
+    )
+    return {
+        "status": "success",
+        "message": "Batch stopped",
+        "batch_id": str(batch_uuid),
+        "in_flight_killed": in_flight_killed,
+        "cancelled": cancelled,
+        "dispatcher_signaled": dispatcher_signaled,
+    }
 
 # ============================================================================
 # UPLOADS / BATCHES LIST (was missing — needed by dashboard UI)

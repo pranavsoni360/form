@@ -70,6 +70,7 @@ STATUS_OPTIONS = [
     "Pending", "Calling", "Called", "Called - Interested", "Called - Not Interested",
     "Called - Callback Requested",          # customer asked to be re-dialled at a specific time
     "Not Answered", "Call Not Connected", "Failed", "Scheduled", "Invalid Phone",
+    "Cancelled",                            # not-yet-dialled call whose batch was stopped by the operator
 ]
 
 CATEGORY_OPTIONS = [

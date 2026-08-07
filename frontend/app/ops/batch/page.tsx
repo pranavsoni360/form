@@ -42,6 +42,7 @@ import {
   RefreshCw,
   RotateCcw,
   Square,
+  CircleStop,
   Upload,
 } from "lucide-react";
 
@@ -305,6 +306,34 @@ export default function OpsBatchPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Stop ONE specific batch (per-row). Frees the queue so a freshly uploaded
+  // batch starts immediately (auto-chained), unlike the global emergency stop.
+  const stopBatch = useMutation({
+    mutationFn: async (batchId: string) => {
+      const url = new URL(`${API_URL}/api/agent/stop-batch`);
+      url.searchParams.set("batch_id", batchId);
+      const res = await fetch(url.toString(), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.detail || `HTTP ${res.status}`);
+      return payload;
+    },
+    onSuccess: (d) => {
+      if (d?.status === "noop") {
+        toast.info(d?.message || "Nothing to stop");
+      } else {
+        const k = d?.in_flight_killed ?? 0;
+        const c = d?.cancelled ?? 0;
+        toast.success(`Batch stopped — ${k} live call${k === 1 ? "" : "s"} ended, ${c} pending cancelled`);
+      }
+      refreshBatchViews();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   /* ─── Upload input handler ─────────────────────────────────────────── */
 
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -561,6 +590,8 @@ export default function OpsBatchPage() {
               <UploadsTable
                 uploads={uploads.data?.uploads ?? []}
                 onRowClick={(u) => setOpenBatchId(u.id || u._id || null)}
+                onStop={(u) => stopBatch.mutate(u.id || u._id || "")}
+                stopping={stopBatch.isPending}
               />
             )}
           </CardContent>
@@ -653,10 +684,16 @@ function LiveStatusBanner({
 function UploadsTable({
   uploads,
   onRowClick,
+  onStop,
+  stopping,
 }: {
   uploads: Upload[];
   onRowClick: (u: Upload) => void;
+  onStop: (u: Upload) => void;
+  stopping: boolean;
 }) {
+  // A batch can be stopped only while it still has work queued/dialing.
+  const STOPPABLE = new Set(["running", "paused", "pending"]);
   const columns: ReadonlyArray<DataTableColumn<Upload>> = [
     {
       key: "file",
@@ -706,6 +743,30 @@ function UploadsTable({
           {fmtWhen(u.uploaded_at || u.created_at || "")}
         </span>
       ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (u) =>
+        STOPPABLE.has((u.status || "").toLowerCase()) ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={stopping}
+            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={(e) => {
+              // Don't let the click bubble to the row (which opens the batch).
+              e.stopPropagation();
+              if (window.confirm("Stop this batch? In-flight calls end and pending calls are cancelled.")) {
+                onStop(u);
+              }
+            }}
+          >
+            {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CircleStop className="h-3.5 w-3.5" />}
+            Stop
+          </Button>
+        ) : null,
     },
   ];
   return (

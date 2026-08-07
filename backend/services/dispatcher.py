@@ -826,6 +826,16 @@ class DispatcherManager:
             n += 1
         return n
 
+    def stop_one(self, batch_id: str) -> bool:
+        """Signal a single active dispatcher (by batch_id) to stop. Returns True
+        if a dispatcher was registered for that batch, else False (the batch is
+        queued but not actively dialing — stopping it is a DB-only operation)."""
+        d = self._active.get(batch_id)
+        if d is not None:
+            d.stop()
+            return True
+        return False
+
     def active_count(self) -> int:
         return len(self._active)
 

@@ -928,22 +928,35 @@ async def trigger_batch_retry(
     # so retry_count == 1 means "initial failed, 0 retries done" → eligible for
     # retry #1. With MAX_RETRIES=2, we allow retry while retry_count <= 2,
     # giving exactly 2 retries after the original attempt.
+    # Reset to a CLEAN Pending state — not just the status. The previous
+    # attempt's terminal fields (started_at/ended_at/duration/room/error) are
+    # cleared so the record is a genuine fresh attempt: it won't keep showing the
+    # old "Failed / Not Answered" timestamp + error while (and if) it re-dials,
+    # and the dispatcher assigns a brand-new room. retry_count is preserved — it
+    # gates how many retries remain and is incremented by the next attempt.
     result = await _state.db_pool.execute(
-        f"""UPDATE agent_calls SET status = 'Pending'
+        f"""UPDATE agent_calls SET
+                status = 'Pending',
+                started_at = NULL,
+                ended_at = NULL,
+                call_duration = 0,
+                room_name = NULL,
+                error_message = NULL,
+                updated_at = $2
             WHERE batch_id = $1
             AND status IN ('Not Answered', 'Failed', 'Call Not Connected')
             AND retry_count <= {MAX_RETRIES}""",
-        batch.get("batch_id") or bid,
+        batch.get("batch_id") or bid, now_ist(),
     )
     reset_count = int(result.split()[-1]) if result else 0
 
     if reset_count == 0:
         return {"status": "nothing", "message": "No retriable calls found (all at max retries or already completed)"}
 
-    # Set batch back to running
+    # Set batch back to running and dispatch immediately (don't wait for the cron).
     await _state.db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE id = $1", uuid.UUID(bid))
     background_tasks.add_task(process_batch_run, bid)
-    return {"status": "started", "message": f"Retrying {reset_count} failed calls in batch"}
+    return {"status": "started", "message": f"Retrying {reset_count} failed call(s) — re-dialing now", "retrying": reset_count}
 
 
 @router.post("/emergency-stop")

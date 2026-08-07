@@ -12,7 +12,7 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, Eye, RefreshCw, RotateCcw } from "lucide-react";
+import { CalendarClock, Eye, RefreshCw, RotateCcw, Plus, Loader2 } from "lucide-react";
 
 import { AppShell } from "@/components/shared/AppShell";
 import { StatCard } from "@/components/ops/StatCard";
@@ -20,6 +20,7 @@ import { DataTable, type DataTableColumn } from "@/components/ops/DataTable";
 import { CallDetailDialog, maskPhone } from "@/components/ops/CallDetailDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { API_URL } from "@/lib/api";
 
@@ -42,6 +43,7 @@ interface CallbacksResponse {
 
 export default function OpsCallbacksPage() {
   const [openCallId, setOpenCallId] = React.useState<string | null>(null);
+  const [scheduleOpen, setScheduleOpen] = React.useState(false);
   const query = useQuery<CallbacksResponse>({
     queryKey: ["scheduled-callbacks"],
     queryFn: async () => {
@@ -158,7 +160,11 @@ export default function OpsCallbacksPage() {
           <StatCard label="FUTURE" value={buckets.later} icon={CalendarClock} tone="neutral" />
         </div>
 
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <Button size="sm" onClick={() => setScheduleOpen(true)}>
+            <Plus className="h-3.5 w-3.5" />
+            Schedule callback
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -196,7 +202,123 @@ export default function OpsCallbacksPage() {
         open={Boolean(openCallId)}
         onClose={() => setOpenCallId(null)}
       />
+
+      <ScheduleCallbackDialog
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        onScheduled={() => { setScheduleOpen(false); query.refetch(); }}
+      />
     </AppShell>
+  );
+}
+
+const inputCls =
+  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30";
+
+function ScheduleCallbackDialog({
+  open, onClose, onScheduled,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onScheduled: () => void;
+}) {
+  const [name, setName] = React.useState("");
+  const [phone, setPhone] = React.useState("");
+  const [when, setWhen] = React.useState("");
+  const [reason, setReason] = React.useState("");
+  const [language, setLanguage] = React.useState("hindi");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  // Reset the form each time the dialog opens.
+  React.useEffect(() => {
+    if (open) {
+      setName(""); setPhone(""); setWhen(""); setReason("");
+      setLanguage("hindi"); setError(""); setSaving(false);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    setError("");
+    if (!name.trim()) { setError("Customer name is required"); return; }
+    if (phone.replace(/\D/g, "").length < 10) { setError("Enter a valid phone number"); return; }
+    if (!when) { setError("Pick a callback date & time"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/api/agent/schedule-callback-manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          customer_name: name.trim(),
+          phone: phone.trim(),
+          callback_iso: when,          // datetime-local → naive ISO, treated as IST
+          reason: reason.trim() || "manual",
+          language,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const d = data?.detail;
+        setError(typeof d === "string" ? d : "Failed to schedule callback");
+        return;
+      }
+      onScheduled();
+    } catch {
+      setError("Connection error. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Schedule a callback"
+      description="Queue an outbound call to a customer at a chosen time. The dispatcher dials it during working hours."
+      size="sm"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button size="sm" onClick={submit} disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
+            {saving ? "Scheduling…" : "Schedule"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Customer name *</label>
+          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rahul Sharma" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Phone *</label>
+          <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d+]/g, ""))} placeholder="10-digit mobile" inputMode="tel" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Callback date &amp; time *</label>
+          <input type="datetime-local" className={inputCls} value={when} onChange={(e) => setWhen(e.target.value)} />
+          <p className="mt-1 text-[11px] text-muted-foreground">Outside working hours, it snaps to the next window start.</p>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Language</label>
+          <select className={inputCls} value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="hindi">Hindi</option>
+            <option value="marathi">Marathi</option>
+            <option value="english">English</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Reason</label>
+          <input className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. requested follow-up" />
+        </div>
+        {error && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>
+        )}
+      </div>
+    </Dialog>
   );
 }
 

@@ -1,4 +1,7 @@
 # backend/agent/callbacks.py
+import json
+import time
+import secrets
 import uuid
 import logging
 from datetime import datetime, timedelta
@@ -14,6 +17,118 @@ from .state import (
 
 logger = logging.getLogger("agent-callbacks")
 router = APIRouter()
+
+
+# All manually-scheduled callbacks live under one persistent, always-'running'
+# batch so the existing dispatcher/cron dials them with no new dispatch logic.
+_MANUAL_BATCH_ID = "manual_callbacks"
+
+
+def _to_e164_in(raw: str) -> Optional[str]:
+    """Normalise an Indian phone to +91XXXXXXXXXX. Returns None if <10 digits."""
+    d = "".join(ch for ch in (raw or "") if ch.isdigit())
+    if len(d) == 10:
+        return f"+91{d}"
+    if len(d) == 11 and d.startswith("0"):
+        return f"+91{d[-10:]}"
+    if len(d) == 12 and d.startswith("91"):
+        return f"+{d}"
+    if len(d) >= 10:
+        return f"+{d}"
+    return None
+
+
+async def _ensure_manual_batch() -> None:
+    """Create the persistent manual-callbacks batch once, and keep it 'running'
+    so the dispatcher always considers its due callbacks. Check-then-insert
+    (agent_batches.batch_id has no UNIQUE constraint, so ON CONFLICT can't be
+    used); a rare concurrent double-create is harmless — the dispatcher always
+    processes the oldest 'running' batch, so due callbacks still fire."""
+    existing = await _state.db_pool.fetchrow(
+        "SELECT status FROM agent_batches WHERE batch_id = $1", _MANUAL_BATCH_ID
+    )
+    if existing is None:
+        await _state.db_pool.execute(
+            """INSERT INTO agent_batches (id, batch_id, filename, total_records,
+                                          completed, failed, status, created_at)
+               VALUES ($1, $2, 'Manual Callbacks', 0, 0, 0, 'running', $3)""",
+            uuid.uuid4(), _MANUAL_BATCH_ID, now_ist(),
+        )
+    elif existing["status"] in ("completed", "paused"):
+        await _state.db_pool.execute(
+            "UPDATE agent_batches SET status = 'running' WHERE batch_id = $1",
+            _MANUAL_BATCH_ID,
+        )
+
+
+@router.post("/schedule-callback-manual")
+async def schedule_callback_manual(request: Request):
+    """Operator-created callback: schedule a fresh outbound call to a customer at
+    a chosen time. Creates a new agent_calls row (status 'Called - Callback
+    Requested') under the persistent manual-callbacks batch, so the dispatcher
+    re-dials it when scheduled_callback_at arrives during working hours."""
+    data = await request.json()
+    name = (data.get("customer_name") or "").strip()
+    phone_in = (data.get("phone") or "").strip()
+    callback_iso = (data.get("callback_iso") or "").strip()
+    reason = (data.get("reason") or "").strip() or "manual"
+    language = (data.get("language") or "hindi").strip().lower()
+    agent_type = (data.get("agent_type") or "loan_enquiry").strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Customer name is required")
+    phone = _to_e164_in(phone_in)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Enter a valid phone number (at least 10 digits)")
+    if not callback_iso:
+        raise HTTPException(status_code=400, detail="Callback date/time is required")
+    try:
+        if callback_iso.endswith("Z"):
+            callback_iso = callback_iso[:-1] + "+00:00"
+        dt = datetime.fromisoformat(callback_iso)
+        if dt.tzinfo is None:
+            dt = IST.localize(dt)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date/time: {e}")
+
+    # Clamp into [now+2min, working hours] — same rule as the agent-triggered path.
+    dt_ist = dt.astimezone(IST)
+    now_local = now_ist()
+    if dt_ist < now_local + timedelta(minutes=1):
+        dt_ist = now_local + timedelta(minutes=2)
+    if dt_ist.hour < CALL_START_HOUR or dt_ist.hour >= CALL_END_HOUR:
+        next_day = dt_ist.date() if dt_ist.hour < CALL_START_HOUR else (dt_ist + timedelta(days=1)).date()
+        dt_ist = IST.localize(datetime.combine(next_day, datetime.min.time())).replace(hour=CALL_START_HOUR)
+
+    await _ensure_manual_batch()
+
+    call_uuid = uuid.uuid4()
+    room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
+    await _state.db_pool.execute(
+        """INSERT INTO agent_calls (
+             id, batch_id, customer_name, phone, language, status, room_name,
+             interested, form_sent, category, transcript, collected_data,
+             scheduled_callback_at, callback_reason, created_at, updated_at, agent_type
+           ) VALUES (
+             $1, $2, $3, $4, $5, 'Called - Callback Requested', $6,
+             false, false, 'Uncategorized', '[]'::jsonb, $7,
+             $8, $9, $10, $10, $11
+           )""",
+        call_uuid, _MANUAL_BATCH_ID, name, phone, language, room_name,
+        json.dumps({"gender": (data.get("gender") or "male").lower(), "customer_type": "callback"}),
+        dt_ist, reason, now_local, agent_type,
+    )
+
+    logger.info("Manual callback scheduled: %s (%s) at %s reason=%s",
+                name, phone, dt_ist.isoformat(), reason)
+    return {
+        "status": "success",
+        "call_id": str(call_uuid),
+        "customer_name": name,
+        "phone": phone,
+        "scheduled_callback_at": dt_ist.isoformat(),
+        "reason": reason,
+    }
 
 
 @router.get("/scheduled-callbacks")

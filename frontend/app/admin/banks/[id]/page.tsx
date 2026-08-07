@@ -43,10 +43,17 @@ export default function BankDetailPage() {
   };
 
   const handleCreateUser = async () => {
-    if (!userForm.full_name || !userForm.username) { setError('Name and username required'); return; }
+    const trimmedName = userForm.full_name.trim();
+    const trimmedUsername = userForm.username.trim();
+    const trimmedEmail = userForm.email.trim();
+    if (!trimmedName) { setError('Full name is required'); return; }
+    if (!/^[a-zA-Z\s.\-']{2,100}$/.test(trimmedName)) { setError('Full name may only contain letters, spaces, hyphens, apostrophes, or dots (2–100 chars)'); return; }
+    if (!trimmedUsername) { setError('Username is required'); return; }
+    if (!/^[a-z0-9_-]{3,50}$/.test(trimmedUsername)) { setError('Username must be 3–50 characters: lowercase letters, numbers, underscores, or hyphens only'); return; }
+    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) { setError('Enter a valid email address'); return; }
     setCreating(true); setError('');
     try {
-      const data = await createBankUser(token, bankId, userForm);
+      const data = await createBankUser(token, bankId, { ...userForm, full_name: trimmedName, username: trimmedUsername, email: trimmedEmail });
       setCreatedCreds({ username: data.user.username, password: data.password });
       setShowCreateUser(false);
       setUserForm({ full_name: '', username: '', email: '', role: 'bank_officer' });
@@ -82,7 +89,7 @@ export default function BankDetailPage() {
       <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/admin/banks')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
+            <button onClick={() => router.back()} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
               <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
             </button>
             <div>

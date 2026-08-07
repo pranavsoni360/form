@@ -514,21 +514,20 @@ function RecentActivityCard({
 }) {
   const totalCalls = series.reduce((a, b) => a + b.calls, 0);
   const totalErrors = series.reduce((a, b) => a + b.errors, 0);
+  const peakCalls = Math.max(...series.map((d) => d.calls), 0);
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between pb-4">
         <div className="space-y-1">
           <CardTitle className="text-lg">Recent activity</CardTitle>
           <CardDescription>
-            Last 2 minutes · 10-second buckets · {totalCalls} call event
-            {totalCalls === 1 ? "" : "s"} · {totalErrors} error
-            {totalErrors === 1 ? "" : "s"}
+            Live call and error events · stacked area · last 2 minutes
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="info" className="gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-info animate-pulse-dot" />
-            Calls · {activeCalls}
+            Live · {activeCalls}
           </Badge>
           {errors5m > 0 && (
             <Badge variant="destructive" className="gap-1.5">
@@ -538,7 +537,22 @@ function RecentActivityCard({
           )}
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {/* Mini stat strip */}
+        <div className="grid grid-cols-3 divide-x divide-border rounded-lg border bg-muted/30 text-center">
+          <div className="py-2.5 px-3">
+            <p className="text-[11px] text-muted-foreground">Calls (2 min)</p>
+            <p className="text-xl font-bold tabular-nums" style={{ color: "hsl(217 91% 60%)" }}>{totalCalls}</p>
+          </div>
+          <div className="py-2.5 px-3">
+            <p className="text-[11px] text-muted-foreground">Errors (2 min)</p>
+            <p className="text-xl font-bold tabular-nums" style={{ color: totalErrors > 0 ? "hsl(0 84% 60%)" : undefined }}>{totalErrors}</p>
+          </div>
+          <div className="py-2.5 px-3">
+            <p className="text-[11px] text-muted-foreground">Peak / bucket</p>
+            <p className="text-xl font-bold tabular-nums">{peakCalls}</p>
+          </div>
+        </div>
         <ActivityChart data={series} />
       </CardContent>
     </Card>

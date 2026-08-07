@@ -10,6 +10,7 @@ import {
   ChevronDown, ChevronUp, Phone, User, Clock,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import DateRangeFilter, { DateRangeValue, DEFAULT_RANGE } from '@/components/DateRangeFilter';
 import { useEventStream } from '@/lib/realtime/useEventStream';
 import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/realtime/reducers';
 import { BatchPreviewModal, type BatchReport } from '@/components/shared/BatchPreviewModal';
@@ -76,6 +77,17 @@ export default function BatchPage() {
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
   const [batchCalls, setBatchCalls]       = useState<Record<string, any[]>>({});
   const [loadingCalls, setLoadingCalls]   = useState<string | null>(null);
+  const [dateRange, setDateRange]         = useState<DateRangeValue>(DEFAULT_RANGE);
+
+  // Build the ?date_from&date_to query suffix from the active range (empty when
+  // "All"), shared by the uploads + batch-status fetches so both scope together.
+  const dateQS = useCallback(() => {
+    const p = new URLSearchParams();
+    if (dateRange.from) p.set('date_from', dateRange.from);
+    if (dateRange.to) p.set('date_to', dateRange.to);
+    const s = p.toString();
+    return s ? `?${s}` : '';
+  }, [dateRange.from, dateRange.to]);
 
   const liveBatches = useEventStream<BatchesState>('batches', batchesReducer, initialBatchesState);
 
@@ -127,20 +139,20 @@ export default function BatchPage() {
     if (!tok) return;
     setLoading(true);
     try {
-      const res  = await fetch(`${API_URL}/api/agent/uploads`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
+      const res  = await fetch(`${API_URL}/api/agent/uploads${dateQS()}`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
       const data = await res.json();
       setBatches(data.uploads || []);
     } catch { } finally { setLoading(false); }
-  }, [token]);
+  }, [token, dateQS]);
 
   const fetchStatus = useCallback(async (tok = token) => {
     if (!tok) return;
     try {
-      const res = await fetch(`${API_URL}/api/agent/batch-status`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
+      const res = await fetch(`${API_URL}/api/agent/batch-status${dateQS()}`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
       setBatchStatus(await res.json());
       setLastUpdated(new Date());
     } catch { }
-  }, [token]);
+  }, [token, dateQS]);
 
   const fetchBatchCalls = async (batchId: string) => {
     setLoadingCalls(batchId);
@@ -158,7 +170,7 @@ export default function BatchPage() {
     finally { setRefreshing(false); }
   }, [fetchBatches, fetchStatus]);
 
-  useEffect(() => { if (token) { fetchBatches(token); fetchStatus(token); } }, [token]);
+  useEffect(() => { if (token) { fetchBatches(token); fetchStatus(token); } }, [token, dateRange.from, dateRange.to]);
   useEffect(() => {
     if (!token || Object.keys(liveBatches.byId).length === 0) return;
     const t = setTimeout(() => fetchStatus(token), 500);
@@ -469,6 +481,11 @@ export default function BatchPage() {
             {stopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
             Emergency Stop
           </button>
+        </div>
+
+        {/* Date range filter — scopes both the status counters and upload history */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
 
         {/* Upload History */}

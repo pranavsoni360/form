@@ -145,7 +145,7 @@ export default function VendorApplicationDetailPage() {
             <Field label="Gender" value={a.gender} />
             <Field label="City" value={a.city} />
             <Field label="State" value={a.state} />
-            <Field label="Employment" value={a.employment_type} />
+            <Field label="Employment" value={a.employment_type_label || a.employment_type} />
             <Field label="Employer" value={a.employer_name} />
             <Field label="Monthly income" value={fmtINR(a.monthly_income)} />
             <Field label="Designation" value={a.designation} />

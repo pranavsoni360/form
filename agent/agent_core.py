@@ -363,6 +363,14 @@ async def entrypoint(ctx: JobContext):
         @agent_session.on("user_input_transcribed")
         def on_user_transcript(event):
             try:
+                # ANY customer speech — even an interim/partial transcript — means
+                # they are present and responding, so reset the silence timer
+                # IMMEDIATELY. Previously last_speech_time was only refreshed on
+                # agent_state_changed (i.e. once the agent started reacting), so a
+                # customer who replied to the "are you still there?" nudge could be
+                # cut off with "you seem busy" before the agent's turn began — the
+                # STT/LLM latency raced the silence_monitor and the monitor won.
+                session.last_speech_time = asyncio.get_event_loop().time()
                 if not event.is_final:
                     return
                 text = event.transcript.strip()

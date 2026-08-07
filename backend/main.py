@@ -1314,6 +1314,76 @@ def _validate_address(app: dict) -> None:
         _check(f"{scope}_landmark", True)
         _check(f"{scope}_locality", True)
 
+# Name fields: must start with a letter, then letters/spaces plus the
+# punctuation real names carry (apostrophe/hyphen/period — "D'Souza",
+# "Anne-Marie", "K."). Digits and symbols like & * are rejected so junk such as
+# "998u8808&&" — which breaks KYC name matching — can't be submitted. Mirrors
+# the client step-1 check.
+_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]*$")
+
+def _validate_name(app: dict) -> None:
+    """Reject non-alphabetic names at submission (mirrors the client)."""
+    msg = "Name must contain only letters (no numbers or special symbols)."
+    for field in ("first_name", "middle_name", "last_name"):
+        v = app.get(field)
+        if v is None or str(v).strip() == "":
+            continue
+        if not _NAME_RE.match(str(v).strip()):
+            raise HTTPException(status_code=400, detail=msg)
+
+# Minimum applicant age. 18 matches the agent's work-experience baseline
+# (a person can't have worked before ~18) and the ticket's "typically 18".
+_MIN_APPLICANT_AGE = 18
+_MAX_APPLICANT_AGE = 100  # sanity ceiling — catches typo'd birth years (e.g. 1900)
+
+def _validate_dob(app: dict) -> None:
+    """Reject a DOB that is today/future or outside the plausible age band
+    (mirrors the client). date_of_birth is a DATE column (datetime.date) but we
+    also accept an ISO string defensively."""
+    from datetime import date as _date, datetime as _dt
+    raw = app.get("date_of_birth")
+    if raw is None or str(raw).strip() == "":
+        return  # 'Required' is enforced on the client; empties skip here
+    if isinstance(raw, _dt):
+        dob = raw.date()
+    elif isinstance(raw, _date):
+        dob = raw
+    else:
+        try:
+            dob = _date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Please enter a valid Date of Birth.")
+    today = _date.today()
+    if dob >= today:
+        raise HTTPException(
+            status_code=400,
+            detail="Date of Birth cannot be today's date or a future date.",
+        )
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < _MIN_APPLICANT_AGE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Applicant must be at least {_MIN_APPLICANT_AGE} years old.",
+        )
+    if age > _MAX_APPLICANT_AGE:
+        raise HTTPException(status_code=400, detail="Please enter a valid Date of Birth.")
+
+# Salaried-only eligibility. occupation/employment_type store code_mst_id (see
+# the Code List API): Employment Type must be a Salaried option; non-earning
+# occupations can't be salaried. IDs mirror the frontend step-3 check.
+_SALARIED_EMPLOYMENT_IDS = {"260492", "260493", "260494"}   # Salaried Govt/PSU, Private MNC, Private Small Firm
+_INELIGIBLE_OCCUPATION_IDS = {"940", "136", "133", "135", "938"}  # Unemployed, Student, House Wife, Retired, Pensioner
+
+def _validate_employment(app: dict) -> None:
+    """Reject non-salaried applicants at submission (mirrors the client)."""
+    emp = str(app.get("employment_type") or "").strip()
+    occ = str(app.get("occupation") or "").strip()
+    msg = "This loan product is available only for salaried applicants."
+    if emp and emp not in _SALARIED_EMPLOYMENT_IDS:
+        raise HTTPException(status_code=400, detail=msg)
+    if occ and occ in _INELIGIBLE_OCCUPATION_IDS:
+        raise HTTPException(status_code=400, detail=msg)
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -1562,14 +1632,35 @@ async def admin_list_banks(admin: dict = Depends(get_current_admin)):
 @app.post("/api/admin/banks")
 async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_admin)):
     """Create a new bank."""
-    # Check for duplicate code
-    existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", bank.code)
+    # Trim fields
+    name = bank.name.strip()
+    code = bank.code.strip()
+    contact_email = bank.contact_email.strip() if bank.contact_email else None
+    contact_phone = bank.contact_phone.strip() if bank.contact_phone else None
+    # Validate
+    if not name:
+        raise HTTPException(status_code=400, detail="Bank name is required")
+    if not re.match(r"^[a-zA-Z0-9\s.\-&'(),]{2,255}$", name):
+        raise HTTPException(status_code=400, detail="Bank name contains invalid characters")
+    if not code:
+        raise HTTPException(status_code=400, detail="Bank code is required")
+    if not re.match(r"^[A-Z0-9]{2,20}$", code):
+        raise HTTPException(status_code=400, detail="Code must be 2–20 uppercase letters or numbers only (e.g. HDFC)")
+    if contact_email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", contact_email):
+        raise HTTPException(status_code=400, detail="Enter a valid contact email address")
+    if contact_phone and not re.match(r"^\+?[0-9\s\-]{7,15}$", contact_phone):
+        raise HTTPException(status_code=400, detail="Contact phone must contain only digits, spaces, hyphens, or a leading +")
+    # Check for duplicate name or code
+    existing_name = await db_pool.fetchrow("SELECT id FROM banks WHERE LOWER(name) = LOWER($1)", name)
+    if existing_name:
+        raise HTTPException(status_code=400, detail=f"Bank with name '{name}' already exists")
+    existing = await db_pool.fetchrow("SELECT id FROM banks WHERE code = $1", code)
     if existing:
-        raise HTTPException(status_code=400, detail=f"Bank with code '{bank.code}' already exists")
+        raise HTTPException(status_code=400, detail=f"Bank with code '{code}' already exists")
     row = await db_pool.fetchrow(
         """INSERT INTO banks (name, code, contact_email, contact_phone, address, logo_url)
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
-        bank.name, bank.code, bank.contact_email, bank.contact_phone, bank.address, bank.logo_url
+        name, code, contact_email, contact_phone, bank.address, bank.logo_url
     )
     return {"bank": _row_to_dict(row)}
 
@@ -1581,6 +1672,9 @@ async def admin_update_bank(bank_id: str, bank: BankUpdate, admin: dict = Depend
         raise HTTPException(status_code=404, detail="Bank not found")
     updates = {}
     if bank.name is not None:
+        dup_name = await db_pool.fetchrow("SELECT id FROM banks WHERE LOWER(name) = LOWER($1) AND id != $2", bank.name, uuid.UUID(bank_id))
+        if dup_name:
+            raise HTTPException(status_code=400, detail=f"Bank with name '{bank.name}' already exists")
         updates["name"] = bank.name
     if bank.code is not None:
         # Check for duplicate code (excluding this bank)
@@ -1632,22 +1726,36 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     bank = await db_pool.fetchrow("SELECT id FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not bank:
         raise HTTPException(status_code=404, detail="Bank not found")
+    # Trim and validate required fields
+    full_name = user.full_name.strip()
+    username = user.username.strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+    if not re.match(r"^[a-zA-Z\s.\-']{2,100}$", full_name):
+        raise HTTPException(status_code=400, detail="Full name may only contain letters, spaces, hyphens, apostrophes, or dots (2–100 chars)")
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not re.match(r"^[a-z0-9_-]{3,50}$", username):
+        raise HTTPException(status_code=400, detail="Username must be 3–50 characters: lowercase letters, numbers, underscores, or hyphens only")
+    email = user.email.strip() if user.email else None
+    if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
     if user.role not in ("bank_officer", "bank_supervisor"):
         raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
     # Check for duplicate username
-    existing = await db_pool.fetchrow("SELECT id FROM bank_users WHERE username = $1", user.username)
+    existing = await db_pool.fetchrow("SELECT id FROM bank_users WHERE username = $1", username)
     if existing:
-        raise HTTPException(status_code=400, detail=f"Username '{user.username}' already exists")
+        raise HTTPException(status_code=400, detail=f"Username '{username}' already exists")
     # Check for duplicate email within this bank
-    existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", user.email, uuid.UUID(bank_id))
+    existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", email, uuid.UUID(bank_id))
     if existing_email:
-        raise HTTPException(status_code=400, detail=f"Email '{user.email}' already exists in this bank")
+        raise HTTPException(status_code=400, detail=f"Email '{email}' already exists in this bank")
     password = generate_random_password()
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     row = await db_pool.fetchrow(
         """INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role)
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, bank_id, username, email, full_name, role, is_active, created_at""",
-        uuid.UUID(bank_id), user.username, user.email, password_hash, user.full_name, user.role
+        uuid.UUID(bank_id), username, email, password_hash, full_name, user.role
     )
     user_dict = _row_to_dict(row)
     user_dict["generated_password"] = password  # Show only once
@@ -1772,6 +1880,7 @@ async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCrede
     app_dict = _row_to_dict(app_row)
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
+    _attach_code_labels(app_dict)
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC", uuid.UUID(app_id)
     )
@@ -1788,19 +1897,43 @@ async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCrede
 # ============================================
 
 @app.get("/api/bank/applications")
-async def bank_list_applications(status: Optional[str] = None, officer: dict = Depends(get_bank_officer)):
-    """List applications for THIS bank (bank_id from JWT), with optional status filter."""
+async def bank_list_applications(
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    officer: dict = Depends(get_bank_officer),
+):
+    """List applications for THIS bank (bank_id from JWT), with optional status
+    filter and an optional inclusive IST date range on created_at (date_from/
+    date_to as YYYY-MM-DD). created_at is TIMESTAMPTZ, so IST-midnight bounds
+    keep the day definition aligned with the rest of the dashboards."""
     bank_id = uuid.UUID(officer["bank_id"])
+    conds = ["bank_id = $1"]
+    params: list = [bank_id]
     if status:
-        rows = await db_pool.fetch(
-            "SELECT * FROM loan_applications WHERE bank_id = $1 AND status = $2 ORDER BY created_at DESC",
-            bank_id, status
-        )
-    else:
-        rows = await db_pool.fetch(
-            "SELECT * FROM loan_applications WHERE bank_id = $1 ORDER BY created_at DESC",
-            bank_id
-        )
+        params.append(status)
+        conds.append(f"status = ${len(params)}")
+
+    from agent.state import IST
+    def _ist_mid(d: Optional[str]):
+        if not d:
+            return None
+        try:
+            return IST.localize(datetime.strptime(d, "%Y-%m-%d"))
+        except (ValueError, TypeError):
+            return None
+    lo = _ist_mid(date_from)
+    hi_day = _ist_mid(date_to)
+    if lo is not None:
+        params.append(lo)
+        conds.append(f"created_at >= ${len(params)}")
+    if hi_day is not None:
+        params.append(hi_day + timedelta(days=1))
+        conds.append(f"created_at < ${len(params)}")
+
+    where = " AND ".join(conds)
+    rows = await db_pool.fetch(
+        f"SELECT * FROM loan_applications WHERE {where} ORDER BY created_at DESC", *params)
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/bank/applications/{app_id}")
@@ -1817,6 +1950,7 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
     # Map aadhaar_number_encrypted back to aadhaar_number for display
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
+    _attach_code_labels(app_dict)
     # Get status history from status_transitions table
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC",
@@ -3009,6 +3143,50 @@ _CODE_LIST_FALLBACKS: dict[int, list[dict]] = {
     ],
 }
 
+# ── Coded-column → human label resolution (read-only detail views) ──────────
+# The form's Occupation / Employment Type / Industry Type / Qualification /
+# Residential Status / Tenure / Purpose dropdowns store the raw code_mst_id
+# ("260493"), so bank/admin/vendor review screens showed the code instead of
+# "Salaried (Private MNC)". _attach_code_labels() resolves each to its label
+# from _CODE_LIST_FALLBACKS. Maps loan_applications column → Code List id.
+_APP_CODE_LABEL_FIELDS = {
+    "occupation": 8,
+    "employment_type": 9,
+    "industry_type": 10,
+    "qualification": 7,
+    "residential_status": 11,
+    "tenure_stability": 12,
+    "purpose_of_loan": 13,
+}
+
+
+def _code_label(list_id: int, code) -> "str | None":
+    """Resolve a code_mst_id to its description. Returns None when the value is
+    empty or not a known code (e.g. a free-text value from an older voice call),
+    so callers can fall back to the raw value."""
+    if code in (None, ""):
+        return None
+    s = str(code).strip()
+    for item in _CODE_LIST_FALLBACKS.get(list_id, []):
+        if item["code_mst_id"] == s:
+            return item["code_desc"]
+    return None
+
+
+def _attach_code_labels(app_dict: dict) -> dict:
+    """Add '<field>_label' for every coded column that resolves to a known code.
+    Additive — the raw code is left untouched so any write-back / logic keyed on
+    the code is unaffected. Detail views render `<field>_label || <field>`, so
+    free-text values (older voice-seeded rows) still display as-is."""
+    if not app_dict:
+        return app_dict
+    for field, list_id in _APP_CODE_LABEL_FIELDS.items():
+        label = _code_label(list_id, app_dict.get(field))
+        if label:
+            app_dict[f"{field}_label"] = label
+    return app_dict
+
+
 # City fallbacks keyed by state code_mst_id string (the param the front-end
 # passes when calling internal ID 6).  Only states whose district list appears
 # in docs/API Details.docx are populated; others return [] so the dropdown
@@ -3626,9 +3804,12 @@ async def submit_form_session(session_token: str, request: Request):
             detail="Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting."
         )
     # Server-side guards (mirror the client validation).
+    _validate_name(app_row)
+    _validate_dob(app_row)
     _validate_loan_amount(app_row)
     _validate_experience(app_row)
     _validate_address(app_row)
+    _validate_employment(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

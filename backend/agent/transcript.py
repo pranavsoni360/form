@@ -168,12 +168,31 @@ async def save_transcript(data: TranscriptPayload):
             "SELECT id FROM loan_applications WHERE agent_call_id = $1", actual_uuid)
         if app_row:
             from main import save_field_sources
+            # Same free-text → dropdown-code mappers used by the live-call
+            # seeding path. Without these, this end-of-call backfill's COALESCE
+            # would overwrite the codes whatsapp.py already wrote with raw free
+            # text ("salaried"), re-blanking the Occupation / Employment Type /
+            # Industry Type dropdowns ~8s after the form was created.
+            from .whatsapp import (
+                _map_employment_type, _map_occupation, _map_industry_type, _parse_years,
+            )
 
             def _parse_num(val):
                 if not val: return None
                 cleaned = "".join(c for c in str(val) if c.isdigit() or c == ".")
                 try: return float(cleaned) if cleaned else None
                 except ValueError: return None
+
+            _emp_code = _map_employment_type(existing_collected.get("employment_type"))
+            _occ_code = _map_occupation(existing_collected.get("occupation"), _emp_code)
+            _ind_code = _map_industry_type(
+                existing_collected.get("business_type") or existing_collected.get("sector")
+            )
+            _total_exp = _parse_years(existing_collected.get("working_experience"))
+            _cur_org_exp = _parse_years(
+                existing_collected.get("experience_current_org")
+                or existing_collected.get("current_org_experience")
+            )
 
             await _state.db_pool.execute(
                 """UPDATE loan_applications SET
@@ -188,36 +207,43 @@ async def save_transcript(data: TranscriptPayload):
                     industry_type = COALESCE($9, industry_type),
                     customer_type = COALESCE($10, customer_type),
                     qualification = COALESCE($11, qualification),
-                    total_work_experience = COALESCE($12, total_work_experience)
-                WHERE id = $13""",
+                    total_work_experience = COALESCE($12, total_work_experience),
+                    occupation = COALESCE($13, occupation),
+                    experience_current_org = COALESCE($14, experience_current_org)
+                WHERE id = $15""",
                 existing_collected.get("employer_name") or None,
                 existing_collected.get("designation") or None,
-                existing_collected.get("employment_type") or None,
+                _emp_code,
                 _parse_num(existing_collected.get("monthly_income")),
                 _parse_num(existing_collected.get("existing_emi")),
                 existing_collected.get("collected_address") or None,
                 existing_collected.get("loan_purpose") or None,
                 _parse_num(data.loan_amount),
-                existing_collected.get("business_type") or None,
+                _ind_code,
                 existing_collected.get("customer_type") or None,
                 existing_collected.get("qualification") or None,
-                existing_collected.get("working_experience") or None,
+                _total_exp,
+                _occ_code,
+                _cur_org_exp,
                 app_row["id"],
             )
-            # Save field_sources for Voice Call badges
+            # Save field_sources for Voice Call badges. Coded dropdowns are only
+            # badged when a code resolved; the tooltip shows the raw free text.
             source_fields = {}
             field_map = {
                 "employer_name": existing_collected.get("employer_name"),
                 "designation": existing_collected.get("designation"),
-                "employment_type": existing_collected.get("employment_type"),
+                "employment_type": existing_collected.get("employment_type") if _emp_code else None,
+                "occupation": (existing_collected.get("occupation") or existing_collected.get("employment_type")) if _occ_code else None,
                 "monthly_gross_income": existing_collected.get("monthly_income"),
                 "monthly_emi_existing": existing_collected.get("existing_emi"),
                 "current_address": existing_collected.get("collected_address"),
                 "purpose_of_loan": existing_collected.get("loan_purpose"),
-                "industry_type": existing_collected.get("business_type"),
+                "industry_type": existing_collected.get("business_type") if _ind_code else None,
                 "customer_type": existing_collected.get("customer_type"),
                 "qualification": existing_collected.get("qualification"),
-                "total_work_experience": existing_collected.get("working_experience"),
+                "total_work_experience": _total_exp,
+                "experience_current_org": _cur_org_exp,
             }
             for field, value in field_map.items():
                 if value and str(value).strip():

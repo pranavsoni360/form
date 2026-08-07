@@ -99,8 +99,14 @@ export default function LoanApplication() {
   const [pincodeValid, setPincodeValid] = useState<{ current: boolean; permanent: boolean }>({ current: true, permanent: true });
 
   const handleVerifyPAN = async () => {
-    const pan = formData.pan_number || '';
-    if (!pan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+    const pan = (formData.pan_number || '').trim();
+    // Check mandatory FIRST, then format — an empty field should say "required",
+    // not "invalid format".
+    if (!pan) {
+      setErrors((p: any) => ({ ...p, pan_number: 'PAN Number is required.' }));
+      return;
+    }
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
       setErrors((p: any) => ({ ...p, pan_number: 'Invalid PAN format (e.g. ABCDE1234F)' }));
       return;
     }
@@ -499,6 +505,18 @@ export default function LoanApplication() {
         districtName.includes(c.code_desc.toLowerCase())
       );
       if (matchedCity) onChange(`${type}_city_code`, matchedCity.code_mst_id);
+
+      // The District dropdown is district-level (VG DocVerify master), so a
+      // taluka/town like Hinganghat (which sits inside Wardha) has no option.
+      // Preserve it by dropping the postal Block/town into Locality/Area when
+      // the applicant hasn't already filled it — so the town isn't lost even
+      // though the dropdown can only carry the district.
+      const block = (po.Block || '').trim();
+      if (block && block.toLowerCase() !== districtName) {
+        const localityField = `${type}_locality`;
+        setFormData((prev: any) => prev[localityField] ? prev : { ...prev, [localityField]: block });
+      }
+
       setPincodeValid(p => ({ ...p, [type]: true }));
     } catch {
       setPincodeValid(p => ({ ...p, [type]: true })); // network error — don't block user
@@ -719,7 +737,38 @@ export default function LoanApplication() {
     if (qaBypass && (!formData.pan_verified || !formData.aadhaar_verified)) {
       console.warn('[QA] KYC verification gate bypassed — QA environment only.');
     }
-    return validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+    const base = validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+    // Name character check: letters + spaces, plus the punctuation real names
+    // use (apostrophe/hyphen/period). Rejects numbers/symbols like "998u8808&&"
+    // that would corrupt KYC name matching. Mirrors backend _validate_name.
+    const NAME_RE = /^[A-Za-z][A-Za-z .'-]*$/;
+    const nameMsg = 'Name must contain only letters (no numbers or special symbols).';
+    const extra: any = {};
+    (['first_name', 'middle_name', 'last_name'] as const).forEach(f => {
+      const v = String(formData[f] || '').trim();
+      if (v && !NAME_RE.test(v)) extra[f] = nameMsg;
+    });
+    // Date of Birth: must be a real past date and the applicant at least 18.
+    // Mirrors backend _validate_dob. (The picker's max=today only limits the UI
+    // and still allows today — a hard check is required.)
+    const dobStr = String(formData.date_of_birth || '').slice(0, 10);
+    if (dobStr) {
+      const todayStr = new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dobStr) || isNaN(Date.parse(dobStr))) {
+        extra.date_of_birth = 'Please enter a valid Date of Birth.';
+      } else if (dobStr >= todayStr) {
+        extra.date_of_birth = "Date of Birth cannot be today's date or a future date.";
+      } else {
+        const [y, mo, da] = dobStr.split('-').map(Number);
+        const t = new Date();
+        let age = t.getFullYear() - y;
+        if (t.getMonth() + 1 < mo || (t.getMonth() + 1 === mo && t.getDate() < da)) age--;
+        if (age < 18) extra.date_of_birth = 'Applicant must be at least 18 years old.';
+        else if (age > 100) extra.date_of_birth = 'Please enter a valid Date of Birth.';
+      }
+    }
+    if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
+    return base && Object.keys(extra).length === 0;
   };
   const step2Valid = () => {
     // Permanent address is always required (Aadhaar-sourced). Current address
@@ -779,6 +828,19 @@ export default function LoanApplication() {
     }
     if (!isNaN(orgExp) && !isNaN(totalExp) && orgExp > totalExp) {
       extra.experience_current_org = 'Current-org experience cannot exceed total experience.';
+    }
+    // Salaried-only eligibility. Dropdowns store code_mst_id (see the Code List
+    // API in backend/main.py): Employment Type must be a Salaried option
+    // (260492/260493/260494); non-earning occupations (Unemployed/Student/
+    // House Wife/Retired/Pensioner) are ineligible.
+    const SALARIED_EMPLOYMENT = ['260492', '260493', '260494'];
+    const INELIGIBLE_OCCUPATION = ['940', '136', '133', '135', '938'];
+    const salariedMsg = 'This loan product is available only for salaried applicants.';
+    if (formData.employment_type && !SALARIED_EMPLOYMENT.includes(String(formData.employment_type))) {
+      extra.employment_type = salariedMsg;
+    }
+    if (formData.occupation && INELIGIBLE_OCCUPATION.includes(String(formData.occupation))) {
+      extra.occupation = salariedMsg;
     }
     if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
     return base && Object.keys(extra).length === 0;
@@ -1252,11 +1314,11 @@ export default function LoanApplication() {
                 </div>
                 <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                <F label="First Name" required error={errors.full_name} fieldName="first_name" fieldSources={formData.field_sources}>
-                  <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name)} placeholder="First name" />
+                <F label="First Name" required error={errors.full_name || errors.first_name} fieldName="first_name" fieldSources={formData.field_sources}>
+                  <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name || errors.first_name)} placeholder="First name" />
                 </F>
-                <F label="Middle Name" fieldName="middle_name" fieldSources={formData.field_sources}><input type="text" value={formData.middle_name || ''} onChange={e => onChange('middle_name', e.target.value)} className={inp('')} placeholder="Optional" /></F>
-                <F label="Last Name" required fieldName="last_name" fieldSources={formData.field_sources}><input type="text" value={formData.last_name || ''} onChange={e => onChange('last_name', e.target.value)} className={inp('')} placeholder="Last name" /></F>
+                <F label="Middle Name" error={errors.middle_name} fieldName="middle_name" fieldSources={formData.field_sources}><input type="text" value={formData.middle_name || ''} onChange={e => onChange('middle_name', e.target.value)} className={inp(errors.middle_name)} placeholder="Optional" /></F>
+                <F label="Last Name" required error={errors.last_name} fieldName="last_name" fieldSources={formData.field_sources}><input type="text" value={formData.last_name || ''} onChange={e => onChange('last_name', e.target.value)} className={inp(errors.last_name)} placeholder="Last name" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <F label="Date of Birth" required error={errors.date_of_birth} fieldName="date_of_birth" fieldSources={formData.field_sources}>
@@ -1323,9 +1385,9 @@ export default function LoanApplication() {
                       {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
                     </select>
                   </F>
-                  <F label="City / District" required error={errors.current_city_code}>
+                  <F label="District" required error={errors.current_city_code}>
                     <select value={formData.current_city_code || ''} onChange={e => onChange('current_city_code', e.target.value)} disabled={!formData.current_state_code} className={inp(errors.current_city_code)}>
-                      <option value="">{formData.current_state_code ? 'Select City' : 'Select state first'}</option>
+                      <option value="">{formData.current_state_code ? 'Select District' : 'Select state first'}</option>
                       {cityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
                     </select>
                   </F>
@@ -1367,9 +1429,9 @@ export default function LoanApplication() {
                       {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
                     </select>
                   </F>
-                  <F label="City / District" required error={errors.permanent_city_code} fieldName="permanent_city_code" fieldSources={formData.field_sources}>
+                  <F label="District" required error={errors.permanent_city_code} fieldName="permanent_city_code" fieldSources={formData.field_sources}>
                     <select value={formData.permanent_city_code || ''} onChange={e => onChange('permanent_city_code', e.target.value)} disabled={!formData.permanent_state_code} className={inp(errors.permanent_city_code)}>
-                      <option value="">{formData.permanent_state_code ? 'Select City' : 'Select state first'}</option>
+                      <option value="">{formData.permanent_state_code ? 'Select District' : 'Select state first'}</option>
                       {permCityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
                     </select>
                   </F>
@@ -1396,7 +1458,7 @@ export default function LoanApplication() {
                     {(codeLists[7] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
                   </select>
                 </F>
-                <F label="Occupation" required error={errors.occupation}>
+                <F label="Occupation" required error={errors.occupation} fieldName="occupation" fieldSources={formData.field_sources}>
                   <select value={formData.occupation || ''} onChange={e => onChange('occupation', e.target.value)} className={inp(errors.occupation)}>
                     <option value="">Select</option>
                     {(codeLists[8] || []).map(o => <option key={o.code_mst_id} value={o.code_mst_id}>{o.code_desc}</option>)}
@@ -1422,8 +1484,8 @@ export default function LoanApplication() {
                 <F label="Designation" required error={errors.designation} fieldName="designation" fieldSources={formData.field_sources}><input type="text" value={formData.designation || ''} onChange={e => onChange('designation', e.target.value)} className={inp(errors.designation)} placeholder="e.g. Senior Manager" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <F label="Total Experience (yrs)" required error={errors.total_work_experience}><input type="number" step="0.5" min="0.5" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
-                <F label="Experience at Current Org (yrs)" error={errors.experience_current_org}><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp(errors.experience_current_org)} placeholder="e.g. 2" /></F>
+                <F label="Total Experience (yrs)" required error={errors.total_work_experience} fieldName="total_work_experience" fieldSources={formData.field_sources}><input type="number" step="0.5" min="0.5" value={formData.total_work_experience || ''} onChange={e => onChange('total_work_experience', e.target.value)} className={inp(errors.total_work_experience)} placeholder="e.g. 5.5" /></F>
+                <F label="Experience at Current Org (yrs)" error={errors.experience_current_org} fieldName="experience_current_org" fieldSources={formData.field_sources}><input type="number" step="0.5" min="0" value={formData.experience_current_org || ''} onChange={e => onChange('experience_current_org', e.target.value)} className={inp(errors.experience_current_org)} placeholder="e.g. 2" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <F label="Residential Status" required error={errors.residential_status}>
@@ -1808,7 +1870,7 @@ export default function LoanApplication() {
                 <RR label="Permanent" value={[formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ') || formData.permanent_address} />
                 <RR label="Pincode" value={formData.permanent_pincode} />
                 <RR label="State" value={codeLabel(5, formData.permanent_state_code)} />
-                <RR label="City" value={codeLabel(6, formData.permanent_city_code)} />
+                <RR label="District" value={codeLabel(6, formData.permanent_city_code)} />
                 {formData.same_as_current ? (
                   <RR label="Current" value="Same as permanent address" />
                 ) : (

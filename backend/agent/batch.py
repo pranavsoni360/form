@@ -34,6 +34,24 @@ from .analytics import process_analytics_batch
 logger = logging.getLogger("agent-batch")
 router = APIRouter()
 
+
+def _ist_day_bounds(date_from: Optional[str], date_to: Optional[str]):
+    """Resolve an inclusive [date_from, date_to] day range into (lo, hi)
+    IST-midnight datetimes for a half-open [lo, hi) SQL window (hi = date_to + 1
+    day). Unparseable values are ignored. Mirrors calls._date_range_bounds so
+    the batch dashboards use the same IST day definition as Call Logs."""
+    def _p(d):
+        if not d:
+            return None
+        try:
+            return IST.localize(datetime.strptime(d, "%Y-%m-%d"))
+        except ValueError:
+            return None
+    lo = _p(date_from)
+    hi_day = _p(date_to)
+    hi = (hi_day + timedelta(days=1)) if hi_day is not None else None
+    return lo, hi
+
 _scheduler: AsyncIOScheduler = None
 
 
@@ -334,6 +352,7 @@ async def process_batch_run(batch_uuid_str: str = None):
         failed = counts.get("failed", 0)
 
     finally:
+        chain_next = False
         # Check if batch has any remaining pending calls
         if batch_row:
             remaining = await _state.db_pool.fetchval(
@@ -343,13 +362,42 @@ async def process_batch_run(batch_uuid_str: str = None):
                 call_batch_id,
             )
             if remaining == 0:
+                # Only auto-complete a batch that is still 'running'. If the
+                # operator stopped it mid-run (status='stopped'), leave that
+                # terminal state intact instead of overwriting it with
+                # 'completed'.
                 await _state.db_pool.execute(
-                    "UPDATE agent_batches SET status = 'completed' WHERE id = $1",
+                    "UPDATE agent_batches SET status = 'completed' WHERE id = $1 AND status = 'running'",
                     uuid.UUID(batch_id),
                 )
                 logger.info(f"Batch {batch_id} fully completed")
             else:
-                logger.info(f"Batch {batch_id} paused — {remaining} calls remaining (will resume next cron)")
+                logger.info(f"Batch {batch_id} has {remaining} call(s) remaining — continuing immediately")
+
+            # Auto-chain: kick off the next run right away instead of waiting up
+            # to 5 min for the cron. This is what makes a freshly-uploaded batch
+            # start promptly once the current one finishes — strict FIFO is kept
+            # because process_batch_run() always picks the OLDEST 'running' batch,
+            # so batch #2 only begins after batch #1 is fully completed (and thus
+            # no longer 'running'). Chain only when there is DUE work across the
+            # running batches — Pending, or Scheduled/callback calls whose time
+            # has arrived (mirrors the dispatcher's own pending filter). Gating on
+            # due work (not merely 'remaining') means a batch with only
+            # future-scheduled calls does NOT spin the loop; the cron resumes it
+            # when those calls come due. Also gated on calling hours + emergency
+            # stop so it can never hot-loop outside those windows.
+            if is_within_calling_hours() and not await is_emergency_stop_active():
+                due_left = await _state.db_pool.fetchval(
+                    """SELECT COUNT(*)
+                         FROM agent_calls c
+                         JOIN agent_batches b ON b.batch_id = c.batch_id
+                        WHERE b.status = 'running'
+                          AND (c.status = 'Pending'
+                               OR (c.status IN ('Scheduled', 'Called - Callback Requested')
+                                   AND (c.scheduled_callback_at IS NULL
+                                        OR c.scheduled_callback_at <= NOW())))"""
+                )
+                chain_next = bool(due_left and due_left > 0)
 
         await release_batch_lock()
         try:
@@ -357,6 +405,10 @@ async def process_batch_run(batch_uuid_str: str = None):
         except UnboundLocalError:
             # No batch was processed (no batch_row); counts not defined
             pass
+
+        # Fire the next run AFTER the lock is released so it can acquire cleanly.
+        if chain_next:
+            asyncio.create_task(process_batch_run())
 
 # ============================================================================
 # BATCH MANAGEMENT ENDPOINTS
@@ -746,23 +798,32 @@ async def trigger_batch(
 @router.get("/batch-status")
 async def batch_status(
     batch_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     # no auth — operator access
 ):
-    """Check batch completion progress."""
-    bank_uuid = None  # operator — no bank scoping
-    bk_cond = "bank_id = $1" if bank_uuid else "TRUE"
-    bk_params = [bank_uuid] if bank_uuid else []
-    offset = len(bk_params)
+    """Check batch completion progress. Optional date range (date_from/date_to,
+    inclusive) scopes the counters to calls in that IST window — same day
+    definition as Call Logs (COALESCE(started_at, created_at))."""
+    lo, hi = _ist_day_bounds(date_from, date_to)
 
-    async def _count(extra_clause: str, *extra_params):
+    async def _count(extra_clause: str):
+        # Build the WHERE incrementally so placeholders stay in sync regardless
+        # of which optional filters (batch_id, date range) are active.
+        parts: list = []
+        params: list = []
         if batch_id:
-            return await _state.db_pool.fetchval(
-                f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1}{extra_clause}",
-                *bk_params, batch_id, *extra_params,
-            )
+            params.append(batch_id)
+            parts.append(f"batch_id = ${len(params)}")
+        if lo is not None:
+            params.append(lo)
+            parts.append(f"COALESCE(started_at, created_at) >= ${len(params)}")
+        if hi is not None:
+            params.append(hi)
+            parts.append(f"COALESCE(started_at, created_at) < ${len(params)}")
+        where = " AND ".join(parts) if parts else "TRUE"
         return await _state.db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond}{extra_clause}",
-            *bk_params, *extra_params,
+            f"SELECT COUNT(*) FROM agent_calls WHERE {where}{extra_clause}", *params,
         )
 
     pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
@@ -774,6 +835,7 @@ async def batch_status(
     failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected')")
     not_answered_count = await _count(" AND status = 'Not Answered'")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
+    cancelled_count = await _count(" AND status = 'Cancelled'")
     total_count = await _count("")
 
     return {
@@ -785,6 +847,7 @@ async def batch_status(
         "failed": failed_count,                             # grouped (matches Call Logs 'Failed' filter)
         "not_answered": not_answered_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
+        "cancelled": cancelled_count,                       # calls skipped because the batch was stopped
         "total": total_count,
     }
 
@@ -854,39 +917,72 @@ async def trigger_batch_retry(
 
 @router.post("/emergency-stop")
 async def emergency_stop():
-    """Immediately stop all calling and kill active call if any."""
+    """Immediately stop all calling and kill every active call.
+
+    Order matters:
+      1. Set the DB flag so any call still queued behind the concurrency
+         semaphore skips itself on its next per-call re-check.
+      2. Signal every running Dispatcher to stop (`_stopped = True`). This is
+         the piece that was previously missing: without it, calls parked in
+         `_wait_for_cooldown_and_retry()` (`while not self._stopped`) kept
+         waiting for a trunk and would still DIAL after the stop, because they
+         had already passed the emergency-stop gate before parking.
+      3. Kill ALL rooms currently in 'Calling' — not just one. With
+         DISPATCHER_CONCURRENCY live calls in flight, a single LIMIT-1 delete
+         left the rest ringing.
+    """
     await set_emergency_stop(True)
     logger.warning("EMERGENCY STOP activated by operator")
 
-    bank_uuid = None  # operator — no bank scoping
-    # Kill active call
-    if bank_uuid:
-        active = await _state.db_pool.fetchrow(
-            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' AND bank_id = $1 LIMIT 1", bank_uuid)
-    else:
-        active = await _state.db_pool.fetchrow(
-            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' LIMIT 1")
-    room_deleted = False
-    if active and active["room_name"]:
-        try:
-            lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-            await lk.room.delete_room(api.DeleteRoomRequest(room=active["room_name"]))
-            await lk.aclose()
-            room_deleted = True
-            await _state.db_pool.execute(
-                """UPDATE agent_calls
-                   SET status = 'Failed', error_message = 'Emergency Stop',
-                       ended_at = $1, updated_at = $1
-                   WHERE id = $2""",
-                now_ist(), active["id"],
-            )
-        except Exception as e:
-            logger.error(f"Failed to delete room during emergency stop: {e}")
+    # 2. Signal in-flight dispatchers to stop picking up / waiting for work.
+    signaled = 0
+    try:
+        from services.dispatcher import manager as dispatcher_mgr
+        signaled = dispatcher_mgr.stop_all()
+        logger.warning("Emergency stop signaled %d active dispatcher(s)", signaled)
+    except Exception as e:
+        logger.error(f"Failed to signal dispatchers during emergency stop: {e}")
+
+    # 3. Kill EVERY active call (operator scope — no bank filter).
+    active_rows = await _state.db_pool.fetch(
+        "SELECT id, room_name FROM agent_calls WHERE status = 'Calling'")
+    rooms_deleted = 0
+    lk = None
+    try:
+        for active in active_rows:
+            if not active["room_name"]:
+                continue
+            try:
+                if lk is None:
+                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY,
+                                        api_secret=LIVEKIT_API_SECRET)
+                await lk.room.delete_room(api.DeleteRoomRequest(room=active["room_name"]))
+                rooms_deleted += 1
+                await _state.db_pool.execute(
+                    """UPDATE agent_calls
+                       SET status = 'Failed', error_message = 'Emergency Stop',
+                           ended_at = $1, updated_at = $1
+                       WHERE id = $2""",
+                    now_ist(), active["id"],
+                )
+            except Exception as e:
+                logger.error(f"Failed to delete room during emergency stop: {e}")
+    finally:
+        if lk is not None:
+            try:
+                await lk.aclose()
+            except Exception:
+                pass
 
     # Pause all running batches
     await _state.db_pool.execute("UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
     await release_batch_lock()
-    return {"status": "success", "message": "Emergency stop activated — all batches paused", "active_call_killed": room_deleted}
+    return {
+        "status": "success",
+        "message": "Emergency stop activated — all batches paused",
+        "active_calls_killed": rooms_deleted,
+        "dispatchers_signaled": signaled,
+    }
 
 
 @router.post("/resume-calling")
@@ -898,15 +994,134 @@ async def resume_calling():
     logger.info(f"Emergency stop deactivated, {resumed} batches resumed")
     return {"status": "success", "message": f"Calling resumed. {resumed} batch(es) reactivated."}
 
+
+@router.post("/stop-batch")
+async def stop_batch(batch_id: str):
+    """Stop ONE specific batch (targeted, unlike the global emergency-stop).
+
+    Unblocks the queue for a freshly-uploaded batch: the stopped batch leaves the
+    'running' set, so process_batch_run's auto-chain immediately picks up the next
+    batch — no waiting for the old one to drain. Steps:
+      1. status -> 'stopped' so the cron / auto-chain never selects it again.
+      2. Signal its dispatcher (if actively dialing) to stop picking up work.
+      3. Kill its in-flight 'Calling' rooms.
+      4. Cancel its not-yet-dialed calls so they are never placed.
+    Accepts either the batch UUID (id) or the string batch_id.
+    """
+    # Resolve by UUID id first, then fall back to the string batch_id.
+    row = None
+    try:
+        row = await _state.db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
+    except ValueError:
+        row = None
+    if row is None:
+        row = await _state.db_pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE batch_id = $1", batch_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    b = _row_to_dict(row)
+    batch_uuid = row["id"]
+    call_batch_id = b.get("batch_id") or str(batch_uuid)
+
+    if b.get("status") not in ("running", "paused", "pending"):
+        return {"status": "noop",
+                "message": f"Batch is '{b.get('status')}' — nothing to stop."}
+
+    # 1. Take it out of the 'running' set so cron/auto-chain skip it.
+    await _state.db_pool.execute(
+        "UPDATE agent_batches SET status = 'stopped' WHERE id = $1", batch_uuid)
+
+    # 2. Signal the dispatcher for this batch (only if it's actively dialing).
+    dispatcher_signaled = False
+    try:
+        from services.dispatcher import manager as dispatcher_mgr
+        dispatcher_signaled = dispatcher_mgr.stop_one(str(batch_uuid))
+    except Exception as e:
+        logger.error(f"stop_batch: failed to signal dispatcher: {e}")
+
+    # 3. Kill every in-flight 'Calling' room belonging to this batch.
+    active_rows = await _state.db_pool.fetch(
+        "SELECT id, room_name FROM agent_calls WHERE batch_id = $1 AND status = 'Calling'",
+        call_batch_id,
+    )
+    in_flight_killed = 0
+    lk = None
+    try:
+        for a in active_rows:
+            if not a["room_name"]:
+                continue
+            try:
+                if lk is None:
+                    lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY,
+                                        api_secret=LIVEKIT_API_SECRET)
+                await lk.room.delete_room(api.DeleteRoomRequest(room=a["room_name"]))
+                in_flight_killed += 1
+                await _state.db_pool.execute(
+                    """UPDATE agent_calls
+                          SET status = 'Failed', error_message = 'Batch stopped',
+                              ended_at = $1, updated_at = $1
+                        WHERE id = $2""",
+                    now_ist(), a["id"],
+                )
+            except Exception as e:
+                logger.error(f"stop_batch: room delete failed: {e}")
+    finally:
+        if lk is not None:
+            try:
+                await lk.aclose()
+            except Exception:
+                pass
+
+    # 4. Cancel the calls that were never dialed so they can't be placed later.
+    result = await _state.db_pool.execute(
+        """UPDATE agent_calls
+              SET status = 'Cancelled', error_message = 'Batch stopped', updated_at = $1
+            WHERE batch_id = $2
+              AND status IN ('Pending', 'Scheduled', 'Called - Callback Requested')""",
+        now_ist(), call_batch_id,
+    )
+    cancelled = int(result.split()[-1]) if result else 0
+
+    logger.warning(
+        "Batch %s STOPPED by operator — in_flight_killed=%d, cancelled=%d, dispatcher_signaled=%s",
+        batch_uuid, in_flight_killed, cancelled, dispatcher_signaled,
+    )
+    return {
+        "status": "success",
+        "message": "Batch stopped",
+        "batch_id": str(batch_uuid),
+        "in_flight_killed": in_flight_killed,
+        "cancelled": cancelled,
+        "dispatcher_signaled": dispatcher_signaled,
+    }
+
 # ============================================================================
 # UPLOADS / BATCHES LIST (was missing — needed by dashboard UI)
 # ============================================================================
 
 @router.get("/uploads")
-async def list_uploads():
-    """List all batch uploads. Aliases created_at/total_records as uploaded_at/record_count
-    so the static dashboard (which uses Samavesh field names) renders correctly."""
-    rows = await _state.db_pool.fetch("SELECT * FROM agent_batches ORDER BY created_at DESC LIMIT 50")
+async def list_uploads(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """List batch uploads, optionally scoped to an inclusive IST date range
+    (date_from/date_to) on the batch's created_at. Aliases created_at/
+    total_records as uploaded_at/record_count so the static dashboard (which
+    uses Samavesh field names) renders correctly."""
+    lo, hi = _ist_day_bounds(date_from, date_to)
+    conds: list = []
+    params: list = []
+    if lo is not None:
+        params.append(lo)
+        conds.append(f"created_at >= ${len(params)}")
+    if hi is not None:
+        params.append(hi)
+        conds.append(f"created_at < ${len(params)}")
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    rows = await _state.db_pool.fetch(
+        f"SELECT * FROM agent_batches{where} ORDER BY created_at DESC LIMIT 50", *params)
     uploads = []
     for r in _rows_to_list(rows):
         r["uploaded_at"] = r.get("created_at")

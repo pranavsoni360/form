@@ -37,6 +37,23 @@ function OTPPage() {
 
   const handleSendOTPRef = useRef<() => void>(() => {});
 
+  // Extract a human-readable reason from any error-response shape so the real
+  // cause is always shown (not a generic fallback). Handles FastAPI's string
+  // `detail`, its 422 array-of-objects `detail`, our global handler's `error`,
+  // a `message`, or bare HTTP status.
+  const errorReason = (data: any, res: Response, fallback: string): string => {
+    const d = data?.detail;
+    if (typeof d === 'string' && d.trim()) return d;
+    if (Array.isArray(d) && d.length) {
+      const msg = d.map((e: any) => e?.msg || e?.message).filter(Boolean).join('; ');
+      if (msg) return msg;
+    }
+    if (typeof data?.message === 'string' && data.message.trim()) return data.message;
+    if (typeof data?.error === 'string' && data.error.trim()) return data.error;
+    if (res && !res.ok) return `${fallback} (error ${res.status})`;
+    return fallback;
+  };
+
   const handleSendOTP = async () => {
     if (phone.length !== 10) { setError('Enter a valid 10-digit mobile number'); return; }
     setLoading(true); setError('');
@@ -46,8 +63,8 @@ function OTPPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: `+91${phone}` }),
       });
-      const data = await res.json();
-      if (data.status === 'otp_sent') {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.status === 'otp_sent') {
         setSessionId(data.session_id);
         setStep('otp');
         setTimer(30);
@@ -55,9 +72,9 @@ function OTPPage() {
           setTimer(t => { if (t <= 1) { clearInterval(interval); return 0; } return t - 1; });
         }, 1000);
       } else {
-        setError(data.detail || 'Failed to send OTP');
+        setError(errorReason(data, res, 'Failed to send OTP'));
       }
-    } catch { setError('Connection error. Please try again.'); }
+    } catch { setError('Connection error. Please check your internet and try again.'); }
     finally { setLoading(false); }
   };
   handleSendOTPRef.current = handleSendOTP;
@@ -71,15 +88,15 @@ function OTPPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, otp }),
       });
-      const data = await res.json();
-      if (data.status === 'verified') {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.status === 'verified') {
         sessionStorage.setItem('loan_session', data.session_token);
         sessionStorage.setItem('session_expiry', data.expires_at);
         router.push('/loan-form');
       } else {
-        setError(data.detail || 'Invalid OTP. Please try again.');
+        setError(errorReason(data, res, 'Invalid OTP. Please try again.'));
       }
-    } catch { setError('Verification failed. Try again.'); }
+    } catch { setError('Verification failed. Please check your internet and try again.'); }
     finally { setLoading(false); }
   };
 

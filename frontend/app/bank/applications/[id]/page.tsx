@@ -389,7 +389,7 @@ export default function ApplicationDetailPage() {
               <Field label="Marital Status" value={app.marital_status} />
               <Field label="Current Address" value={app.current_address} />
               <Field label="Permanent Address" value={app.same_as_current ? 'Same as current' : app.permanent_address} />
-              <Field label="Qualification" value={app.qualification} />
+              <Field label="Qualification" value={app.qualification_label || app.qualification} />
             </div>
           </div>
         )}
@@ -403,7 +403,7 @@ export default function ApplicationDetailPage() {
                 <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{filled(employmentFields)} of 8 filled</span>
               </div>
               <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
-                <Field label="Employment Type" value={app.employment_type} />
+                <Field label="Employment Type" value={app.employment_type_label || app.employment_type} />
                 <Field label="Employer" value={app.employer_name} />
                 <Field label="Designation" value={app.designation} />
                 <Field label="Experience" value={app.total_work_experience ? `${app.total_work_experience} years` : null} />
@@ -445,7 +445,7 @@ export default function ApplicationDetailPage() {
               <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
                 <Field label="Loan Type" value={app.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : 'Personal Loan'} />
                 <Field label="Requested Amount" value={app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : app.loan_amount ? formatCurrency(app.loan_amount) : null} />
-                <Field label="Purpose" value={app.purpose_of_loan} />
+                <Field label="Purpose" value={app.purpose_of_loan_label || app.purpose_of_loan} />
                 <Field label="Tenure" value={app.repayment_period_years ? `${app.repayment_period_years} years` : null} />
                 <Field label="Scheme" value={app.scheme} />
               </div>

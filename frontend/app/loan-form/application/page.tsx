@@ -731,7 +731,19 @@ export default function LoanApplication() {
     if (qaBypass && (!formData.pan_verified || !formData.aadhaar_verified)) {
       console.warn('[QA] KYC verification gate bypassed — QA environment only.');
     }
-    return validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+    const base = validate({ full_name: 'Required', last_name: 'Required', date_of_birth: 'Required', gender: 'Required' });
+    // Name character check: letters + spaces, plus the punctuation real names
+    // use (apostrophe/hyphen/period). Rejects numbers/symbols like "998u8808&&"
+    // that would corrupt KYC name matching. Mirrors backend _validate_name.
+    const NAME_RE = /^[A-Za-z][A-Za-z .'-]*$/;
+    const nameMsg = 'Name must contain only letters (no numbers or special symbols).';
+    const extra: any = {};
+    (['first_name', 'middle_name', 'last_name'] as const).forEach(f => {
+      const v = String(formData[f] || '').trim();
+      if (v && !NAME_RE.test(v)) extra[f] = nameMsg;
+    });
+    if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
+    return base && Object.keys(extra).length === 0;
   };
   const step2Valid = () => {
     // Permanent address is always required (Aadhaar-sourced). Current address
@@ -1277,11 +1289,11 @@ export default function LoanApplication() {
                 </div>
                 <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                <F label="First Name" required error={errors.full_name} fieldName="first_name" fieldSources={formData.field_sources}>
-                  <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name)} placeholder="First name" />
+                <F label="First Name" required error={errors.full_name || errors.first_name} fieldName="first_name" fieldSources={formData.field_sources}>
+                  <input type="text" value={formData.first_name || ''} onChange={e => { onChange('first_name', e.target.value); onChange('full_name', `${e.target.value} ${formData.middle_name||''} ${formData.last_name||''}`.trim()); }} className={inp(errors.full_name || errors.first_name)} placeholder="First name" />
                 </F>
-                <F label="Middle Name" fieldName="middle_name" fieldSources={formData.field_sources}><input type="text" value={formData.middle_name || ''} onChange={e => onChange('middle_name', e.target.value)} className={inp('')} placeholder="Optional" /></F>
-                <F label="Last Name" required fieldName="last_name" fieldSources={formData.field_sources}><input type="text" value={formData.last_name || ''} onChange={e => onChange('last_name', e.target.value)} className={inp('')} placeholder="Last name" /></F>
+                <F label="Middle Name" error={errors.middle_name} fieldName="middle_name" fieldSources={formData.field_sources}><input type="text" value={formData.middle_name || ''} onChange={e => onChange('middle_name', e.target.value)} className={inp(errors.middle_name)} placeholder="Optional" /></F>
+                <F label="Last Name" required error={errors.last_name} fieldName="last_name" fieldSources={formData.field_sources}><input type="text" value={formData.last_name || ''} onChange={e => onChange('last_name', e.target.value)} className={inp(errors.last_name)} placeholder="Last name" /></F>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <F label="Date of Birth" required error={errors.date_of_birth} fieldName="date_of_birth" fieldSources={formData.field_sources}>

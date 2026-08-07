@@ -1314,6 +1314,23 @@ def _validate_address(app: dict) -> None:
         _check(f"{scope}_landmark", True)
         _check(f"{scope}_locality", True)
 
+# Name fields: must start with a letter, then letters/spaces plus the
+# punctuation real names carry (apostrophe/hyphen/period — "D'Souza",
+# "Anne-Marie", "K."). Digits and symbols like & * are rejected so junk such as
+# "998u8808&&" — which breaks KYC name matching — can't be submitted. Mirrors
+# the client step-1 check.
+_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]*$")
+
+def _validate_name(app: dict) -> None:
+    """Reject non-alphabetic names at submission (mirrors the client)."""
+    msg = "Name must contain only letters (no numbers or special symbols)."
+    for field in ("first_name", "middle_name", "last_name"):
+        v = app.get(field)
+        if v is None or str(v).strip() == "":
+            continue
+        if not _NAME_RE.match(str(v).strip()):
+            raise HTTPException(status_code=400, detail=msg)
+
 # Salaried-only eligibility. occupation/employment_type store code_mst_id (see
 # the Code List API): Employment Type must be a Salaried option; non-earning
 # occupations can't be salaried. IDs mirror the frontend step-3 check.
@@ -3726,6 +3743,7 @@ async def submit_form_session(session_token: str, request: Request):
             detail="Application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting."
         )
     # Server-side guards (mirror the client validation).
+    _validate_name(app_row)
     _validate_loan_amount(app_row)
     _validate_experience(app_row)
     _validate_address(app_row)

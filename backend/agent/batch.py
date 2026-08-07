@@ -846,6 +846,7 @@ async def batch_status(
     not_answered_count = await _count(" AND status = 'Not Answered'")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
     cancelled_count = await _count(" AND status = 'Cancelled'")
+    wrong_contact_count = await _count(" AND status = 'Wrong Contact'")
     total_count = await _count("")
 
     # Why isn't a 'running' batch dialing? Surface the blocking reason so a batch
@@ -872,6 +873,7 @@ async def batch_status(
         "not_answered": not_answered_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
         "cancelled": cancelled_count,                       # calls skipped because the batch was stopped
+        "wrong_contact": wrong_contact_count,               # answered but reached the wrong person
         "total": total_count,
         # Diagnostics for the "running but nothing dials" case:
         "emergency_stop": emergency_stop,

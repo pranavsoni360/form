@@ -37,6 +37,32 @@ def _ist_midnight(date_str: str) -> datetime:
     return IST.localize(datetime.strptime(date_str, "%Y-%m-%d"))
 
 
+def _date_range_bounds(date_from: Optional[str], date_to: Optional[str],
+                       date: Optional[str] = None):
+    """Resolve a date filter into (lo, hi) IST-midnight datetimes for a
+    half-open [lo, hi) window. A range wins over the single `date`; date_to is
+    inclusive of that whole day (so hi = date_to + 1 day). Any unparseable value
+    is ignored (returns None for that side). Returns (None, None) when nothing
+    valid was supplied."""
+    def _p(d):
+        if not d:
+            return None
+        try:
+            return _ist_midnight(d)
+        except ValueError:
+            return None
+
+    if date_from or date_to:
+        lo = _p(date_from)
+        hi_day = _p(date_to)
+        hi = (hi_day + timedelta(days=1)) if hi_day is not None else None
+        return lo, hi
+    d = _p(date)
+    if d is not None:
+        return d, d + timedelta(days=1)
+    return None, None
+
+
 # ============================================================================
 # ALIAS ENDPOINTS (reference UI compatibility)
 # ============================================================================
@@ -92,6 +118,8 @@ async def list_calls(
     category: Optional[str] = None,
     batch_id: Optional[str] = None,
     date: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     lead_quality: Optional[str] = None,
     form_sent: Optional[str] = None,
     # no auth — operator access
@@ -134,24 +162,23 @@ async def list_calls(
         conditions.append("form_sent = true")
     elif form_sent in ("no", "false"):
         conditions.append("form_sent = false")
-    if date:
-        try:
-            dt = _ist_midnight(date)
-            # Filter on the SAME instant the UI shows in "When" — started_at,
-            # falling back to created_at. A batch call is created (row inserted)
-            # at upload time but started (dialed) later, sometimes the next day;
-            # filtering created_at while displaying started_at made a call show
-            # under one date while its "When" showed the next. COALESCE keeps the
-            # filter and the displayed date in lockstep.
-            conditions.append(
-                f"COALESCE(started_at, created_at) >= ${idx} "
-                f"AND COALESCE(started_at, created_at) < ${idx + 1}"
-            )
-            params.append(dt)
-            params.append(dt + timedelta(days=1))
-            idx += 2
-        except ValueError:
-            pass
+    # Date filtering. A range (date_from/date_to, inclusive of both days) takes
+    # precedence over the single `date` param (kept for backward compat with
+    # ops/calls). We filter on the SAME instant the UI shows in "When" —
+    # started_at, falling back to created_at — so the filter and the displayed
+    # date stay in lockstep (a batch call is inserted at upload time but dialed
+    # later, sometimes the next day; filtering created_at while displaying
+    # started_at made a call show under one date while its "When" showed the
+    # next). Boundaries are IST midnights.
+    lo, hi = _date_range_bounds(date_from, date_to, date)
+    if lo is not None:
+        conditions.append(f"COALESCE(started_at, created_at) >= ${idx}")
+        params.append(lo)
+        idx += 1
+    if hi is not None:
+        conditions.append(f"COALESCE(started_at, created_at) < ${idx}")
+        params.append(hi)
+        idx += 1
 
     where = " AND ".join(conditions) if conditions else "TRUE"
     total = await _state.db_pool.fetchval(f"SELECT COUNT(*) FROM agent_calls WHERE {where}", *params)

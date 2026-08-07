@@ -1897,19 +1897,43 @@ async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCrede
 # ============================================
 
 @app.get("/api/bank/applications")
-async def bank_list_applications(status: Optional[str] = None, officer: dict = Depends(get_bank_officer)):
-    """List applications for THIS bank (bank_id from JWT), with optional status filter."""
+async def bank_list_applications(
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    officer: dict = Depends(get_bank_officer),
+):
+    """List applications for THIS bank (bank_id from JWT), with optional status
+    filter and an optional inclusive IST date range on created_at (date_from/
+    date_to as YYYY-MM-DD). created_at is TIMESTAMPTZ, so IST-midnight bounds
+    keep the day definition aligned with the rest of the dashboards."""
     bank_id = uuid.UUID(officer["bank_id"])
+    conds = ["bank_id = $1"]
+    params: list = [bank_id]
     if status:
-        rows = await db_pool.fetch(
-            "SELECT * FROM loan_applications WHERE bank_id = $1 AND status = $2 ORDER BY created_at DESC",
-            bank_id, status
-        )
-    else:
-        rows = await db_pool.fetch(
-            "SELECT * FROM loan_applications WHERE bank_id = $1 ORDER BY created_at DESC",
-            bank_id
-        )
+        params.append(status)
+        conds.append(f"status = ${len(params)}")
+
+    from agent.state import IST
+    def _ist_mid(d: Optional[str]):
+        if not d:
+            return None
+        try:
+            return IST.localize(datetime.strptime(d, "%Y-%m-%d"))
+        except (ValueError, TypeError):
+            return None
+    lo = _ist_mid(date_from)
+    hi_day = _ist_mid(date_to)
+    if lo is not None:
+        params.append(lo)
+        conds.append(f"created_at >= ${len(params)}")
+    if hi_day is not None:
+        params.append(hi_day + timedelta(days=1))
+        conds.append(f"created_at < ${len(params)}")
+
+    where = " AND ".join(conds)
+    rows = await db_pool.fetch(
+        f"SELECT * FROM loan_applications WHERE {where} ORDER BY created_at DESC", *params)
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/bank/applications/{app_id}")

@@ -19,8 +19,17 @@ export async function authLogout() {
 }
 
 // ── OFFICER ───────────────────────────────────────
-export async function getBankApplications(token: string, status?: string) {
-  const qs = status ? `?status=${status}` : "";
+export async function getBankApplications(
+  token: string,
+  status?: string,
+  dateFrom?: string,
+  dateTo?: string,
+) {
+  const p = new URLSearchParams();
+  if (status) p.set("status", status);
+  if (dateFrom) p.set("date_from", dateFrom);
+  if (dateTo) p.set("date_to", dateTo);
+  const qs = p.toString() ? `?${p.toString()}` : "";
   return apiFetch(`/api/bank/applications${qs}`, {
     headers: authHeaders(token),
   });

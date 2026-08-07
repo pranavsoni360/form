@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { getBankApplications, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate } from '@/lib/api';
 import { LogOut, FileText, CheckCircle2, XCircle, Clock, ChevronRight, ClipboardCheck, Building2, Filter, Phone, Upload, AlertTriangle, Search, PenLine, SlidersHorizontal } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import DateRangeFilter, { DateRangeValue, DEFAULT_RANGE } from '@/components/DateRangeFilter';
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 
 interface Application {
@@ -37,6 +38,7 @@ export default function BankDashboardPage() {
   const [fetchError, setFetchError] = useState('');
   const [filter, setFilter]       = useState('all');
   const [search, setSearch]       = useState('');
+  const [dateRange, setDateRange] = useState<DateRangeValue>(DEFAULT_RANGE);
   const [user, setUser]           = useState<any>(null);
   const [token, setToken]         = useState('');
 
@@ -47,21 +49,27 @@ export default function BankDashboardPage() {
     setToken(t); setUser(u);
   }, []);
 
-  // Always fetch ALL apps for stat cards (independent of filter)
+  // Always fetch ALL apps (for the selected period) for stat cards, independent
+  // of the status filter.
   useEffect(() => {
     if (!token) return;
-    getBankApplications(token, undefined)
+    getBankApplications(token, undefined, dateRange.from || undefined, dateRange.to || undefined)
       .then(d => setAllApplications(d.applications || []))
       .catch(() => {});
-  }, [token]);
+  }, [token, dateRange.from, dateRange.to]);
 
   // Fetch filtered apps for the table
-  useEffect(() => { if (token) fetchApplications(); }, [token, filter]);
+  useEffect(() => { if (token) fetchApplications(); }, [token, filter, dateRange.from, dateRange.to]);
 
   const fetchApplications = async () => {
     setLoading(true); setFetchError('');
     try {
-      const data = await getBankApplications(token, filter === 'all' ? undefined : filter);
+      const data = await getBankApplications(
+        token,
+        filter === 'all' ? undefined : filter,
+        dateRange.from || undefined,
+        dateRange.to || undefined,
+      );
       setApplications(data.applications || []);
       // Keep allApplications in sync when viewing all
       if (filter === 'all') setAllApplications(data.applications || []);
@@ -161,6 +169,11 @@ export default function BankDashboardPage() {
               <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</p>
             </button>
           ))}
+        </div>
+
+        {/* Date range — scopes the stat cards and the applications table */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-3">
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
 
         {/* Search + Filters */}

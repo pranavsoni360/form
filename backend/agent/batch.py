@@ -34,6 +34,24 @@ from .analytics import process_analytics_batch
 logger = logging.getLogger("agent-batch")
 router = APIRouter()
 
+
+def _ist_day_bounds(date_from: Optional[str], date_to: Optional[str]):
+    """Resolve an inclusive [date_from, date_to] day range into (lo, hi)
+    IST-midnight datetimes for a half-open [lo, hi) SQL window (hi = date_to + 1
+    day). Unparseable values are ignored. Mirrors calls._date_range_bounds so
+    the batch dashboards use the same IST day definition as Call Logs."""
+    def _p(d):
+        if not d:
+            return None
+        try:
+            return IST.localize(datetime.strptime(d, "%Y-%m-%d"))
+        except ValueError:
+            return None
+    lo = _p(date_from)
+    hi_day = _p(date_to)
+    hi = (hi_day + timedelta(days=1)) if hi_day is not None else None
+    return lo, hi
+
 _scheduler: AsyncIOScheduler = None
 
 
@@ -780,23 +798,32 @@ async def trigger_batch(
 @router.get("/batch-status")
 async def batch_status(
     batch_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     # no auth — operator access
 ):
-    """Check batch completion progress."""
-    bank_uuid = None  # operator — no bank scoping
-    bk_cond = "bank_id = $1" if bank_uuid else "TRUE"
-    bk_params = [bank_uuid] if bank_uuid else []
-    offset = len(bk_params)
+    """Check batch completion progress. Optional date range (date_from/date_to,
+    inclusive) scopes the counters to calls in that IST window — same day
+    definition as Call Logs (COALESCE(started_at, created_at))."""
+    lo, hi = _ist_day_bounds(date_from, date_to)
 
-    async def _count(extra_clause: str, *extra_params):
+    async def _count(extra_clause: str):
+        # Build the WHERE incrementally so placeholders stay in sync regardless
+        # of which optional filters (batch_id, date range) are active.
+        parts: list = []
+        params: list = []
         if batch_id:
-            return await _state.db_pool.fetchval(
-                f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond} AND batch_id = ${offset+1}{extra_clause}",
-                *bk_params, batch_id, *extra_params,
-            )
+            params.append(batch_id)
+            parts.append(f"batch_id = ${len(params)}")
+        if lo is not None:
+            params.append(lo)
+            parts.append(f"COALESCE(started_at, created_at) >= ${len(params)}")
+        if hi is not None:
+            params.append(hi)
+            parts.append(f"COALESCE(started_at, created_at) < ${len(params)}")
+        where = " AND ".join(parts) if parts else "TRUE"
         return await _state.db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {bk_cond}{extra_clause}",
-            *bk_params, *extra_params,
+            f"SELECT COUNT(*) FROM agent_calls WHERE {where}{extra_clause}", *params,
         )
 
     pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
@@ -1075,10 +1102,26 @@ async def stop_batch(batch_id: str):
 # ============================================================================
 
 @router.get("/uploads")
-async def list_uploads():
-    """List all batch uploads. Aliases created_at/total_records as uploaded_at/record_count
-    so the static dashboard (which uses Samavesh field names) renders correctly."""
-    rows = await _state.db_pool.fetch("SELECT * FROM agent_batches ORDER BY created_at DESC LIMIT 50")
+async def list_uploads(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """List batch uploads, optionally scoped to an inclusive IST date range
+    (date_from/date_to) on the batch's created_at. Aliases created_at/
+    total_records as uploaded_at/record_count so the static dashboard (which
+    uses Samavesh field names) renders correctly."""
+    lo, hi = _ist_day_bounds(date_from, date_to)
+    conds: list = []
+    params: list = []
+    if lo is not None:
+        params.append(lo)
+        conds.append(f"created_at >= ${len(params)}")
+    if hi is not None:
+        params.append(hi)
+        conds.append(f"created_at < ${len(params)}")
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    rows = await _state.db_pool.fetch(
+        f"SELECT * FROM agent_batches{where} ORDER BY created_at DESC LIMIT 50", *params)
     uploads = []
     for r in _rows_to_list(rows):
         r["uploaded_at"] = r.get("created_at")

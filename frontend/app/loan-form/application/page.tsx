@@ -499,6 +499,18 @@ export default function LoanApplication() {
         districtName.includes(c.code_desc.toLowerCase())
       );
       if (matchedCity) onChange(`${type}_city_code`, matchedCity.code_mst_id);
+
+      // The District dropdown is district-level (VG DocVerify master), so a
+      // taluka/town like Hinganghat (which sits inside Wardha) has no option.
+      // Preserve it by dropping the postal Block/town into Locality/Area when
+      // the applicant hasn't already filled it — so the town isn't lost even
+      // though the dropdown can only carry the district.
+      const block = (po.Block || '').trim();
+      if (block && block.toLowerCase() !== districtName) {
+        const localityField = `${type}_locality`;
+        setFormData((prev: any) => prev[localityField] ? prev : { ...prev, [localityField]: block });
+      }
+
       setPincodeValid(p => ({ ...p, [type]: true }));
     } catch {
       setPincodeValid(p => ({ ...p, [type]: true })); // network error — don't block user
@@ -1336,9 +1348,9 @@ export default function LoanApplication() {
                       {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
                     </select>
                   </F>
-                  <F label="City / District" required error={errors.current_city_code}>
+                  <F label="District" required error={errors.current_city_code}>
                     <select value={formData.current_city_code || ''} onChange={e => onChange('current_city_code', e.target.value)} disabled={!formData.current_state_code} className={inp(errors.current_city_code)}>
-                      <option value="">{formData.current_state_code ? 'Select City' : 'Select state first'}</option>
+                      <option value="">{formData.current_state_code ? 'Select District' : 'Select state first'}</option>
                       {cityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
                     </select>
                   </F>
@@ -1380,9 +1392,9 @@ export default function LoanApplication() {
                       {(codeLists[5] || []).map(s => <option key={s.code_mst_id} value={s.code_mst_id}>{s.code_desc}</option>)}
                     </select>
                   </F>
-                  <F label="City / District" required error={errors.permanent_city_code} fieldName="permanent_city_code" fieldSources={formData.field_sources}>
+                  <F label="District" required error={errors.permanent_city_code} fieldName="permanent_city_code" fieldSources={formData.field_sources}>
                     <select value={formData.permanent_city_code || ''} onChange={e => onChange('permanent_city_code', e.target.value)} disabled={!formData.permanent_state_code} className={inp(errors.permanent_city_code)}>
-                      <option value="">{formData.permanent_state_code ? 'Select City' : 'Select state first'}</option>
+                      <option value="">{formData.permanent_state_code ? 'Select District' : 'Select state first'}</option>
                       {permCityOptions.map(c => <option key={c.code_mst_id} value={c.code_mst_id}>{c.code_desc}</option>)}
                     </select>
                   </F>
@@ -1821,7 +1833,7 @@ export default function LoanApplication() {
                 <RR label="Permanent" value={[formData.permanent_house, formData.permanent_street, formData.permanent_landmark, formData.permanent_locality].filter(Boolean).join(', ') || formData.permanent_address} />
                 <RR label="Pincode" value={formData.permanent_pincode} />
                 <RR label="State" value={codeLabel(5, formData.permanent_state_code)} />
-                <RR label="City" value={codeLabel(6, formData.permanent_city_code)} />
+                <RR label="District" value={codeLabel(6, formData.permanent_city_code)} />
                 {formData.same_as_current ? (
                   <RR label="Current" value="Same as permanent address" />
                 ) : (

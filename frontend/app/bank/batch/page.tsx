@@ -371,6 +371,28 @@ export default function BatchPage() {
                 </button>
               </div>
             </div>
+            {/* Why isn't a running batch dialing? Make the silent hang visible. */}
+            {batchStatus?.blocked_reason === 'emergency_stop' && (
+              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3">
+                <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" />
+                <span className="text-sm text-red-700 dark:text-red-300">
+                  <b>Emergency Stop is active</b> — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} won&apos;t dial until you resume.
+                </span>
+                <button onClick={resumeCalling} disabled={resuming}
+                  className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-60">
+                  {resuming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                  Resume calling
+                </button>
+              </div>
+            )}
+            {batchStatus?.blocked_reason === 'outside_calling_hours' && (
+              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
+                <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                <span className="text-sm text-amber-700 dark:text-amber-300">
+                  <b>Outside calling hours</b> ({batchStatus.calling_window}) — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} will dial automatically during the window.
+                </span>
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               {statItems.map(({ label, value, accent }) => (
                 <div key={label} className={`rounded-lg px-4 py-3 border border-slate-200 dark:border-slate-800 ${accent}`}>

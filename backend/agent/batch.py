@@ -285,6 +285,16 @@ async def process_batch_run(batch_uuid_str: str = None):
         logger.info("Outside calling hours")
         await release_batch_lock()
         return
+    # Emergency stop leaves calls at 'Pending' (the dispatcher skips each one),
+    # so a batch would look "running but nothing dials". Detect it up front and
+    # log the reason once, instead of emitting a per-call skip for every number.
+    if await is_emergency_stop_active():
+        logger.warning(
+            "Batch dispatch skipped — EMERGENCY STOP is active. Calls stay Pending "
+            "until an operator clicks Resume (POST /resume-calling)."
+        )
+        await release_batch_lock()
+        return
 
     try:
         # Find the batch to process. SELECT * picks up `preferred_phone_id`
@@ -838,6 +848,20 @@ async def batch_status(
     cancelled_count = await _count(" AND status = 'Cancelled'")
     total_count = await _count("")
 
+    # Why isn't a 'running' batch dialing? Surface the blocking reason so a batch
+    # stuck at Pending is self-explaining instead of a silent hang. Both of these
+    # cause calls to stay 'Pending' (never dialed): an Emergency Stop that was
+    # never resumed, or being outside the calling window. (A trunk/LiveKit
+    # problem instead marks calls 'Failed', so it isn't a "blocked" reason.)
+    emergency_stop = await is_emergency_stop_active()
+    within_hours = is_within_calling_hours()
+    blocked_reason = None
+    if pending_count > 0:
+        if emergency_stop:
+            blocked_reason = "emergency_stop"
+        elif not within_hours:
+            blocked_reason = "outside_calling_hours"
+
     return {
         "status": "success",
         "is_complete": pending_count == 0,                  # boolean kept under a non-clashing key
@@ -849,6 +873,11 @@ async def batch_status(
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
         "cancelled": cancelled_count,                       # calls skipped because the batch was stopped
         "total": total_count,
+        # Diagnostics for the "running but nothing dials" case:
+        "emergency_stop": emergency_stop,
+        "within_calling_hours": within_hours,
+        "calling_window": f"{CALL_START_HOUR}:00–{CALL_END_HOUR % 24 or 24}:00 IST",
+        "blocked_reason": blocked_reason,                   # 'emergency_stop' | 'outside_calling_hours' | null
     }
 
 

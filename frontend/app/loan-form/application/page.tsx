@@ -99,8 +99,14 @@ export default function LoanApplication() {
   const [pincodeValid, setPincodeValid] = useState<{ current: boolean; permanent: boolean }>({ current: true, permanent: true });
 
   const handleVerifyPAN = async () => {
-    const pan = formData.pan_number || '';
-    if (!pan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+    const pan = (formData.pan_number || '').trim();
+    // Check mandatory FIRST, then format — an empty field should say "required",
+    // not "invalid format".
+    if (!pan) {
+      setErrors((p: any) => ({ ...p, pan_number: 'PAN Number is required.' }));
+      return;
+    }
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
       setErrors((p: any) => ({ ...p, pan_number: 'Invalid PAN format (e.g. ABCDE1234F)' }));
       return;
     }

@@ -197,11 +197,36 @@ async def _scheduled_error_cleanup():
 # ============================================================================
 
 async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 600):
-    """Poll Postgres until call completes or timeout. Two-phase: active polling + post-room-gone grace."""
+    """Poll Postgres until the call reaches a terminal status (set by the
+    transcript webhook) or we time out.
+
+    Classification uses the room's participant history. The agent is dispatched
+    into the room BEFORE the SIP leg, so a healthy call has >=1 participant almost
+    immediately. Therefore:
+      • a room that stays EMPTY (0 participants) means nothing ever joined — the
+        agent worker isn't running or the SIP call never connected → mark
+        'Call Not Connected' and fail FAST (don't hang the dispatcher slot for
+        10 min, which is what made batches 'falter').
+      • if the agent was ever present, an incomplete call is a genuine
+        'Not Answered'.
+    """
     call_uuid = uuid.UUID(call_id)
     poll_interval = 3
     elapsed = 0
-    room_gone = False
+    max_participants = 0          # peak participants ever seen in the room
+    empty_room_since = None       # elapsed secs when the room was first seen with 0 participants
+    EMPTY_ROOM_GRACE = 60         # sustained-empty window that means "never connected"
+
+    async def _finalize(status: str, error: str):
+        await _state.db_pool.execute(
+            """UPDATE agent_calls
+               SET status = $1, ended_at = $2, updated_at = $2,
+                   error_message = $3, retry_count = retry_count + 1
+               WHERE id = $4""",
+            status, now_ist(), error, call_uuid,
+        )
+        r = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+        return _row_to_dict(r)
 
     while elapsed < timeout:
         await asyncio.sleep(poll_interval)
@@ -212,56 +237,65 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
             return None
         doc = _row_to_dict(row)
         if doc.get("status") != "Calling":
-            return doc
+            return doc  # terminal status already written by the transcript webhook
 
-        # Check room existence every 10s after 30s
-        if elapsed >= 30 and elapsed % 10 == 0:
+        # Inspect the room from ~15s in, every ~9s.
+        if elapsed >= 15 and elapsed % 9 == 0:
             try:
                 lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
                 rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
                 await lk.aclose()
                 if not rooms.rooms:
-                    if not room_gone:
-                        room_gone = True
-                        logger.info(f"Room {room_name} gone. Waiting up to 60s for transcript...")
-                    # Phase 2: wait for transcript after room deletion
+                    # Room gone — wait up to 60s for a late transcript, then classify
+                    # by whether the agent was ever in the room.
+                    logger.info(f"Room {room_name} gone. Waiting up to 60s for transcript...")
                     for _ in range(12):
                         await asyncio.sleep(5)
                         row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
                         if row and dict(row).get("status") != "Calling":
                             return _row_to_dict(row)
-                    # Transcript never arrived
-                    await _state.db_pool.execute(
-                        """UPDATE agent_calls
-                           SET status = 'Not Answered',
-                               ended_at = $1, updated_at = $1,
-                               error_message = 'Room deleted but no transcript after 60s',
-                               retry_count = retry_count + 1
-                           WHERE id = $2""",
-                        now_ist(), call_uuid,
+                    if max_participants >= 1:
+                        return await _finalize("Not Answered", "Room ended, no transcript after 60s")
+                    return await _finalize(
+                        "Call Not Connected",
+                        "Call never connected — agent/SIP never joined the room",
                     )
-                    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
-                    return _row_to_dict(row)
+                else:
+                    np = rooms.rooms[0].num_participants
+                    max_participants = max(max_participants, np)
+                    if np == 0:
+                        if empty_room_since is None:
+                            empty_room_since = elapsed
+                        elif (elapsed - empty_room_since) >= EMPTY_ROOM_GRACE and max_participants == 0:
+                            # Nothing ever joined for a full minute → not a real
+                            # connection. Fail fast + classify so the operator sees
+                            # the real reason (agent worker down / SIP failure).
+                            logger.warning(
+                                "Call %s: room empty %ds, no participant ever joined — "
+                                "agent worker down or SIP not connecting.",
+                                call_uuid, elapsed,
+                            )
+                            return await _finalize(
+                                "Call Not Connected",
+                                "No participant joined within 60s — agent worker not running or SIP did not connect",
+                            )
+                    else:
+                        empty_room_since = None
             except Exception as e:
-                # Don't drop on the floor — a real LiveKit/DB error here means
-                # the poll loop continues and may eventually time out, but at
-                # least the operator sees a trail in logs.
+                # Transient LiveKit/DB error — keep polling; the global timeout is
+                # the backstop. Never let a poll error end the call early.
                 logger.warning(
                     "wait_for_call_completion poll iteration failed for %s: %s",
                     call_uuid, e,
                 )
 
-    # Global timeout
-    await _state.db_pool.execute(
-        """UPDATE agent_calls
-           SET status = 'Not Answered',
-               ended_at = $1, updated_at = $1,
-               retry_count = retry_count + 1
-           WHERE id = $2""",
-        now_ist(), call_uuid,
+    # Global timeout — classify by whether the agent was ever present.
+    if max_participants >= 1:
+        return await _finalize("Not Answered", "Call timed out after %ds" % timeout)
+    return await _finalize(
+        "Call Not Connected",
+        "Call timed out with no participant ever joining — agent worker / SIP issue",
     )
-    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
-    return _row_to_dict(row)
 
 
 async def process_batch_run(batch_uuid_str: str = None):
@@ -283,6 +317,16 @@ async def process_batch_run(batch_uuid_str: str = None):
         return
     if not is_within_calling_hours():
         logger.info("Outside calling hours")
+        await release_batch_lock()
+        return
+    # Emergency stop leaves calls at 'Pending' (the dispatcher skips each one),
+    # so a batch would look "running but nothing dials". Detect it up front and
+    # log the reason once, instead of emitting a per-call skip for every number.
+    if await is_emergency_stop_active():
+        logger.warning(
+            "Batch dispatch skipped — EMERGENCY STOP is active. Calls stay Pending "
+            "until an operator clicks Resume (POST /resume-calling)."
+        )
         await release_batch_lock()
         return
 
@@ -836,7 +880,22 @@ async def batch_status(
     not_answered_count = await _count(" AND status = 'Not Answered'")
     completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
     cancelled_count = await _count(" AND status = 'Cancelled'")
+    wrong_contact_count = await _count(" AND status = 'Wrong Contact'")
     total_count = await _count("")
+
+    # Why isn't a 'running' batch dialing? Surface the blocking reason so a batch
+    # stuck at Pending is self-explaining instead of a silent hang. Both of these
+    # cause calls to stay 'Pending' (never dialed): an Emergency Stop that was
+    # never resumed, or being outside the calling window. (A trunk/LiveKit
+    # problem instead marks calls 'Failed', so it isn't a "blocked" reason.)
+    emergency_stop = await is_emergency_stop_active()
+    within_hours = is_within_calling_hours()
+    blocked_reason = None
+    if pending_count > 0:
+        if emergency_stop:
+            blocked_reason = "emergency_stop"
+        elif not within_hours:
+            blocked_reason = "outside_calling_hours"
 
     return {
         "status": "success",
@@ -848,7 +907,13 @@ async def batch_status(
         "not_answered": not_answered_count,
         "completed": completed_count,                       # numeric, matches dashboard tile expectation
         "cancelled": cancelled_count,                       # calls skipped because the batch was stopped
+        "wrong_contact": wrong_contact_count,               # answered but reached the wrong person
         "total": total_count,
+        # Diagnostics for the "running but nothing dials" case:
+        "emergency_stop": emergency_stop,
+        "within_calling_hours": within_hours,
+        "calling_window": f"{CALL_START_HOUR}:00–{CALL_END_HOUR % 24 or 24}:00 IST",
+        "blocked_reason": blocked_reason,                   # 'emergency_stop' | 'outside_calling_hours' | null
     }
 
 
@@ -897,22 +962,35 @@ async def trigger_batch_retry(
     # so retry_count == 1 means "initial failed, 0 retries done" → eligible for
     # retry #1. With MAX_RETRIES=2, we allow retry while retry_count <= 2,
     # giving exactly 2 retries after the original attempt.
+    # Reset to a CLEAN Pending state — not just the status. The previous
+    # attempt's terminal fields (started_at/ended_at/duration/room/error) are
+    # cleared so the record is a genuine fresh attempt: it won't keep showing the
+    # old "Failed / Not Answered" timestamp + error while (and if) it re-dials,
+    # and the dispatcher assigns a brand-new room. retry_count is preserved — it
+    # gates how many retries remain and is incremented by the next attempt.
     result = await _state.db_pool.execute(
-        f"""UPDATE agent_calls SET status = 'Pending'
+        f"""UPDATE agent_calls SET
+                status = 'Pending',
+                started_at = NULL,
+                ended_at = NULL,
+                call_duration = 0,
+                room_name = NULL,
+                error_message = NULL,
+                updated_at = $2
             WHERE batch_id = $1
             AND status IN ('Not Answered', 'Failed', 'Call Not Connected')
             AND retry_count <= {MAX_RETRIES}""",
-        batch.get("batch_id") or bid,
+        batch.get("batch_id") or bid, now_ist(),
     )
     reset_count = int(result.split()[-1]) if result else 0
 
     if reset_count == 0:
         return {"status": "nothing", "message": "No retriable calls found (all at max retries or already completed)"}
 
-    # Set batch back to running
+    # Set batch back to running and dispatch immediately (don't wait for the cron).
     await _state.db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE id = $1", uuid.UUID(bid))
     background_tasks.add_task(process_batch_run, bid)
-    return {"status": "started", "message": f"Retrying {reset_count} failed calls in batch"}
+    return {"status": "started", "message": f"Retrying {reset_count} failed call(s) — re-dialing now", "retrying": reset_count}
 
 
 @router.post("/emergency-stop")

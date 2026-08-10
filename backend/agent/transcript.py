@@ -53,10 +53,18 @@ async def save_transcript(data: TranscriptPayload):
     # webhook fires a few seconds after end_call() and would otherwise overwrite
     # 'Scheduled' with 'Called - Not Interested', which silently drops the callback.
     existing_status = call.get("status")
+    outcome = (data.call_outcome or "").strip().lower()
     if existing_status in _CALLBACK_STATUSES:
         # Callback already registered — preserve whichever variant is in the DB
         # so the dispatcher still picks this row up when scheduled_callback_at arrives.
         status = existing_status
+    elif outcome == "wrong_number":
+        # The call WAS answered (there's a conversation), but the callee said they
+        # aren't the intended customer, so the agent ended with end_call
+        # ("wrong_number"). Give it a dedicated status instead of letting it fall
+        # through to "Called - Not Interested" (or "Not Answered") — those
+        # misreport a reached-wrong-person as a rejection / no-answer.
+        status = "Wrong Contact"
     elif transcript:
         status = "Called - Interested" if data.customer_interested else "Called - Not Interested"
     else:
@@ -105,6 +113,8 @@ async def save_transcript(data: TranscriptPayload):
 
     if existing_status in _CALLBACK_STATUSES:
         category = call.get("category") or "Scheduled Callback"
+    elif outcome == "wrong_number":
+        category = "Wrong Number / Not Reachable"
     elif transcript:
         category = "Uncategorized"
     else:

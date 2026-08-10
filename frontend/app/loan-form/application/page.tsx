@@ -121,7 +121,19 @@ export default function LoanApplication() {
         setErrors((p: any) => ({ ...p, pan_number: '' }));
         return;
       }
-      if (!res.ok) throw new Error('Verification failed');
+      if (!res.ok) {
+        // Surface the ACTUAL reason from the backend (e.g. "PAN not found in
+        // government records", "service temporarily unavailable") instead of a
+        // generic "Verification failed", so the customer knows what to do.
+        const errData = await res.json().catch(() => ({}));
+        const d = errData?.detail;
+        const reason = typeof d === 'string' && d.trim()
+          ? d
+          : (typeof errData?.error === 'string' && errData.error.trim()
+              ? errData.error
+              : `Verification failed (error ${res.status})`);
+        throw new Error(reason);
+      }
       const data = await res.json();
       onChange('pan_verified', true);
       onChange('pan_verification_timestamp', new Date().toISOString());

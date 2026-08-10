@@ -100,6 +100,7 @@ const STATUS_OPTIONS = [
   "Failed",
   "Scheduled",
   "Invalid Phone",
+  "Wrong Contact",
 ] as const;
 
 const CATEGORY_OPTIONS = [

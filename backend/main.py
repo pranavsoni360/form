@@ -319,7 +319,7 @@ FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001"
 APP_NETWORK = os.getenv("APP_NETWORK", "internal").lower()
 
 _VG_API_BASE_DEFAULT = (
-    "https://galaxypay.in:9005/VGDocverify/VGKVerify.asmx"
+    "https://vpays.in/VGDocverify/VGKVerify.asmx"
     if APP_NETWORK == "public"
     else "http://10.200.10.43/VGDocverify/VGKVerify.asmx"
 )
@@ -329,10 +329,10 @@ _CODE_LIST_API_URL_DEFAULT = "http://10.200.10.83:5020"
 
 # ── VG DocVerify API Configuration ──
 VG_API_BASE = os.getenv("VG_API_BASE", _VG_API_BASE_DEFAULT)
-VG_USER_ID = os.getenv("VG_USER_ID", "33")
-VG_KEY = os.getenv("VG_KEY", "")
-VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VGIL")
-VG_BANK_NAME = os.getenv("VG_BANK_NAME", "VIRTUAL URBAN CO-OPERATIVE BANK LTD")
+VG_USER_ID = os.getenv("VG_USER_ID", "25")
+VG_KEY = os.getenv("VG_KEY", "COVAI27032026")
+VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VPAY")
+VG_BANK_NAME = os.getenv("VG_BANK_NAME", "Virtual Galaxy Fintech Pvt Ltd")
 VG_MOCK_MODE = os.getenv("VG_MOCK_MODE", "false").lower() == "true"  # Set to "true" only when needed for testing without VG API access
 
 # ── Code List API (dropdown lookup codes) ──
@@ -478,6 +478,61 @@ def parse_vg_response(raw: str) -> dict:
     if '}{' in raw:
         raw = raw.split('}{')[0] + '}'
     return json.loads(raw)
+
+
+def _vg_soap_envelope(method: str, inner_element: str, fields: dict) -> str:
+    """Build a SOAP 1.1 envelope for a VGKVerify .asmx method. The vpays.in
+    endpoints are SOAP (a JSON POST returns 'Root element is missing'); the real
+    payload comes back as a JSON string inside <MethodResponse>."""
+    import html as _html
+    cells = "".join(
+        f"<{k}>{_html.escape(str(v))}</{k}>" for k, v in fields.items() if v is not None
+    )
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<soap:Body>"
+        f'<{method} xmlns="http://tempuri.org/">'
+        f"<obj><{inner_element}>{cells}</{inner_element}></obj>"
+        f"</{method}>"
+        "</soap:Body></soap:Envelope>"
+    )
+
+
+def _vg_soap_extract(xml_text: str) -> dict:
+    """Extract the JSON payload VG returns inside the SOAP <...Response> element.
+    Raises on a SOAP <faultstring>. Returns {} if empty/unparseable."""
+    import html as _html
+    import re as _re
+    if not xml_text:
+        return {}
+    fault = _re.search(r"<faultstring>(.*?)</faultstring>", xml_text, _re.S)
+    if fault:
+        raise RuntimeError(f"SOAP fault: {_html.unescape(fault.group(1)).strip()[:300]}")
+    m = _re.search(r"<\w*Response[^>]*>(.*?)</\w*Response>", xml_text, _re.S)
+    inner = _html.unescape((m.group(1) if m else xml_text)).strip()
+    if not inner:
+        return {}
+    try:
+        return json.loads(inner)
+    except (ValueError, TypeError):
+        return {}
+
+
+async def vg_soap_call(method: str, inner_element: str, fields: dict) -> dict:
+    """POST a SOAP request to VG_API_BASE (the .asmx endpoint) and return the
+    parsed JSON payload. Merges the shared credential block + APICode into the
+    row, exactly like the old JSON path. `fields` must include 'APICode'."""
+    body = {**fields}
+    envelope = _vg_soap_envelope(method, inner_element, body)
+    headers = {
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": f'"http://tempuri.org/{method}"',
+    }
+    async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
+        resp = await client.post(VG_API_BASE, content=envelope.encode("utf-8"), headers=headers)
+    resp.raise_for_status()
+    return _vg_soap_extract(resp.text)
 
 def generate_aadhaar_pdf(name: str, dob: str, gender: str, address: str, masked_uid: str, photo_b64: str = None) -> bytes:
     """Generate an Aadhaar verification document from DigiLocker data."""
@@ -2433,19 +2488,21 @@ async def verify_pan(token: str, pan_number: str, request: Request):
             "INSERT INTO loan_applications (token_id, customer_name, phone, loan_id, current_step, last_saved_at, bank_id) VALUES ($1, $2, $3, $4, 1, $5, $6)",
             token_row["id"], token_row["customer_name"], token_row["phone"], token_row["loan_id"], now_utc(), bank_id
         )
-    # Call VG API for real PAN verification
+    # Call VG API (SOAP) for real PAN verification. Lenient path: on any error we
+    # fall back to format-only verification so the token flow isn't hard-blocked.
     pan_name = ""
     if not VG_MOCK_MODE:
         try:
-            pan_payload = {"obj": [{**vg_base_obj("pancard"), "PanNo": pan_number}]}
-            async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
-                response = await client.post(f"{VG_API_BASE}/Pan", json=pan_payload, headers={"Content-Type": "application/json"})
-            api_data = parse_vg_response(response.text)
-            print(f"[PAN API] {pan_number} -> {api_data.get('status-code', api_data.get('statusCode', '?'))}")
-            if str(api_data.get("status-code", api_data.get("statusCode", ""))) == "101":
-                pan_name = api_data.get("result", {}).get("name", "")
+            api_data = await vg_soap_call(
+                "Pan", "kpan", {**vg_base_obj("pancard"), "PanNo": pan_number}
+            )
+            sc = str(api_data.get("statusCode", api_data.get("status-code", "")))
+            print(f"[PAN API] {pan_number} -> statusCode={sc} success={api_data.get('success')}")
+            if str(api_data.get("success", "")).lower() != "false" and sc in ("200", "101"):
+                result = api_data.get("data") or api_data.get("result") or {}
+                pan_name = (result.get("name") or result.get("Name") or result.get("fullName") or "")
         except Exception as e:
-            print(f"[PAN API] Error: {e} — falling back to format-only verification")
+            print(f"[PAN API] {type(e).__name__}: {e} — falling back to format-only verification")
     await db_pool.execute(
         "UPDATE loan_applications SET pan_number = $1, pan_verified = true, pan_verification_timestamp = $2, pan_name = $3 WHERE token_id = $4",
         pan_number, now_utc(), pan_name or None, token_row["id"]
@@ -3694,34 +3751,32 @@ async def verify_pan_session(session_token: str, pan_number: str, request: Reque
             status_code=423,
             detail="Application is locked due to repeated PAN identity mismatches. Please contact your bank branch."
         )
-    # Call VG API for real PAN verification
+    # Call VG API (SOAP) for real PAN verification. The vpays.in VGKVerify.asmx
+    # endpoint is SOAP: element <kpan> with PanNo + APICode; response is a JSON
+    # string inside the SOAP body ({"statusCode":200,"data":{...,"name":...}}).
     pan_name = ""
     if not VG_MOCK_MODE:
         try:
-            pan_payload = {"obj": [{**vg_base_obj("pancard"), "PanNo": pan_number}]}
-            async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
-                response = await client.post(f"{VG_API_BASE}/Pan", json=pan_payload, headers={"Content-Type": "application/json"})
-            api_data = parse_vg_response(response.text)
-            status_code = str(api_data.get("status-code", api_data.get("statusCode", "")))
-            print(f"[PAN API] {pan_number} -> status={status_code}")
-            if status_code == "101":
-                pan_name = api_data.get("result", {}).get("name", "")
+            api_data = await vg_soap_call(
+                "Pan", "kpan", {**vg_base_obj("pancard"), "PanNo": pan_number}
+            )
+            sc = str(api_data.get("statusCode", api_data.get("status-code", "")))
+            ok = str(api_data.get("success", "")).lower() != "false" and sc in ("200", "101")
+            print(f"[PAN API] {pan_number} -> statusCode={sc} success={api_data.get('success')}")
+            if ok:
+                result = api_data.get("data") or api_data.get("result") or {}
+                pan_name = (result.get("name") or result.get("Name") or result.get("fullName") or "")
                 if not pan_name:
-                    # API returned 101 but no name — treat as unverified
                     raise HTTPException(status_code=422, detail="PAN verified but no name returned. Please try again.")
             else:
-                # Non-101: PAN not found in government records
-                print(f"[PAN API] Rejected {pan_number} — status={status_code} body={api_data}")
-                raise HTTPException(status_code=422, detail="PAN not found in government records. Please check the number and try again.")
+                msg = api_data.get("message") or "PAN not found in government records. Please check the number and try again."
+                print(f"[PAN API] Rejected {pan_number} — statusCode={sc} body={api_data}")
+                raise HTTPException(status_code=422, detail=str(msg).strip())
         except HTTPException:
             raise
         except Exception as e:
-            # Log the exception TYPE, not just str(e): transport failures
-            # (httpx.ConnectError, ReadTimeout, SSLError) stringify to "" and
-            # used to log a bare "[PAN API] Error:" with no cause, which made
-            # a VG-side outage indistinguishable from a bug in our code.
             logger.error(
-                "[PAN API] %s calling %s/Pan: %s",
+                "[PAN API] %s calling %s: %s",
                 type(e).__name__, VG_API_BASE, e or "(no detail)", exc_info=True,
             )
             raise HTTPException(status_code=503, detail="PAN verification service is temporarily unavailable. Please try again in a moment.")

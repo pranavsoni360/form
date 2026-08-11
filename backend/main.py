@@ -328,7 +328,12 @@ _VG_API_BASE_DEFAULT = (
 _CODE_LIST_API_URL_DEFAULT = "http://10.200.10.83:5020"
 
 # ── VG DocVerify API Configuration ──
-VG_API_BASE = os.getenv("VG_API_BASE", _VG_API_BASE_DEFAULT)
+# Priority: VG_API_BASE (explicit) > VG_DOCVERIFY_BASE_URL + /VGKVerify.asmx > default
+_vg_docverify_base = os.getenv("VG_DOCVERIFY_BASE_URL", "").rstrip("/")
+VG_API_BASE = os.getenv(
+    "VG_API_BASE",
+    f"{_vg_docverify_base}/VGKVerify.asmx" if _vg_docverify_base else _VG_API_BASE_DEFAULT,
+)
 VG_USER_ID = os.getenv("VG_USER_ID", "25")
 VG_KEY = os.getenv("VG_KEY", "COVAI27032026")
 VG_BANK_CODE = os.getenv("VG_BANK_CODE", "VPAY")

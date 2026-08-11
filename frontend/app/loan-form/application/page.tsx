@@ -157,7 +157,14 @@ export default function LoanApplication() {
         if (nameParts.length > 2) panSources.middle_name = { source: 'pan', original: nameParts.slice(1, -1).join(' '), modified: false };
         if (nameParts.length > 1) panSources.last_name = { source: 'pan', original: nameParts[nameParts.length - 1], modified: false };
         panSources.full_name = { source: 'pan', original: data.name, modified: false };
+        if (data.dob) panSources.date_of_birth = { source: 'pan', original: data.dob, modified: false };
         setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), ...panSources } }));
+      }
+      // Auto-fill DOB from PAN (only if not already set by Aadhaar or user)
+      if (data.dob && !formData.date_of_birth) {
+        onChange('date_of_birth', data.dob);
+      }
+      if (data.name) {
         // Name match check: PAN name vs call-collected name
         const callName = appData?.customer_name || appData?.full_name || '';
         if (callName && data.name) {

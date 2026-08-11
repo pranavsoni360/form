@@ -437,6 +437,41 @@ export default function LoanApplication() {
             onChange('aadhaar_front_url', d.aadhaar_front_url);
             aadhaarSources.aadhaar_front_url = { source: 'aadhaar', original: 'digilocker_xml', modified: false };
           }
+          // ── Auto-fill CURRENT address from Aadhaar (the permanent address IS
+          // the Aadhaar address). Default "Same as permanent" so the customer
+          // doesn't re-type ~7 fields; they can untick it if their current
+          // address differs. Also mirror into current_* so the value is present
+          // even if they later untick and edit.
+          if (!formData.current_house && !formData.current_pincode) {
+            onChange('same_as_current', true);
+            if (d.house) onChange('current_house', d.house);
+            if (d.street) onChange('current_street', d.street);
+            if (d.landmark) onChange('current_landmark', d.landmark);
+            if (d.locality) onChange('current_locality', d.locality);
+            if (d.pin) onChange('current_pincode', d.pin);
+            if (d.state_code) { onChange('current_state_code', d.state_code); fetchCities(d.state_code, 'current'); }
+            if (d.city_code) onChange('current_city_code', d.city_code);
+            if (d.house) aadhaarSources.current_house = { source: 'aadhaar', original: d.house, modified: false };
+            if (d.street) aadhaarSources.current_street = { source: 'aadhaar', original: d.street, modified: false };
+            if (d.landmark) aadhaarSources.current_landmark = { source: 'aadhaar', original: d.landmark, modified: false };
+            if (d.locality) aadhaarSources.current_locality = { source: 'aadhaar', original: d.locality, modified: false };
+            if (d.pin) aadhaarSources.current_pincode = { source: 'aadhaar', original: d.pin, modified: false };
+            if (d.state_code || d.state) aadhaarSources.current_state_code = { source: 'aadhaar', original: d.state || d.state_code, modified: false };
+            if (d.city_code || d.district) aadhaarSources.current_city_code = { source: 'aadhaar', original: d.district || d.city_code, modified: false };
+          }
+          // ── A verified DigiLocker Aadhaar legally serves as BOTH proof of
+          // identity and proof of residence — auto-satisfy both uploads so the
+          // customer skips them (same pattern as photo_url / aadhaar_front_url).
+          if (d.aadhaar_front_url) {
+            if (!formData.proof_of_identification_url) {
+              onChange('proof_of_identification_url', d.aadhaar_front_url);
+              aadhaarSources.proof_of_identification_url = { source: 'aadhaar', original: 'digilocker_xml', modified: false };
+            }
+            if (!formData.proof_of_residence_url) {
+              onChange('proof_of_residence_url', d.aadhaar_front_url);
+              aadhaarSources.proof_of_residence_url = { source: 'aadhaar', original: 'digilocker_xml', modified: false };
+            }
+          }
           setFormData((p: any) => ({ ...p, field_sources: { ...(p.field_sources || {}), ...aadhaarSources } }));
           // Name match check: Aadhaar name vs call-collected name
           const callName = appData?.customer_name || appData?.full_name || '';

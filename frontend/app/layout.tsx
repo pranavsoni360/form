@@ -1,6 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { Sen, Plus_Jakarta_Sans, DM_Sans, JetBrains_Mono } from "next/font/google";
+import { Sen, Plus_Jakarta_Sans, DM_Sans, JetBrains_Mono, Public_Sans, IBM_Plex_Mono } from "next/font/google";
 
 import { Providers } from "./providers";
 
@@ -32,6 +32,21 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-mono-loan",
 });
 
+// ── Finix design-language fonts (design_handoff_finix). Two weights only. ──
+const publicSans = Public_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500"],
+  variable: "--font-public-sans",
+});
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500"],
+  variable: "--font-plex-mono",
+});
+
 export const metadata: Metadata = {
   title: "LOS — Loan Origination System",
   description:
@@ -53,7 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${sen.variable} ${plusJakarta.variable} ${dmSans.variable} ${jetbrainsMono.variable}`}
+      className={`${sen.variable} ${plusJakarta.variable} ${dmSans.variable} ${jetbrainsMono.variable} ${publicSans.variable} ${plexMono.variable}`}
     >
       <head>
         <script
@@ -62,6 +77,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               try {
                 var t = localStorage.getItem('los-theme');
                 if (t === 'dark') document.documentElement.classList.add('dark');
+                // Finix theme (bank-admin portal): dark default, persisted under
+                // 'finix.theme'. Set data-theme pre-paint to avoid a flash.
+                var f = localStorage.getItem('finix.theme');
+                document.documentElement.setAttribute('data-theme', f === 'light' ? 'light' : 'dark');
               } catch(e) {}
             })();`,
           }}

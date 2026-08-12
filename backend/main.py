@@ -208,6 +208,12 @@ app.include_router(guarantor_router, prefix="/api/guarantor", tags=["guarantor"]
 from lrs.routes import router as lrs_router  # noqa: E402
 app.include_router(lrs_router, prefix="/api/lrs", tags=["lrs"])
 
+# Bank admin portal — self-serve, bank-scoped (design_handoff_finix Job 1).
+# Schema in migration_v26_bank_admin.sql; JWTs are the standard bank_user token
+# and the local get_bank_admin dependency requires role='bank_admin'.
+from routers.bank_admin import router as bank_admin_router  # noqa: E402
+app.include_router(bank_admin_router)
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
@@ -1822,8 +1828,10 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     email = user.email.strip() if user.email else None
     if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
         raise HTTPException(status_code=400, detail="Enter a valid email address")
-    if user.role not in ("bank_officer", "bank_supervisor"):
-        raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
+    # Platform console (VGIPL) may provision the bank_admin who then runs the
+    # bank's self-serve portal (design_handoff_finix Job 1, Decision A).
+    if user.role not in ("bank_admin", "bank_officer", "bank_supervisor"):
+        raise HTTPException(status_code=400, detail="Role must be 'bank_admin', 'bank_officer' or 'bank_supervisor'")
     # Check for duplicate username
     existing = await db_pool.fetchrow("SELECT id FROM bank_users WHERE username = $1", username)
     if existing:
@@ -1855,8 +1863,8 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
     if user.full_name is not None:
         updates["full_name"] = user.full_name
     if user.role is not None:
-        if user.role not in ("bank_officer", "bank_supervisor"):
-            raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
+        if user.role not in ("bank_admin", "bank_officer", "bank_supervisor"):
+            raise HTTPException(status_code=400, detail="Role must be 'bank_admin', 'bank_officer' or 'bank_supervisor'")
         updates["role"] = user.role
     if user.is_active is not None:
         updates["is_active"] = user.is_active

@@ -37,18 +37,37 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 INVITE_TTL_DAYS = 7
 
 
-# ── pool/secret access (matches routers/vendors.py) ─────────────────────────
+# ── pool/secret access ──────────────────────────────────────────────────────
+# Resolve the main module WITHOUT assuming how the process was launched. Under
+# `uvicorn main:app` the module is `main`; under `python main.py` it is
+# `__main__`. Those are two DIFFERENT module objects, and the startup event
+# (which sets db_pool) only ran on whichever one owns `app`. Prefer __main__
+# when it carries the pool, so both launch styles work — vendors.py's plain
+# `import main` breaks under `python main.py`, which is what bit us locally.
+import sys as _sys
+
+
+def _main_mod():
+    for name in ("__main__", "main"):
+        m = _sys.modules.get(name)
+        if m is not None and getattr(m, "db_pool", None) is not None:
+            return m
+    # Fall back to the importable module even if its pool is None, so callers
+    # get a consistent 503 rather than an AttributeError.
+    import main as _m
+    return _m
+
+
 def _db() -> asyncpg.Pool:
-    import main as _main
-    pool = getattr(_main, "db_pool", None)
+    pool = getattr(_main_mod(), "db_pool", None)
     if pool is None:
         raise HTTPException(503, "database pool not ready")
     return pool
 
 
 def _jwt_secret() -> str:
-    import main as _main
-    return _main.JWT_SECRET
+    m = _main_mod()
+    return getattr(m, "JWT_SECRET", None) or __import__("main").JWT_SECRET
 
 
 def _now() -> datetime:
@@ -232,7 +251,7 @@ async def list_users(
 @router.post("/users")
 async def create_user(body: CreateUser, admin: dict = Depends(get_bank_admin)):
     """Create an account directly (no invite email). Returns the temp password once."""
-    from main import generate_random_password
+    generate_random_password = _main_mod().generate_random_password
     bank_id = admin["bank_id"]
     if body.role not in STANDARD_ROLES:
         raise HTTPException(400, "Direct creation supports officer or supervisor only.")

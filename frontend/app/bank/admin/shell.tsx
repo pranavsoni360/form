@@ -6,7 +6,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { getAccessToken, getCurrentUser, logout } from "@/lib/auth";
+import { getAccessToken, logout } from "@/lib/auth";
 import { getMe } from "@/lib/api/bank";
 import { FinixShell, type FinixNavItem, type SidebarAction } from "@/components/finix";
 
@@ -39,9 +39,10 @@ export function BankAdminShell({
       router.replace("/bank/login");
       return;
     }
-    // Optimistic identity from cached user; confirm role via /me.
-    const cached = getCurrentUser("bank");
-    if (cached) setMe(cached);
+    // Role is confirmed server-side via /me before ANY admin chrome renders —
+    // a supervisor/officer must never see the admin portal, even for a frame.
+    // We deliberately do NOT seed from the cached user here (that could flash
+    // the admin shell to a non-admin whose cache says otherwise).
     getMe(token)
       .then((u) => {
         if (u.role !== "bank_admin") {
@@ -57,7 +58,8 @@ export function BankAdminShell({
       });
   }, [router]);
 
-  if (!ready && !me) {
+  // Never render admin chrome until the bank_admin role is server-confirmed.
+  if (!ready) {
     return (
       <div className="finix-root grid min-h-screen place-items-center text-[13px] text-fx-text3">
         Loading…

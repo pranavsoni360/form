@@ -220,3 +220,201 @@
    pushing the layout wide on small screens. Data tables opt into horizontal
    scroll via their own overflow-x-auto containers (per component). */
 img, svg, video, canvas { max-width: 100%; height: auto; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FINIX design language (design_handoff_finix/README.md)
+
+   A SELF-CONTAINED oklch token layer for the new bank-admin portal and, later,
+   the migrated dashboards. Deliberately isolated from the legacy shadcn/HSL
+   system above:
+
+   - Tokens are `--fx-*`, never the shadcn `--background` etc.
+   - Theme is driven by `data-theme` on <html> (dark | light), NOT the `.dark`
+     class. Dark is the default (bare `.finix-root` = dark), so a page with no
+     data-theme set still renders dark per the spec.
+   - Scoped under `.finix-root` so these variables only exist inside a Finix
+     shell; legacy pages are completely unaffected.
+   - Values transcribed EXACTLY from the README colour tables — do not round.
+   ════════════════════════════════════════════════════════════════════════ */
+
+.finix-root,
+[data-theme="dark"] .finix-root {
+  --fx-bg:            oklch(0.145 0.02 265);
+  --fx-surface:       oklch(0.185 0.02 265);
+  --fx-surface2:      oklch(0.225 0.022 265);
+  --fx-border:        oklch(0.27 0.02 265);
+  --fx-border-strong: oklch(0.34 0.02 265);
+  --fx-text:          oklch(0.97 0.005 265);
+  --fx-text2:         oklch(0.75 0.01 265);
+  --fx-text3:         oklch(0.58 0.015 265);
+  --fx-accent:        oklch(0.62 0.19 265);
+  --fx-green:         oklch(0.72 0.13 165);
+  --fx-amber:         oklch(0.78 0.13 75);
+  --fx-orange:        oklch(0.72 0.16 50);
+  --fx-red:           oklch(0.65 0.19 25);
+
+  --fx-accent-grad:   linear-gradient(180deg, oklch(0.66 0.19 265), oklch(0.54 0.20 265));
+  --fx-accent-glow:   0 8px 24px oklch(0.55 0.20 265 / 0.45);
+  --fx-elevation:     0 24px 60px oklch(0.1 0.02 265 / 0.5);
+
+  /* Pill/tag tint fills — status colour at 16% alpha in dark. Precomputed per
+     token so we don't depend on the oklch(from …) relative-colour syntax. */
+  --fx-accent-tint:  oklch(0.62 0.19 265 / 0.16);
+  --fx-green-tint:   oklch(0.72 0.13 165 / 0.16);
+  --fx-amber-tint:   oklch(0.78 0.13 75  / 0.16);
+  --fx-orange-tint:  oklch(0.72 0.16 50  / 0.16);
+  --fx-red-tint:     oklch(0.65 0.19 25  / 0.16);
+  color-scheme: dark;
+}
+
+[data-theme="light"] .finix-root {
+  --fx-bg:            oklch(0.955 0.005 265);
+  --fx-surface:       #ffffff;
+  --fx-surface2:      oklch(0.972 0.004 265);
+  --fx-border:        oklch(0.90 0.006 265);
+  --fx-border-strong: oklch(0.83 0.008 265);
+  --fx-text:          oklch(0.20 0.02 265);
+  --fx-text2:         oklch(0.46 0.015 265);
+  --fx-text3:         oklch(0.60 0.012 265);
+  --fx-accent:        oklch(0.52 0.20 265);
+  --fx-green:         oklch(0.55 0.13 165);
+  --fx-amber:         oklch(0.62 0.13 75);
+  --fx-orange:        oklch(0.60 0.16 50);
+  --fx-red:           oklch(0.55 0.17 25);
+
+  --fx-accent-grad:   linear-gradient(180deg, oklch(0.60 0.20 265), oklch(0.50 0.20 265));
+  --fx-accent-glow:   0 6px 18px oklch(0.52 0.20 265 / 0.28);
+  --fx-elevation:     0 24px 60px oklch(0.1 0.02 265 / 0.5);
+
+  /* Light: status colour at 10% alpha. */
+  --fx-accent-tint:  oklch(0.52 0.20 265 / 0.10);
+  --fx-green-tint:   oklch(0.55 0.13 165 / 0.10);
+  --fx-amber-tint:   oklch(0.62 0.13 75  / 0.10);
+  --fx-orange-tint:  oklch(0.60 0.16 50  / 0.10);
+  --fx-red-tint:     oklch(0.55 0.17 25  / 0.10);
+  color-scheme: light;
+}
+
+/* Base surface + type for anything inside a Finix shell. tabular-nums so every
+   figure aligns; Public Sans body, IBM Plex Mono for the .fx-mono helper. */
+.finix-root {
+  background: var(--fx-bg);
+  color: var(--fx-text);
+  font-family: var(--font-public-sans), "Helvetica Neue", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+.finix-root .fx-mono {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+/* The spec allows only 400 and 500. Neutralise any stray bold from cascade. */
+.finix-root :where(h1, h2, h3, h4, h5, h6, b, strong) { font-weight: 500; }
+
+/* Score ring + pillar bars animate on mount (900ms ease-out); timers tick at
+   1s and are JS-driven. Respect reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .finix-root * { transition-duration: 0.001ms !important; animation-duration: 0.001ms !important; }
+}
+
+/* ── Refined interaction layer ────────────────────────────────────────────
+   Subtle, premium micro-interactions on the shared controls. One easing curve
+   and one timing so everything moves as a set. Soft hover lift, gentle glow on
+   the primary, crisp keyboard focus rings. Reduced-motion already neutralises
+   the transitions via the block above. */
+
+.finix-root {
+  --fx-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --fx-dur: 160ms;
+  --fx-focus: 0 0 0 2px var(--fx-bg), 0 0 0 4px oklch(0.62 0.19 265 / 0.55);
+}
+
+/* Base button behaviour — used by every fx button variant. */
+.fx-btn {
+  transition: transform var(--fx-dur) var(--fx-ease),
+              box-shadow var(--fx-dur) var(--fx-ease),
+              background var(--fx-dur) var(--fx-ease),
+              color var(--fx-dur) var(--fx-ease),
+              opacity var(--fx-dur) var(--fx-ease);
+  will-change: transform;
+  outline: none;
+  user-select: none;
+}
+.fx-btn:focus-visible { box-shadow: var(--fx-focus); }
+.fx-btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
+
+/* Primary — accent gradient. Lifts on hover with a stronger glow; presses in. */
+.fx-btn-primary {
+  background: var(--fx-accent-grad);
+  box-shadow: var(--fx-accent-glow);
+}
+.fx-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px oklch(0.55 0.20 265 / 0.55);
+  filter: brightness(1.05);
+}
+.fx-btn-primary:focus-visible { box-shadow: var(--fx-accent-glow), var(--fx-focus); }
+
+/* Quiet — surface chip. Hover raises the surface + a hairline ring, tiny lift. */
+.fx-btn-quiet {
+  background: var(--fx-surface2);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.fx-btn-quiet:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--fx-surface);
+  box-shadow: inset 0 0 0 1px var(--fx-border), 0 4px 14px oklch(0.1 0.02 265 / 0.28);
+}
+
+/* Danger — quiet red. Fill deepens on hover; no colour shift elsewhere. */
+.fx-btn-danger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px var(--fx-red), 0 4px 14px oklch(0.55 0.19 25 / 0.28);
+}
+
+/* Sidebar action card — gentle lift + deepened glow on hover. */
+.fx-action-card {
+  transition: transform var(--fx-dur) var(--fx-ease), box-shadow var(--fx-dur) var(--fx-ease), filter var(--fx-dur) var(--fx-ease);
+}
+.fx-action-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px oklch(0.55 0.20 265 / 0.5);
+  filter: brightness(1.04);
+}
+.fx-action-card:active { transform: translateY(0) scale(0.995); }
+
+/* Filter pills / row-menu items / icon buttons — quick, quiet hover. */
+.fx-tap { transition: background var(--fx-dur) var(--fx-ease), color var(--fx-dur) var(--fx-ease), box-shadow var(--fx-dur) var(--fx-ease); outline: none; }
+.fx-tap:focus-visible { box-shadow: var(--fx-focus); }
+
+/* Table row — subtle tint on hover already set inline; add a soft left accent
+   cue for clickable rows without shifting layout. */
+.fx-row-tap { transition: background var(--fx-dur) var(--fx-ease), box-shadow var(--fx-dur) var(--fx-ease); }
+
+/* Popover entrance — small rise + fade + scale, quick and quiet. */
+@keyframes fx-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.fx-menu { animation: fx-pop-in 140ms var(--fx-ease); transform-origin: top right; }
+
+/* Modal / side-panel entrance. */
+@keyframes fx-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fx-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fx-panel-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.fx-overlay { animation: fx-overlay-in 160ms var(--fx-ease); }
+.fx-modal { animation: fx-modal-in 200ms var(--fx-ease); }
+.fx-panel { animation: fx-panel-in 220ms var(--fx-ease); }
+
+/* Inputs / textareas inside a Finix shell — smooth focus ring. */
+.finix-root input:focus-visible,
+.finix-root textarea:focus-visible,
+.finix-root select:focus-visible {
+  transition: box-shadow var(--fx-dur) var(--fx-ease);
+}

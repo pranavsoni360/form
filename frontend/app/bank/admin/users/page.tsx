@@ -1,0 +1,652 @@
+"use client";
+
+// Bank admin — users (design_handoff_finix §3). Seat meter, metrics, users
+// table with status-aware row menu, filter pills, invite side panel, create
+// modal (validation + credential panel), suspend confirmation. Empty / loading
+// / error states all shipped.
+
+import * as React from "react";
+import { BankAdminShell } from "../shell";
+import {
+  Toolbar,
+  PeriodChip,
+  Breadcrumb,
+  PageTitle,
+  FilterPills,
+  MetricCard,
+  Card,
+  CardHeader,
+  Pill,
+  Button,
+  Table,
+  TwoLine,
+  RowMenu,
+  SplitBar,
+  Modal,
+  SidePanel,
+  OverlayHeader,
+  EmptyState,
+  LoadingState,
+  ErrorState,
+  formatDate,
+  type Column,
+  type MenuItem,
+} from "@/components/finix";
+import {
+  listUsers,
+  createUser,
+  suspendUser,
+  restoreUser,
+  deleteUser,
+  inviteUser,
+  resendInvite,
+  revokeInvite,
+  type UsersResponse,
+  type BankUser,
+  type PendingInvite,
+  type CreatedUser,
+} from "@/lib/api/bankAdmin";
+
+type FilterKey = "all" | "active" | "invited" | "suspended";
+
+const ROLE_LABEL: Record<string, string> = {
+  bank_admin: "Bank admin",
+  bank_officer: "Officer",
+  bank_supervisor: "Supervisor",
+  custom: "Custom",
+};
+
+// A users-table row is either a real user or a pending invite; we unify them.
+type Row =
+  | { kind: "user"; u: BankUser }
+  | { kind: "invite"; i: PendingInvite };
+
+function initials(name: string) {
+  const p = name.trim().split(/\s+/);
+  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "?";
+}
+
+function lastActive(u: BankUser): string {
+  if (u.status === "suspended") return "suspended";
+  if (!u.last_login_at) return "never signed in";
+  return `last active ${formatDate(u.last_login_at)}`;
+}
+
+export default function UsersPage() {
+  const [data, setData] = React.useState<UsersResponse | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [filter, setFilter] = React.useState<FilterKey>("all");
+
+  const [invite, setInvite] = React.useState(false);
+  const [create, setCreate] = React.useState(false);
+  const [suspendTarget, setSuspendTarget] = React.useState<BankUser | null>(null);
+
+  const load = React.useCallback(() => {
+    setLoading(true);
+    setError(null);
+    listUsers()
+      .then(setData)
+      .catch((e) => setError(e?.message || "Could not load users."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  React.useEffect(load, [load]);
+
+  const rows: Row[] = React.useMemo(() => {
+    if (!data) return [];
+    const users: Row[] = data.users.map((u) => ({ kind: "user", u }));
+    const invites: Row[] = data.pending_invites.map((i) => ({ kind: "invite", i }));
+    const all = [...users, ...invites];
+    if (filter === "all") return all;
+    if (filter === "invited") return all.filter((r) => (r.kind === "invite") || r.u.status === "invited");
+    return all.filter((r) => r.kind === "user" && r.u.status === filter);
+  }, [data, filter]);
+
+  const seats = data?.seats;
+  const counts = data?.counts;
+
+  async function act(p: Promise<unknown>, onErr = "Action failed") {
+    try {
+      await p;
+      load();
+    } catch (e: any) {
+      alert(e?.message || onErr); // simple surfacing; inline toasts arrive with Job 2
+    }
+  }
+
+  const userMenu = (u: BankUser): MenuItem[] => {
+    if (u.status === "suspended") {
+      return [
+        { label: "Restore access", onClick: () => act(restoreUser(u.id)) },
+        { label: "Delete user", onClick: () => act(deleteUser(u.id)), destructive: true },
+      ];
+    }
+    return [
+      { label: "Change role", onClick: () => {} },
+      { label: "Change branch", onClick: () => {} },
+      { label: "View activity", onClick: () => {} },
+      { label: "Suspend user", onClick: () => setSuspendTarget(u), warn: true },
+      { label: "Delete user", onClick: () => act(deleteUser(u.id)), destructive: true },
+    ];
+  };
+
+  const inviteMenu = (i: PendingInvite): MenuItem[] => [
+    {
+      label: "Resend invite",
+      onClick: () =>
+        act(
+          resendInvite(i.id).then((r) => {
+            if (!r.email_sent) navigator.clipboard?.writeText(r.invite_url);
+          }),
+        ),
+    },
+    { label: "Revoke invite", onClick: () => act(revokeInvite(i.id)), destructive: true },
+  ];
+
+  const cols: Column<Row>[] = [
+    {
+      key: "name",
+      header: "Name",
+      render: (r) =>
+        r.kind === "user" ? (
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px] bg-fx-surface text-[11px] text-fx-text2">
+              {initials(r.u.full_name)}
+            </span>
+            <TwoLine
+              primary={
+                <span className={r.u.status === "suspended" ? "text-fx-text3" : undefined}>
+                  {r.u.full_name}
+                  {r.u.id === data?.self_id && <span className="ml-1.5 text-[11px] text-fx-text3">you</span>}
+                </span>
+              }
+              secondary={<span className="fx-mono">{r.u.username}</span>}
+            />
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px] bg-fx-surface text-[11px] text-fx-text2">
+              {initials(r.i.full_name)}
+            </span>
+            <TwoLine primary={r.i.full_name} secondary={<span className="fx-mono">{r.i.email}</span>} />
+          </div>
+        ),
+    },
+    {
+      key: "role",
+      header: "Role",
+      render: (r) => {
+        const role = r.kind === "user" ? r.u.role : r.i.role;
+        const custom = r.kind === "user" ? r.u.custom_role_label : r.i.custom_role_label;
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="text-[13px] text-fx-text2">{custom || ROLE_LABEL[role] || role}</span>
+            {role === "custom" && <Pill tone="neutral" dot={false}>custom</Pill>}
+          </span>
+        );
+      },
+    },
+    {
+      key: "branch",
+      header: "Branch",
+      render: (r) => <span className="text-[13px] text-fx-text2">{(r.kind === "user" ? r.u.branch : r.i.branch) || "—"}</span>,
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (r) =>
+        r.kind === "invite" ? (
+          <TwoLine
+            primary={<Pill tone="accent">Invited</Pill>}
+            secondary={`expires ${formatDate(r.i.expires_at)}`}
+          />
+        ) : r.u.status === "active" ? (
+          <TwoLine primary={<Pill tone="green">Active</Pill>} secondary={lastActive(r.u)} />
+        ) : r.u.status === "invited" ? (
+          <Pill tone="accent">Invited</Pill>
+        ) : (
+          <TwoLine primary={<Pill tone="neutral">Suspended</Pill>} secondary="seat freed" />
+        ),
+    },
+    {
+      key: "menu",
+      header: "",
+      align: "center",
+      width: 44,
+      render: (r) => <RowMenu items={r.kind === "user" ? userMenu(r.u) : inviteMenu(r.i)} />,
+    },
+  ];
+
+  const filterOptions: { key: FilterKey; label: string; count?: number }[] = [
+    { key: "all", label: "All", count: counts?.all },
+    { key: "active", label: "Active", count: counts?.active },
+    { key: "invited", label: "Invited", count: counts?.invited },
+    { key: "suspended", label: "Suspended", count: counts?.suspended },
+  ];
+
+  return (
+    <BankAdminShell
+      action={{
+        title: "Invite user",
+        subtitle: seats ? `${seats.free} free seats` : undefined,
+        onClick: () => setInvite(true),
+      }}
+    >
+      <Toolbar
+        left={
+          <>
+            <PeriodChip>01 Aug – 31 Aug 2026</PeriodChip>
+            <Breadcrumb>users</Breadcrumb>
+          </>
+        }
+        right={
+          <>
+            <Button variant="quiet" onClick={() => setInvite(true)}>Invite user</Button>
+            <Button variant="primary" onClick={() => setCreate(true)}>Create user</Button>
+          </>
+        }
+      />
+      <PageTitle
+        title="Users"
+        subtitle="Manage your bank's officers and supervisors. Suspending frees the seat immediately and keeps history; deleting removes access permanently but the audit record survives."
+      />
+
+      {/* Metric row — seat meter card is the wider first cell. */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <Card className="p-[14px] md:col-span-1">
+          <div className="text-[11px] text-fx-text3">Seats</div>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="text-[26px] font-medium leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
+              {seats ? `${seats.used} of ${seats.cap}` : "—"}
+            </span>
+            {seats && <span className="text-[12px] text-fx-text2">· {seats.free} free</span>}
+          </div>
+          {seats && (
+            <div className="mt-2.5">
+              <SplitBar filled={seats.cap ? seats.active / seats.cap : 0} outlined={seats.cap ? seats.invited / seats.cap : 0} />
+            </div>
+          )}
+          <div className="mt-2 text-[11px] text-fx-text3">
+            {seats ? `${seats.active} active · ${seats.invited} invited · suspended users hold no seat` : ""}
+          </div>
+          <div className="mt-1 text-[11px] text-fx-text3">
+            Seat cap is set by Virtual Galaxy under your contract; everything else on this page is yours to change.
+          </div>
+        </Card>
+        <MetricCard label="Active users" value={counts?.active ?? "—"} note="signed-in accounts" />
+        <MetricCard label="Pending invites" value={counts?.invited ?? "—"} note="awaiting acceptance" />
+        <MetricCard
+          label="Free seats"
+          value={seats?.free ?? "—"}
+          ring={seats && seats.free === 0 ? "amber" : "none"}
+          note={seats && seats.free === 0 ? "at capacity" : "available to assign"}
+        />
+      </div>
+
+      <Card>
+        <CardHeader
+          title="Users"
+          qualifier={counts ? `${counts.all} total` : undefined}
+          right={<FilterPills options={filterOptions} value={filter} onChange={setFilter} />}
+        />
+        {loading ? (
+          <LoadingState label="Loading users…" rows={6} />
+        ) : error ? (
+          <ErrorState title="Could not load users" detail={error} onRetry={load} />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            title="No users yet"
+            description="Invite your first officer or supervisor, or create an account directly."
+            action={<Button variant="primary" onClick={() => setCreate(true)}>Create user</Button>}
+            secondary={<Button variant="quiet" onClick={() => setInvite(true)}>Invite user</Button>}
+          />
+        ) : (
+          <Table columns={cols} rows={rows} rowKey={(r) => (r.kind === "user" ? r.u.id : `inv-${r.i.id}`)} />
+        )}
+      </Card>
+
+      {invite && (
+        <InvitePanel
+          freeSeats={seats?.free ?? 0}
+          onClose={() => setInvite(false)}
+          onDone={() => {
+            setInvite(false);
+            load();
+          }}
+        />
+      )}
+      {create && (
+        <CreateUserModal
+          onClose={() => setCreate(false)}
+          onCreated={() => load()}
+        />
+      )}
+      {suspendTarget && (
+        <SuspendModal
+          user={suspendTarget}
+          onClose={() => setSuspendTarget(null)}
+          onDone={() => {
+            setSuspendTarget(null);
+            load();
+          }}
+        />
+      )}
+    </BankAdminShell>
+  );
+}
+
+// ── Invite side panel ────────────────────────────────────────────────────────
+const ROLE_OPTIONS: { value: any; label: string; custom?: boolean }[] = [
+  { value: "bank_officer", label: "Officer" },
+  { value: "bank_supervisor", label: "Supervisor" },
+  { value: "bank_admin", label: "Bank admin" },
+  { value: "custom", label: "Recovery caller", custom: true },
+  { value: "custom", label: "Auditor, read only", custom: true },
+];
+
+function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClose: () => void; onDone: () => void }) {
+  const [email, setEmail] = React.useState("");
+  const [fullName, setFullName] = React.useState("");
+  const [employeeId, setEmployeeId] = React.useState("");
+  const [roleIdx, setRoleIdx] = React.useState(0);
+  const [branch, setBranch] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<{ url: string; sent: boolean } | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    const opt = ROLE_OPTIONS[roleIdx];
+    try {
+      const r = await inviteUser({
+        email,
+        full_name: fullName,
+        role: opt.value,
+        custom_role_label: opt.custom ? opt.label : undefined,
+        branch: branch || undefined,
+        employee_id: employeeId || undefined,
+      });
+      setResult({ url: r.invite_url, sent: r.email_sent });
+    } catch (e: any) {
+      setErr(e?.message || "Could not send the invite.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SidePanel open onClose={onClose} width={420}>
+      <OverlayHeader
+        title="Invite user"
+        subtitle={`This invite uses 1 of your ${freeSeats} free seats. The link expires in 7 days; the seat is held meanwhile.`}
+        onClose={onClose}
+      />
+      {result ? (
+        <div className="p-5">
+          <div className="rounded-[14px] p-4" style={{ background: "var(--fx-green-tint)", boxShadow: "inset 0 0 0 1px var(--fx-green)" }}>
+            <div className="text-[13px] font-medium" style={{ color: "var(--fx-green)" }}>
+              ✓ Invite {result.sent ? "sent" : "created"}
+            </div>
+            <p className="mt-1 text-[12px] text-fx-text2">
+              {result.sent
+                ? `An email with the invite link was sent to ${email}.`
+                : "Email isn't configured yet — copy the link below and hand it over."}
+            </p>
+            {!result.sent && (
+              <div className="mt-2 break-all rounded-[10px] bg-fx-surface2 p-2 text-[11px] fx-mono text-fx-text2">{result.url}</div>
+            )}
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            {!result.sent && (
+              <Button variant="quiet" onClick={() => navigator.clipboard?.writeText(result.url)}>Copy link</Button>
+            )}
+            <Button variant="primary" onClick={onDone}>Done</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 p-5">
+          <Field label="Work email" note="Use the user's bank email domain.">
+            <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@azsb.co.in" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Full name">
+              <input className={inputCls} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Sneha Deshmukh" />
+            </Field>
+            <Field label="Employee ID">
+              <input className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} placeholder="AZ-1187" />
+            </Field>
+          </div>
+          <Field label="Role">
+            <div className="flex flex-col gap-1.5">
+              {ROLE_OPTIONS.map((o, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setRoleIdx(i)}
+                  className="flex items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[13px]"
+                  style={
+                    roleIdx === i
+                      ? { background: "var(--fx-accent-tint)", boxShadow: "inset 0 0 0 1px var(--fx-accent)", color: "var(--fx-text)" }
+                      : { background: "var(--fx-surface2)", color: "var(--fx-text2)" }
+                  }
+                >
+                  {o.label}
+                  {o.custom && <Pill tone="neutral" dot={false}>custom</Pill>}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Branch">
+            <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Camp road" />
+          </Field>
+          {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+          <div className="mt-1 flex justify-end gap-2">
+            <Button variant="quiet" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" onClick={submit} disabled={busy}>{busy ? "Sending…" : "Send invite"}</Button>
+          </div>
+        </div>
+      )}
+    </SidePanel>
+  );
+}
+
+// ── Create user modal (validation + credential panel) ───────────────────────
+const NAME_RE = /^[A-Za-z ]+$/;
+const USERNAME_RE = /^[a-z0-9_]{3,50}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [role, setRole] = React.useState<"bank_officer" | "bank_supervisor">("bank_officer");
+  const [fullName, setFullName] = React.useState("");
+  const [username, setUsername] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [branch, setBranch] = React.useState("");
+  const [touched, setTouched] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [serverErr, setServerErr] = React.useState<string | null>(null);
+  const [created, setCreated] = React.useState<CreatedUser | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  const errs = {
+    fullName: NAME_RE.test(fullName.trim()) ? null : "Letters and spaces only, no digits or symbols.",
+    username: USERNAME_RE.test(username.trim()) ? null : "Lowercase letters, numbers and underscore only, 3 to 50 characters.",
+    email: !email || EMAIL_RE.test(email.trim()) ? null : "Enter a valid email address, for example name@azsb.co.in.",
+  };
+  const valid = !errs.fullName && !errs.username && !errs.email;
+
+  async function submit() {
+    setTouched(true);
+    if (!valid) return;
+    setBusy(true);
+    setServerErr(null);
+    try {
+      const { user } = await createUser({ full_name: fullName.trim(), username: username.trim(), email: email.trim() || undefined, role, branch: branch || undefined });
+      setCreated(user);
+      onCreated();
+    } catch (e: any) {
+      setServerErr(e?.message || "Could not create the user.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function reset() {
+    setCreated(null);
+    setFullName(""); setUsername(""); setEmail(""); setBranch(""); setTouched(false); setCopied(false);
+  }
+
+  return (
+    <Modal open onClose={onClose} width={520}>
+      <OverlayHeader title="Create user" subtitle="Creates the account directly, no invite email." onClose={onClose} />
+      {created ? (
+        <div className="p-5">
+          <div className="rounded-[14px] p-4" style={{ background: "var(--fx-green-tint)", boxShadow: "inset 0 0 0 1px var(--fx-green)" }}>
+            <div className="text-[13px] font-medium" style={{ color: "var(--fx-green)" }}>
+              ✓ {created.full_name} created as {ROLE_LABEL[created.role].toLowerCase()}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[11px] text-fx-text3">Username</div>
+                <div className="fx-mono text-[14px] text-fx-text">{created.username}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-fx-text3">Temporary password</div>
+                <div className="fx-mono text-[14px] text-fx-text">{created.generated_password}</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(`Username: ${created.username}\nPassword: ${created.generated_password}`);
+                setCopied(true);
+              }}
+              className="mt-3 inline-flex h-[30px] items-center rounded-[10px] px-3 text-[13px] font-medium"
+              style={{ background: "var(--fx-green-tint)", color: "var(--fx-green)" }}
+            >
+              {copied ? "Copied" : "Copy credentials"}
+            </button>
+            <p className="mt-3 text-[11px] text-fx-text3">
+              The password is shown only once. Copy it now and hand it over in person; the user must change it at first sign-in.
+            </p>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="quiet" onClick={reset}>Create another</Button>
+            <Button variant="primary" onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 p-5">
+          <div className="grid grid-cols-2 gap-3">
+            {(["bank_officer", "bank_supervisor"] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRole(r)}
+                className="rounded-[10px] px-3 py-3 text-left"
+                style={
+                  role === r
+                    ? { background: "var(--fx-accent-tint)", boxShadow: "inset 0 0 0 1px var(--fx-accent)" }
+                    : { background: "var(--fx-surface2)" }
+                }
+              >
+                <div className="flex items-center gap-1.5 text-[13px] text-fx-text">
+                  {role === r && <span style={{ color: "var(--fx-accent)" }}>◉</span>}
+                  {ROLE_LABEL[r]}
+                </div>
+                <div className="mt-0.5 text-[11px] text-fx-text3">
+                  {r === "bank_officer" ? "Own queue, approve and reject" : "Branch approvals and disbursal"}
+                </div>
+              </button>
+            ))}
+          </div>
+          <Field label="Full name" error={touched ? errs.fullName : null}>
+            <input className={inputCls} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Sneha Deshmukh" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Username" error={touched ? errs.username : null}>
+              <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="sneha_d" />
+            </Field>
+            <Field label="Branch">
+              <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Camp road" />
+            </Field>
+          </div>
+          <Field label="Email (optional)" error={touched ? errs.email : null}>
+            <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="sneha@azsb.co.in" />
+          </Field>
+          {serverErr && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{serverErr}</p>}
+          <div className="mt-1 flex justify-end gap-2">
+            <Button variant="quiet" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create user"}</Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── Suspend confirmation ─────────────────────────────────────────────────────
+function SuspendModal({ user, onClose, onDone }: { user: BankUser; onClose: () => void; onDone: () => void }) {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  async function go() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await suspendUser(user.id);
+      onDone();
+    } catch (e: any) {
+      setErr(e?.message || "Could not suspend the user.");
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal open onClose={onClose} width={440}>
+      <OverlayHeader title={`Suspend ${user.full_name}?`} onClose={onClose} />
+      <div className="p-5">
+        <ul className="space-y-1.5 text-[13px] text-fx-text2">
+          <li>· Immediate loss of access; any live call ends.</li>
+          <li>· The seat is freed for another user.</li>
+          <li>· Their files return to the branch queue.</li>
+        </ul>
+        <div className="mt-3 rounded-[10px] bg-fx-surface2 p-3 text-[12px] text-fx-text3">
+          {ROLE_LABEL[user.role]} · {user.branch || "no branch"} · {lastActive(user)}. Suspending is reversible — you can restore access later.
+        </div>
+        {err && <p className="mt-2 text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="quiet" onClick={onClose}>Keep active</Button>
+          <Button variant="danger" onClick={go} disabled={busy}>{busy ? "Suspending…" : "Suspend user"}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── small form helpers ───────────────────────────────────────────────────────
+const inputCls =
+  "w-full rounded-[10px] bg-fx-surface2 px-3 py-2 text-[13px] text-fx-text outline-none placeholder:text-fx-text3 focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]";
+
+function Field({
+  label,
+  note,
+  error,
+  children,
+}: {
+  label: string;
+  note?: string;
+  error?: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <div className="mb-1 text-[11px] text-fx-text3">{label}</div>
+      <div className={error ? "rounded-[10px] shadow-[inset_0_0_0_1px_var(--fx-red)]" : undefined}>{children}</div>
+      {error ? (
+        <div className="mt-1 text-[11px]" style={{ color: "var(--fx-red)" }}>{error}</div>
+      ) : note ? (
+        <div className="mt-1 text-[11px] text-fx-text3">{note}</div>
+      ) : null}
+    </label>
+  );
+}

@@ -1,0 +1,22 @@
+-- ============================================================================
+--  migration_v34_dedup_status_log.sql   (task #5, part 1 — stop double logging)
+--
+--  Every loan-status change was logged TWICE into status_transitions:
+--    1. record_transition() — the app helper, called at all 13 decision sites,
+--       records the change WITH the actor (changed_by_type / changed_by_id).
+--    2. trg_loan_apps_status_log (migration_v10) — an AFTER UPDATE trigger that
+--       records the same change with a NULL / 'system' actor.
+--  Result: two rows per change, one mis-attributed to system, and the officer UI
+--  rendered both. The app helper is the authoritative, actor-attributed writer
+--  (verified: /api/admin/review, officer/supervisor approve/reject, disburse,
+--  cancel all call record_transition), so the trigger is pure duplication.
+--
+--  Drop the trigger; keep record_transition as the single source of truth. The
+--  function fn_log_loan_app_status_change is left in place (harmless) in case a
+--  future design wants a DB-side backstop with session-variable actor capture.
+--
+--  NOTE: this does NOT touch the existing duplicate rows already in the table;
+--  it only stops new duplicates. (Historic cleanup can be done separately.)
+-- ============================================================================
+
+DROP TRIGGER IF EXISTS trg_loan_apps_status_log ON loan_applications;

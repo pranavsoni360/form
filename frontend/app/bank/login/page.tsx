@@ -114,7 +114,8 @@ export default function BankLoginPage() {
       const response = await bankLogin(username, pwRef.current);
       setAccessToken('bank', response.token);
       setCurrentUser('bank', response.user);
-      router.push('/bank/dashboard');
+      // Bank admins land in the admin portal; officers/supervisors on the queue.
+      router.push(response.user?.role === 'bank_admin' ? '/bank/admin/users' : '/bank/dashboard');
     } catch (err: any) {
       setError(err.message || 'Invalid credentials. Please try again.');
     } finally {

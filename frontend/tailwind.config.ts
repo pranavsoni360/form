@@ -106,6 +106,24 @@ const config: Config = {
           section: "#161b27",
           bg: "#0f1320",
         },
+        // ── Finix design-language tokens (oklch, see globals.css .finix-root).
+        //    Namespaced `fx-*` so they never collide with the shadcn tokens;
+        //    every value is `var(--fx-*)` resolved per data-theme. ──
+        fx: {
+          bg: "var(--fx-bg)",
+          surface: "var(--fx-surface)",
+          surface2: "var(--fx-surface2)",
+          border: "var(--fx-border)",
+          "border-strong": "var(--fx-border-strong)",
+          text: "var(--fx-text)",
+          text2: "var(--fx-text2)",
+          text3: "var(--fx-text3)",
+          accent: "var(--fx-accent)",
+          green: "var(--fx-green)",
+          amber: "var(--fx-amber)",
+          orange: "var(--fx-orange)",
+          red: "var(--fx-red)",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -208,6 +208,12 @@ app.include_router(guarantor_router, prefix="/api/guarantor", tags=["guarantor"]
 from lrs.routes import router as lrs_router  # noqa: E402
 app.include_router(lrs_router, prefix="/api/lrs", tags=["lrs"])
 
+# Bank admin portal — self-serve, bank-scoped (design_handoff_finix Job 1).
+# Schema in migration_v26_bank_admin.sql; JWTs are the standard bank_user token
+# and the local get_bank_admin dependency requires role='bank_admin'.
+from routers.bank_admin import router as bank_admin_router  # noqa: E402
+app.include_router(bank_admin_router)
+
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
@@ -525,19 +531,41 @@ def _vg_soap_extract(xml_text: str) -> dict:
 
 
 async def vg_soap_call(method: str, inner_element: str, fields: dict) -> dict:
-    """POST a SOAP request to VG_API_BASE (the .asmx endpoint) and return the
-    parsed JSON payload. Merges the shared credential block + APICode into the
-    row, exactly like the old JSON path. `fields` must include 'APICode'."""
+    """Call a VGKVerify .asmx method and return the parsed JSON payload.
+
+    VG exposes the same methods over TWO different wire protocols depending on
+    which endpoint the tenant is pointed at, and they are NOT interchangeable:
+      • galaxypay.in:9005 → JSON: POST {base}/{method} with {"obj": [fields]};
+        the reply is a JSON string, e.g. {"result": {...}, "status-code": "101"}.
+        (A SOAP post here is rejected with 400/500.)
+      • vpays.in          → SOAP: a JSON post returns 'Root element is missing';
+        the payload comes back as a JSON string inside <MethodResponse>.
+        (This endpoint is awaiting API-rights assignment.)
+    We choose the protocol from the endpoint host so whichever URL actually has
+    rights assigned works without a code change. `fields` must include 'APICode'.
+    """
     body = {**fields}
-    envelope = _vg_soap_envelope(method, inner_element, body)
-    headers = {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": f'"http://tempuri.org/{method}"',
-    }
     async with httpx.AsyncClient(verify=False, timeout=20.0) as client:
-        resp = await client.post(VG_API_BASE, content=envelope.encode("utf-8"), headers=headers)
-    resp.raise_for_status()
-    return _vg_soap_extract(resp.text)
+        if "vpays.in" in VG_API_BASE:
+            envelope = _vg_soap_envelope(method, inner_element, body)
+            resp = await client.post(
+                VG_API_BASE,
+                content=envelope.encode("utf-8"),
+                headers={
+                    "Content-Type": "text/xml; charset=utf-8",
+                    "SOAPAction": f'"http://tempuri.org/{method}"',
+                },
+            )
+            resp.raise_for_status()
+            return _vg_soap_extract(resp.text)
+        # JSON endpoints (galaxypay.in:9005 and the legacy internal IP)
+        resp = await client.post(
+            f"{VG_API_BASE}/{method}",
+            json={"obj": [body]},
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        return parse_vg_response(resp.text)
 
 def generate_aadhaar_pdf(name: str, dob: str, gender: str, address: str, masked_uid: str, photo_b64: str = None) -> bytes:
     """Generate an Aadhaar verification document from DigiLocker data."""
@@ -1800,8 +1828,10 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     email = user.email.strip() if user.email else None
     if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
         raise HTTPException(status_code=400, detail="Enter a valid email address")
-    if user.role not in ("bank_officer", "bank_supervisor"):
-        raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
+    # Platform console (VGIPL) may provision the bank_admin who then runs the
+    # bank's self-serve portal (design_handoff_finix Job 1, Decision A).
+    if user.role not in ("bank_admin", "bank_officer", "bank_supervisor"):
+        raise HTTPException(status_code=400, detail="Role must be 'bank_admin', 'bank_officer' or 'bank_supervisor'")
     # Check for duplicate username
     existing = await db_pool.fetchrow("SELECT id FROM bank_users WHERE username = $1", username)
     if existing:
@@ -1833,8 +1863,8 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
     if user.full_name is not None:
         updates["full_name"] = user.full_name
     if user.role is not None:
-        if user.role not in ("bank_officer", "bank_supervisor"):
-            raise HTTPException(status_code=400, detail="Role must be 'bank_officer' or 'bank_supervisor'")
+        if user.role not in ("bank_admin", "bank_officer", "bank_supervisor"):
+            raise HTTPException(status_code=400, detail="Role must be 'bank_admin', 'bank_officer' or 'bank_supervisor'")
         updates["role"] = user.role
     if user.is_active is not None:
         updates["is_active"] = user.is_active

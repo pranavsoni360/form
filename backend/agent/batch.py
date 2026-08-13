@@ -353,6 +353,29 @@ async def process_batch_run(batch_uuid_str: str = None):
         call_batch_id = batch.get("batch_id") or batch_id
         logger.info(f"Processing batch {batch_id} ({batch.get('filename', '?')})")
 
+        # Per-bank calling window: a bank may narrow the global legal cap via its
+        # bank_settings row. Load it once for this batch and hand the dispatcher a
+        # bank-scoped hours check; falls back to the global cap when unset.
+        bank_hours_fn = is_within_calling_hours
+        try:
+            batch_bank_id = batch.get("bank_id")
+            if batch_bank_id:
+                _bw = await _state.db_pool.fetchrow(
+                    "SELECT calling_window_start, calling_window_end "
+                    "FROM bank_settings WHERE bank_id = $1",
+                    batch_bank_id if isinstance(batch_bank_id, uuid.UUID)
+                    else uuid.UUID(str(batch_bank_id)),
+                )
+                if _bw and (_bw["calling_window_start"] or _bw["calling_window_end"]):
+                    _bank_window = (_bw["calling_window_start"], _bw["calling_window_end"])
+                    bank_hours_fn = lambda w=_bank_window: is_within_calling_hours(w)
+                    logger.info(
+                        "Batch %s using per-bank calling window %s (capped by global %s-%s)",
+                        batch_id, _bank_window, CALL_START_HOUR, CALL_END_HOUR,
+                    )
+        except Exception as _e:
+            logger.warning("Could not load per-bank calling window for batch %s: %s", batch_id, _e)
+
         # ── M4-lite: delegate per-call placement to the concurrent dispatcher ──
         from services.dispatcher import Dispatcher, manager as dispatcher_mgr
 
@@ -379,7 +402,7 @@ async def process_batch_run(batch_uuid_str: str = None):
             agent_name_union=UNION_BANK_AGENT_NAME,
             demo_mode=DEMO_MODE,
             wait_for_call_completion=wait_for_call_completion,
-            is_within_calling_hours_fn=is_within_calling_hours,
+            is_within_calling_hours_fn=bank_hours_fn,
             is_emergency_stop_active_fn=is_emergency_stop_active,
             now_ist_fn=now_ist,
             max_retries=MAX_RETRIES,

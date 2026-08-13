@@ -53,8 +53,8 @@ function ThemePill() {
         aria-pressed={theme === "dark"}
         onClick={() => setTheme("dark")}
         className={cn(
-          "grid h-6 w-6 place-items-center rounded-full text-[12px]",
-          theme === "dark" ? "bg-fx-surface text-fx-text" : "text-fx-text3",
+          "fx-tap grid h-6 w-6 place-items-center rounded-full text-[12px]",
+          theme === "dark" ? "bg-fx-surface text-fx-text shadow-sm" : "text-fx-text3 hover:text-fx-text2",
         )}
       >
         ☾
@@ -65,8 +65,8 @@ function ThemePill() {
         aria-pressed={theme === "light"}
         onClick={() => setTheme("light")}
         className={cn(
-          "grid h-6 w-6 place-items-center rounded-full text-[12px]",
-          theme === "light" ? "bg-fx-surface text-fx-text" : "text-fx-text3",
+          "fx-tap grid h-6 w-6 place-items-center rounded-full text-[12px]",
+          theme === "light" ? "bg-fx-surface text-fx-text shadow-sm" : "text-fx-text3 hover:text-fx-text2",
         )}
       >
         ☀
@@ -136,8 +136,10 @@ export function Sidebar({
               key={item.href}
               href={item.href}
               className={cn(
-                "flex h-[34px] items-center gap-2 rounded-[10px] px-2 transition-colors",
-                active ? "bg-fx-surface2 text-fx-text" : "text-fx-text2 hover:bg-fx-surface2",
+                "fx-tap flex h-[34px] items-center gap-2 rounded-[10px] px-2",
+                active
+                  ? "bg-fx-surface2 text-fx-text shadow-[inset_0_0_0_1px_var(--fx-border)]"
+                  : "text-fx-text2 hover:bg-fx-surface2 hover:text-fx-text",
               )}
             >
               <span className="fx-mono grid w-[14px] shrink-0 place-items-center text-[13px]">{item.glyph}</span>
@@ -178,7 +180,7 @@ function ActionCard({ action }: { action: SidebarAction }) {
   const red = action.tone === "red";
   const inner = (
     <div
-      className="rounded-[14px] p-3"
+      className="fx-action-card rounded-[14px] p-3"
       style={
         red
           ? { background: "var(--fx-red-tint)", boxShadow: "inset 0 0 0 1px var(--fx-red)" }

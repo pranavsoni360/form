@@ -34,13 +34,13 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
         type="button"
         aria-label="Row actions"
         onClick={() => setOpen((v) => !v)}
-        className="fx-mono grid h-[26px] w-[26px] place-items-center rounded-[8px] text-fx-text2 hover:bg-fx-surface hover:text-fx-text"
+        className="fx-tap fx-mono grid h-[26px] w-[26px] place-items-center rounded-[8px] text-fx-text2 hover:bg-fx-surface hover:text-fx-text"
       >
         ⋯
       </button>
       {open && (
         <div
-          className="absolute right-0 z-40 mt-1 w-[196px] rounded-[12px] bg-fx-surface p-[5px]"
+          className="fx-menu absolute right-0 z-40 mt-1 w-[196px] rounded-[12px] bg-fx-surface p-[5px]"
           style={{ boxShadow: "var(--fx-elevation)" }}
         >
           {items.map((it, i) => (
@@ -52,8 +52,12 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
                 it.onClick();
               }}
               className={cn(
-                "flex h-[30px] w-full items-center rounded-[8px] px-2.5 text-left text-[13px] hover:bg-fx-surface2",
-                it.destructive ? "text-fx-red" : it.warn ? "text-fx-amber" : "text-fx-text",
+                "fx-tap flex h-[30px] w-full items-center rounded-[8px] px-2.5 text-left text-[13px]",
+                it.destructive
+                  ? "text-fx-red hover:bg-[var(--fx-red-tint)]"
+                  : it.warn
+                    ? "text-fx-amber hover:bg-[var(--fx-amber-tint)]"
+                    : "text-fx-text hover:bg-fx-surface2",
               )}
             >
               {it.label}

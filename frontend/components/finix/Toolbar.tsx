@@ -62,9 +62,12 @@ export function FilterPills<T extends string>({
             key={o.key}
             type="button"
             onClick={() => onChange(o.key)}
+            aria-pressed={active}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-[9px] py-1 text-[11.5px] transition-colors",
-              active ? "bg-fx-surface2 text-fx-text" : "text-fx-text3 hover:text-fx-text2",
+              "fx-tap inline-flex items-center gap-1.5 rounded-full px-[9px] py-1 text-[11.5px]",
+              active
+                ? "bg-fx-surface2 text-fx-text shadow-[inset_0_0_0_1px_var(--fx-border)]"
+                : "text-fx-text3 hover:bg-fx-surface2 hover:text-fx-text",
             )}
           >
             {o.label}

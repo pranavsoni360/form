@@ -316,3 +316,105 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 @media (prefers-reduced-motion: reduce) {
   .finix-root * { transition-duration: 0.001ms !important; animation-duration: 0.001ms !important; }
 }
+
+/* ── Refined interaction layer ────────────────────────────────────────────
+   Subtle, premium micro-interactions on the shared controls. One easing curve
+   and one timing so everything moves as a set. Soft hover lift, gentle glow on
+   the primary, crisp keyboard focus rings. Reduced-motion already neutralises
+   the transitions via the block above. */
+
+.finix-root {
+  --fx-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --fx-dur: 160ms;
+  --fx-focus: 0 0 0 2px var(--fx-bg), 0 0 0 4px oklch(0.62 0.19 265 / 0.55);
+}
+
+/* Base button behaviour — used by every fx button variant. */
+.fx-btn {
+  transition: transform var(--fx-dur) var(--fx-ease),
+              box-shadow var(--fx-dur) var(--fx-ease),
+              background var(--fx-dur) var(--fx-ease),
+              color var(--fx-dur) var(--fx-ease),
+              opacity var(--fx-dur) var(--fx-ease);
+  will-change: transform;
+  outline: none;
+  user-select: none;
+}
+.fx-btn:focus-visible { box-shadow: var(--fx-focus); }
+.fx-btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
+
+/* Primary — accent gradient. Lifts on hover with a stronger glow; presses in. */
+.fx-btn-primary {
+  background: var(--fx-accent-grad);
+  box-shadow: var(--fx-accent-glow);
+}
+.fx-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px oklch(0.55 0.20 265 / 0.55);
+  filter: brightness(1.05);
+}
+.fx-btn-primary:focus-visible { box-shadow: var(--fx-accent-glow), var(--fx-focus); }
+
+/* Quiet — surface chip. Hover raises the surface + a hairline ring, tiny lift. */
+.fx-btn-quiet {
+  background: var(--fx-surface2);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.fx-btn-quiet:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--fx-surface);
+  box-shadow: inset 0 0 0 1px var(--fx-border), 0 4px 14px oklch(0.1 0.02 265 / 0.28);
+}
+
+/* Danger — quiet red. Fill deepens on hover; no colour shift elsewhere. */
+.fx-btn-danger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px var(--fx-red), 0 4px 14px oklch(0.55 0.19 25 / 0.28);
+}
+
+/* Sidebar action card — gentle lift + deepened glow on hover. */
+.fx-action-card {
+  transition: transform var(--fx-dur) var(--fx-ease), box-shadow var(--fx-dur) var(--fx-ease), filter var(--fx-dur) var(--fx-ease);
+}
+.fx-action-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px oklch(0.55 0.20 265 / 0.5);
+  filter: brightness(1.04);
+}
+.fx-action-card:active { transform: translateY(0) scale(0.995); }
+
+/* Filter pills / row-menu items / icon buttons — quick, quiet hover. */
+.fx-tap { transition: background var(--fx-dur) var(--fx-ease), color var(--fx-dur) var(--fx-ease), box-shadow var(--fx-dur) var(--fx-ease); outline: none; }
+.fx-tap:focus-visible { box-shadow: var(--fx-focus); }
+
+/* Table row — subtle tint on hover already set inline; add a soft left accent
+   cue for clickable rows without shifting layout. */
+.fx-row-tap { transition: background var(--fx-dur) var(--fx-ease), box-shadow var(--fx-dur) var(--fx-ease); }
+
+/* Popover entrance — small rise + fade + scale, quick and quiet. */
+@keyframes fx-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.fx-menu { animation: fx-pop-in 140ms var(--fx-ease); transform-origin: top right; }
+
+/* Modal / side-panel entrance. */
+@keyframes fx-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fx-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fx-panel-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.fx-overlay { animation: fx-overlay-in 160ms var(--fx-ease); }
+.fx-modal { animation: fx-modal-in 200ms var(--fx-ease); }
+.fx-panel { animation: fx-panel-in 220ms var(--fx-ease); }
+
+/* Inputs / textareas inside a Finix shell — smooth focus ring. */
+.finix-root input:focus-visible,
+.finix-root textarea:focus-visible,
+.finix-root select:focus-visible {
+  transition: box-shadow var(--fx-dur) var(--fx-ease);
+}

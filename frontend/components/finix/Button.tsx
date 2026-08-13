@@ -7,7 +7,9 @@
 // red-tinted destructive for confirm actions, and an inert variant for the
 // maker/checker "Approve" that must render disabled-but-present.
 //
-// 30px tall, 10px radius, sentence-case label, 400/500 weight only.
+// 30px tall, 10px radius, sentence-case label, 400/500 weight only. The refined
+// hover/press/focus micro-interactions live in globals.css (.fx-btn-*) so the
+// motion stays consistent across every control.
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
@@ -15,7 +17,7 @@ import { cn } from "@/lib/utils";
 type Variant = "primary" | "quiet" | "danger" | "inert";
 
 const base =
-  "inline-flex h-[30px] items-center justify-center gap-1.5 rounded-[10px] px-3 text-[13px] font-medium transition-all disabled:opacity-50 disabled:pointer-events-none";
+  "fx-btn inline-flex h-[30px] items-center justify-center gap-1.5 rounded-[10px] px-3 text-[13px] font-medium disabled:opacity-50 disabled:pointer-events-none";
 
 export const Button = React.forwardRef<
   HTMLButtonElement,
@@ -23,12 +25,7 @@ export const Button = React.forwardRef<
 >(function Button({ variant = "quiet", className, style, children, ...props }, ref) {
   if (variant === "primary") {
     return (
-      <button
-        ref={ref}
-        className={cn(base, "text-white", className)}
-        style={{ background: "var(--fx-accent-grad)", boxShadow: "var(--fx-accent-glow)", ...style }}
-        {...props}
-      >
+      <button ref={ref} className={cn(base, "fx-btn-primary text-white", className)} style={style} {...props}>
         {children}
       </button>
     );
@@ -37,7 +34,7 @@ export const Button = React.forwardRef<
     return (
       <button
         ref={ref}
-        className={cn(base, className)}
+        className={cn(base, "fx-btn-danger", className)}
         style={{ background: "var(--fx-red-tint)", color: "var(--fx-red)", ...style }}
         {...props}
       >
@@ -61,12 +58,7 @@ export const Button = React.forwardRef<
   }
   // quiet
   return (
-    <button
-      ref={ref}
-      className={cn(base, "bg-fx-surface2 text-fx-text2 hover:text-fx-text", className)}
-      style={style}
-      {...props}
-    >
+    <button ref={ref} className={cn(base, "fx-btn-quiet text-fx-text2 hover:text-fx-text", className)} style={style} {...props}>
       {children}
     </button>
   );

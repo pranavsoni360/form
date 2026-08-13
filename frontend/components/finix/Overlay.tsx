@@ -22,10 +22,10 @@ function Backdrop({ onClose, children, align }: { onClose: () => void; children:
   return (
     <div
       className={cn(
-        "fixed inset-0 z-50 flex",
+        "fx-overlay fixed inset-0 z-50 flex",
         align === "center" ? "items-center justify-center p-4" : "items-stretch justify-end",
       )}
-      style={{ background: "oklch(0.1 0.02 265 / 0.5)" }}
+      style={{ background: "oklch(0.1 0.02 265 / 0.5)", backdropFilter: "blur(2px)" }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -56,7 +56,7 @@ export function Modal({
       <div
         role="dialog"
         aria-modal
-        className={cn("finix-root max-h-[90vh] w-full overflow-y-auto rounded-[18px] bg-fx-surface", className)}
+        className={cn("fx-modal finix-root max-h-[90vh] w-full overflow-y-auto rounded-[18px] bg-fx-surface", className)}
         style={{ maxWidth: width, boxShadow: "var(--fx-elevation)" }}
       >
         {children}
@@ -86,7 +86,7 @@ export function SidePanel({
       <div
         role="dialog"
         aria-modal
-        className={cn("finix-root m-3 flex w-full flex-col overflow-y-auto rounded-[18px] bg-fx-surface", className)}
+        className={cn("fx-panel finix-root m-3 flex w-full flex-col overflow-y-auto rounded-[18px] bg-fx-surface", className)}
         style={{ maxWidth: width, boxShadow: "var(--fx-elevation)" }}
       >
         {children}

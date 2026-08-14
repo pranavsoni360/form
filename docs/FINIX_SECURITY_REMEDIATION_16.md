@@ -52,7 +52,17 @@ A.1(3)+A.2(23)+A.3(4)+A.4(5)+A.5(4, code-list public) — anonymous access to lo
 approval, Aadhaar, call data, exports, mass-calling control, scorecard rewrite,
 and ops views is CLOSED. Ops console + bank portal both authenticate and work.
 
-### Remaining (not endpoint-auth)
+### ✅ PROMOTED TO PROD (2026-08-14, commit e641dcb)
+qa→master merged + prod deployed (58s, healthy). Verified on prod: /api/agent/calls,
+/export/all-calls, /emergency-stop, PUT /lrs/config, /api/admin/applications all
+return **401 anonymous** (were leaking). Prod backend rebound to 127.0.0.1:8200
+(loopback; backup /tmp/los-backend.service.bak); nginx :443 still serves.
+Note: calling-window 7 PM + v34–v38 were already on prod from the earlier 4df4929
+merge, so this promotion was #16 code only. **#16 is COMPLETE on QA + PROD.**
+
+### Remaining (minor follow-up, not endpoint-auth)
+0. dashboard-stats / funnel / analytics leak aggregate COUNTS only (no row PII) —
+   scope by bank when convenient. Prod ops console uses the same verified build as QA.
 1. **Tenant-scoping** — bank_user queries on the agent router aren't bank-filtered
    yet (a bank officer sees other banks' call rows; no longer anonymous). Follow-up
    query work; operators (admin) legitimately see all.

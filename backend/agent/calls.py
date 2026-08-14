@@ -16,7 +16,7 @@ from . import state as _state
 from .state import (
     now_ist, format_ist_time, IST,
     _row_to_dict, _rows_to_list, _serialize_call,
-    get_current_bank_user, STATUS_OPTIONS, CATEGORY_OPTIONS,
+    get_current_bank_user, _bank_uuid, STATUS_OPTIONS, CATEGORY_OPTIONS,
     CallCategorizeRequest, is_within_calling_hours,
     CALL_START_HOUR, CALL_END_HOUR, release_batch_lock,
 )
@@ -68,13 +68,17 @@ def _date_range_bounds(date_from: Optional[str], date_to: Optional[str],
 # ============================================================================
 
 @router.get("/call/{call_id}")
-async def get_call_alias(call_id: str):
+async def get_call_alias(call_id: str, user: dict = Depends(get_current_bank_user)):
     """Alias for /calls/{call_id} (reference UI compatibility)."""
     try:
         call_uuid = uuid.UUID(call_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
-    row = await _state.db_pool.fetchrow("SELECT * FROM agent_calls WHERE id = $1", call_uuid)
+    bank_uuid = _bank_uuid(user)
+    row = await _state.db_pool.fetchrow(
+        "SELECT * FROM agent_calls WHERE id = $1 AND ($2::uuid IS NULL OR bank_id = $2)",
+        call_uuid, bank_uuid,
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     result = _serialize_call(_row_to_dict(row))
@@ -90,13 +94,17 @@ async def get_call_alias(call_id: str):
     return result
 
 @router.get("/call/{call_id}/transcript")
-async def get_call_transcript_alias(call_id: str):
+async def get_call_transcript_alias(call_id: str, user: dict = Depends(get_current_bank_user)):
     """Alias for /calls/{call_id}/transcript (reference UI compatibility)."""
     try:
         call_uuid = uuid.UUID(call_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
-    row = await _state.db_pool.fetchrow("SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1", call_uuid)
+    bank_uuid = _bank_uuid(user)
+    row = await _state.db_pool.fetchrow(
+        "SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1 AND ($2::uuid IS NULL OR bank_id = $2)",
+        call_uuid, bank_uuid,
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     call = _row_to_dict(row)
@@ -122,10 +130,10 @@ async def list_calls(
     date_to: Optional[str] = None,
     lead_quality: Optional[str] = None,
     form_sent: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """List calls with pagination and filters. Bank-scoped if authenticated, all calls for operators."""
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     conditions = []
     params: list = []
     idx = 1
@@ -213,10 +221,10 @@ async def get_call(call_id: str, user: dict = Depends(get_current_bank_user)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     row = await _state.db_pool.fetchrow(
-        "SELECT * FROM agent_calls WHERE id = $1",
-        call_uuid,
+        "SELECT * FROM agent_calls WHERE id = $1 AND ($2::uuid IS NULL OR bank_id = $2)",
+        call_uuid, bank_uuid,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -231,10 +239,10 @@ async def get_call_transcript(call_id: str, user: dict = Depends(get_current_ban
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     row = await _state.db_pool.fetchrow(
-        "SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1",
-        call_uuid,
+        "SELECT id, customer_name, phone, transcript FROM agent_calls WHERE id = $1 AND ($2::uuid IS NULL OR bank_id = $2)",
+        call_uuid, bank_uuid,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -255,10 +263,10 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     row = await _state.db_pool.fetchrow(
-        "SELECT id, customer_name, recording_url FROM agent_calls WHERE id = $1",
-        call_uuid,
+        "SELECT id, customer_name, recording_url FROM agent_calls WHERE id = $1 AND ($2::uuid IS NULL OR bank_id = $2)",
+        call_uuid, bank_uuid,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -274,7 +282,7 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
 async def categorize_call(
     call_id: str,
     data: CallCategorizeRequest,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Manually categorize / remark a call."""
     try:
@@ -282,7 +290,7 @@ async def categorize_call(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid call ID format")
 
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
 
     # Build the update -- merge remark into call_analysis JSONB
     existing = await _state.db_pool.fetchrow(
@@ -437,7 +445,7 @@ async def submit_form(call_id: str, request: Request):
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
     date: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Dashboard statistics (all calls, no bank scoping)."""
     date_clause = ""
@@ -505,6 +513,7 @@ async def get_dashboard_stats(
 async def get_funnel(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    user: dict = Depends(get_current_bank_user),
 ):
     """Conversion funnel for the /ops/funnel dashboard.
 
@@ -586,7 +595,7 @@ async def get_funnel(
 
 
 @router.get("/analytics")
-async def get_analytics():
+async def get_analytics(user: dict = Depends(get_current_bank_user)):
     """Analytics summary (all calls)."""
     base = "SELECT COUNT(*) FROM agent_calls WHERE TRUE"
 
@@ -622,10 +631,10 @@ async def get_analytics():
 @router.get("/export/daily-report")
 async def export_daily_report(
     date: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Export daily report as Excel."""
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     if not date:
         date = now_ist().strftime("%Y-%m-%d")
     try:
@@ -636,8 +645,9 @@ async def export_daily_report(
     rows = await _state.db_pool.fetch(
         """SELECT * FROM agent_calls
            WHERE created_at >= $1 AND created_at < $2
+             AND ($3::uuid IS NULL OR bank_id = $3)
            ORDER BY created_at DESC""",
-        dt, dt + timedelta(days=1),
+        dt, dt + timedelta(days=1), bank_uuid,
     )
     if not rows:
         raise HTTPException(status_code=404, detail="No data for this date")
@@ -682,17 +692,17 @@ async def export_all_calls(
     category: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
-    """Comprehensive Excel export with all call data."""
-    # Operator/admin endpoint — NO bank scoping (mirrors export_daily_report,
-    # which returns every call for the date). The previous
-    # `bank_id IS NOT DISTINCT FROM NULL` restricted results to operator-created
-    # rows only and returned "No data found" for any call tied to a bank, even
-    # when matching records existed.
+    """Comprehensive Excel export with all call data (bank-scoped for bank users)."""
     conditions: list = []
     params: list = []
     idx = 1
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
+    if bank_uuid:
+        conditions.append(f"bank_id = ${idx}")
+        params.append(bank_uuid)
+        idx += 1
 
     if status:
         # "Failed" is the umbrella for all hard-failure outcomes (Failed +
@@ -806,7 +816,7 @@ async def export_all_calls(
 @router.get("/live-status")
 async def get_live_status(user: dict = Depends(get_current_bank_user)):
     """Get current calling status -- which customer is being called right now."""
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     # `bank_id IS NOT DISTINCT FROM $1` matches NULL=NULL (operator) and uuid=uuid (bank user).
     row = await _state.db_pool.fetchrow(
         """SELECT id, customer_name, phone, started_at FROM agent_calls
@@ -847,7 +857,7 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
 
 
 @router.post("/stale-cleanup")
-async def stale_cleanup():
+async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
     """Clean up calls stuck in 'Calling' status.
 
     Operator action (no auth) — matches /emergency-stop, /resume-calling,
@@ -856,7 +866,7 @@ async def stale_cleanup():
     bank-user JWT was an inconsistency: /ops/batch is admin-context and
     the button was silently failing.
     """
-    bank_uuid = None  # operator — no bank scoping
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
 
     # 1. Delete broken calls (no room_name)
     del_result = await _state.db_pool.execute(

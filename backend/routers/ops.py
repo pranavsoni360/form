@@ -27,8 +27,10 @@ import asyncio
 import os
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
+
+from agent.state import get_current_bank_user
 
 
 router = APIRouter(tags=["ops"])
@@ -136,7 +138,7 @@ async def version():
 # in the decorator.
 
 @router.get("/api/ops/phone-pools")
-async def phone_pools():
+async def phone_pools(user: dict = Depends(get_current_bank_user)):
     """Snapshot of every phone pool + its numbers (live counters from DB).
 
     Response shape:
@@ -224,7 +226,7 @@ async def phone_pools():
 # No auth — matches the rest of /api/ops/* operator endpoints.
 
 @router.get("/api/ops/in-flight-calls")
-async def in_flight_calls():
+async def in_flight_calls(user: dict = Depends(get_current_bank_user)):
     """Seed for /ops/live: active calls + recently-completed ones.
 
     Two cohorts:
@@ -309,6 +311,7 @@ async def list_recent_errors(
     limit: int = 100,
     source: str | None = None,
     since_ts: float | None = None,
+    user: dict = Depends(get_current_bank_user),
 ):
     """Return recent errors from system_errors, newest first.
 

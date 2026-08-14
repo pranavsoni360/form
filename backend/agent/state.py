@@ -375,11 +375,20 @@ security = HTTPBearer(auto_error=False)  # auto_error=False allows unauthenticat
 async def get_current_bank_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
-    """Decode JWT if provided, otherwise return operator-level access (no bank_id filter).
-    Bank officers get bank_id scoping; operators (no auth) see everything."""
+    """Authenticated access with tenant scoping.
+
+    Security (#16): a MISSING token is rejected. Previously no-token silently
+    returned operator access with bank_id=None — and _bank_filter() then applied
+    no filter, so any unauthenticated caller could read every bank's data.
+
+    - No token          -> 401.
+    - admin JWT         -> operator scope (bank_id=None, sees all banks). VGIPL
+                           platform operators authenticate via the admin login and
+                           reach the ops views this way.
+    - bank_user JWT     -> scoped to their own bank_id (officer/supervisor only).
+    """
     if not credentials:
-        # No auth — operator mode (sees all banks)
-        return {"user_id": "operator", "role": "operator", "bank_id": None, "user_type": "operator"}
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     try:
         payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
@@ -388,17 +397,28 @@ async def get_current_bank_user(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    if payload.get("user_type") != "bank_user":
-        raise HTTPException(status_code=403, detail="Bank user access required")
-    if payload.get("role") not in ("bank_officer", "bank_supervisor"):
-        raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+    user_type = payload.get("user_type")
 
-    return {
-        "user_id": payload["user_id"],
-        "role": payload["role"],
-        "bank_id": payload.get("bank_id"),
-        "user_type": payload["user_type"],
-    }
+    # Platform operators (admin token) get cross-bank operator scope.
+    if user_type == "admin":
+        return {
+            "user_id": payload.get("user_id", "operator"),
+            "role": "operator",
+            "bank_id": None,
+            "user_type": "operator",
+        }
+
+    if user_type == "bank_user":
+        if payload.get("role") not in ("bank_officer", "bank_supervisor"):
+            raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+        return {
+            "user_id": payload["user_id"],
+            "role": payload["role"],
+            "bank_id": payload.get("bank_id"),
+            "user_type": "bank_user",
+        }
+
+    raise HTTPException(status_code=403, detail="Bank user or operator access required")
 
 
 def _bank_uuid(user: dict):

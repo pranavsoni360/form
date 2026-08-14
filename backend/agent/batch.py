@@ -12,7 +12,7 @@ from typing import Optional
 
 import pandas as pd
 import csv
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from livekit import api
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -21,6 +21,7 @@ from apscheduler.events import EVENT_JOB_ERROR
 
 from . import state as _state
 from .state import (
+    get_current_bank_user, _bank_uuid,
     now_ist, now_ist_str, is_within_calling_hours,
     acquire_batch_lock, release_batch_lock, is_emergency_stop_active,
     set_emergency_stop, cleanup_stuck_calls, _init_system_state,
@@ -596,7 +597,7 @@ async def upload_excel(
         description="UUID of the bank to assign this batch to. When set, all calls and applications are visible to that bank's officers.",
     ),
     background_tasks: BackgroundTasks = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Upload Excel/CSV with customer data for batch calling."""
     # bank_id comes from the query param (operator selects which bank)
@@ -806,7 +807,7 @@ async def trigger_batch(
             "time without re-uploading the CSV."
         ),
     ),
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Start batch calling. Sets the most recent 'pending' batch to 'running' so the cron picks it up.
     Optionally specify a batch_id to start a specific batch."""
@@ -867,7 +868,7 @@ async def batch_status(
     batch_id: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Check batch completion progress. Optional date range (date_from/date_to,
     inclusive) scopes the counters to calls in that IST window — same day
@@ -944,7 +945,7 @@ async def batch_status(
 async def trigger_batch_retry(
     background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Retry failed/not-answered calls in a specific batch (or most recent completed batch).
     Resets failed calls to 'Pending' (if retry_count < MAX_RETRIES) and sets batch back to 'running'."""
@@ -1017,7 +1018,7 @@ async def trigger_batch_retry(
 
 
 @router.post("/emergency-stop")
-async def emergency_stop():
+async def emergency_stop(user: dict = Depends(get_current_bank_user)):
     """Immediately stop all calling and kill every active call.
 
     Order matters:
@@ -1087,7 +1088,7 @@ async def emergency_stop():
 
 
 @router.post("/resume-calling")
-async def resume_calling():
+async def resume_calling(user: dict = Depends(get_current_bank_user)):
     """Disable emergency stop and resume paused batches."""
     await set_emergency_stop(False)
     result = await _state.db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
@@ -1097,7 +1098,7 @@ async def resume_calling():
 
 
 @router.post("/stop-batch")
-async def stop_batch(batch_id: str):
+async def stop_batch(batch_id: str, user: dict = Depends(get_current_bank_user)):
     """Stop ONE specific batch (targeted, unlike the global emergency-stop).
 
     Unblocks the queue for a freshly-uploaded batch: the stopped batch leaves the
@@ -1206,6 +1207,7 @@ async def stop_batch(batch_id: str):
 async def list_uploads(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    user: dict = Depends(get_current_bank_user),
 ):
     """List batch uploads, optionally scoped to an inclusive IST date range
     (date_from/date_to) on the batch's created_at. Aliases created_at/
@@ -1214,6 +1216,10 @@ async def list_uploads(
     lo, hi = _ist_day_bounds(date_from, date_to)
     conds: list = []
     params: list = []
+    bank_uuid = _bank_uuid(user)  # operator -> None (all banks); bank_user -> their bank
+    if bank_uuid:
+        params.append(bank_uuid)
+        conds.append(f"bank_id = ${len(params)}")
     if lo is not None:
         params.append(lo)
         conds.append(f"created_at >= ${len(params)}")
@@ -1231,7 +1237,7 @@ async def list_uploads(
     return {"uploads": uploads}
 
 @router.get("/upload/{batch_id}")
-async def get_upload_detail(batch_id: str):
+async def get_upload_detail(batch_id: str, user: dict = Depends(get_current_bank_user)):
     """Get calls for a specific batch.
 
     The frontend passes agent_batches.id (a UUID). agent_calls.batch_id stores
@@ -1248,15 +1254,16 @@ async def get_upload_detail(batch_id: str):
     except ValueError:
         pass  # already a string batch_id
 
+    bank_uuid = _bank_uuid(user)
     rows = await _state.db_pool.fetch(
         "SELECT id, customer_name, phone, status, call_duration, interested, form_sent, form_status, created_at"
-        " FROM agent_calls WHERE batch_id = $1 ORDER BY created_at DESC LIMIT 200",
-        call_batch_id,
+        " FROM agent_calls WHERE batch_id = $1 AND ($2::uuid IS NULL OR bank_id = $2) ORDER BY created_at DESC LIMIT 200",
+        call_batch_id, bank_uuid,
     )
     return {"calls": _rows_to_list(rows), "batch_id": call_batch_id, "total": len(rows)}
 
 @router.get("/upload/{batch_id}/download")
-async def download_batch_csv(batch_id: str):
+async def download_batch_csv(batch_id: str, user: dict = Depends(get_current_bank_user)):
     """Stream a CSV of all calls in the batch for download."""
     # Resolve UUID → string batch_id used in agent_calls
     call_batch_id = batch_id
@@ -1274,11 +1281,12 @@ async def download_batch_csv(batch_id: str):
     except ValueError:
         pass
 
+    bank_uuid = _bank_uuid(user)
     rows = await _state.db_pool.fetch(
         """SELECT customer_name, phone, status, call_duration, interested,
                   form_sent, form_status, form_link, started_at, ended_at, loan_type, loan_amount
-           FROM agent_calls WHERE batch_id = $1 ORDER BY created_at ASC""",
-        call_batch_id,
+           FROM agent_calls WHERE batch_id = $1 AND ($2::uuid IS NULL OR bank_id = $2) ORDER BY created_at ASC""",
+        call_batch_id, bank_uuid,
     )
 
     def generate():
@@ -1318,12 +1326,15 @@ async def download_batch_csv(batch_id: str):
 
 
 @router.get("/recent_calls")
-async def recent_calls(limit: int = Query(10, ge=1, le=50)):
+async def recent_calls(limit: int = Query(10, ge=1, le=50), user: dict = Depends(get_current_bank_user)):
     """Get recent calls (shortcut for dashboard).
     Returns both `calls` (current API) and `recent_calls` (Samavesh-shaped) so
     the static agent-dashboard.html, which reads `data.recent_calls`, renders."""
+    bank_uuid = _bank_uuid(user)
     rows = await _state.db_pool.fetch(
-        "SELECT * FROM agent_calls ORDER BY created_at DESC LIMIT $1", limit
+        "SELECT * FROM agent_calls WHERE ($2::uuid IS NULL OR bank_id = $2) "
+        "ORDER BY created_at DESC LIMIT $1",
+        limit, bank_uuid,
     )
     payload = [_serialize_call(_row_to_dict(r)) for r in rows]
     return {"calls": payload, "recent_calls": payload}

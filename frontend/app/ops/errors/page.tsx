@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -63,7 +64,7 @@ const SOURCE_STYLES: Record<ErrorSource, string> = {
 async function seedErrorsFromDb() {
   const url = `${API_URL}/api/ops/errors?limit=200&_t=${Date.now()}`;
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await opsFetch(url, { cache: "no-store" });
     if (!res.ok) {
       console.warn(`[/ops/errors] seed fetch returned HTTP ${res.status} from ${url}`);
       return [];

@@ -11,6 +11,7 @@
  */
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarClock, Eye, RefreshCw, RotateCcw, Plus, Loader2 } from "lucide-react";
 
@@ -47,7 +48,7 @@ export default function OpsCallbacksPage() {
   const query = useQuery<CallbacksResponse>({
     queryKey: ["scheduled-callbacks"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/scheduled-callbacks?limit=50`, {
+      const res = await opsFetch(`${API_URL}/api/agent/scheduled-callbacks?limit=50`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -245,7 +246,7 @@ function ScheduleCallbackDialog({
     if (!when) { setError("Pick a callback date & time"); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/agent/schedule-callback-manual`, {
+      const res = await opsFetch(`${API_URL}/api/agent/schedule-callback-manual`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

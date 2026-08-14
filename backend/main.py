@@ -1927,13 +1927,9 @@ async def admin_stats(admin: dict = Depends(get_current_admin)):
 async def admin_get_applications(
     status: Optional[str] = None,
     bank_id: Optional[str] = None,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    admin: dict = Depends(get_current_admin),
 ):
     """List ALL applications across all banks (with optional status/bank filters)."""
-    try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
     # Build dynamic query
     conditions = []
     params = []
@@ -1958,12 +1954,8 @@ async def admin_get_applications(
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/admin/applications/{app_id}")
-async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def admin_get_application(app_id: str, admin: dict = Depends(get_current_admin)):
     """Admin: full application detail (read-only, any bank)."""
-    try:
-        jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", uuid.UUID(app_id))
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -2322,7 +2314,7 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
 # ============================================
 
 @app.post("/api/generate-form-links")
-async def generate_form_links(request: Request):
+async def generate_form_links(request: Request, admin: dict = Depends(get_current_admin)):
     data = await request.json()
     customers_data = data.get("customers", [])
     bank_id_str = data.get("bank_id")
@@ -3018,11 +3010,7 @@ async def submit_form(token: str, request: Request):
 # ============================================
 
 @app.post("/api/admin/review")
-async def review_application(payload: ReviewAction, request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    try:
-        admin_payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+async def review_application(payload: ReviewAction, request: Request, admin: dict = Depends(get_current_admin)):
     app_id = uuid.UUID(payload.application_id)
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", app_id)
     if not app_row:
@@ -3032,14 +3020,14 @@ async def review_application(payload: ReviewAction, request: Request, credential
     if payload.action == "reject":
         await db_pool.execute(
             "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 WHERE id=$6",
-            new_status, uuid.UUID(admin_payload["user_id"]), now_utc(), payload.notes, payload.rejection_reason, app_id
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, payload.rejection_reason, app_id
         )
     else:
         await db_pool.execute(
             "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4 WHERE id=$5",
-            new_status, uuid.UUID(admin_payload["user_id"]), now_utc(), payload.notes, app_id
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, app_id
         )
-    await record_transition(app_id, current_status, new_status, "admin", uuid.UUID(admin_payload["user_id"]), payload.notes)
+    await record_transition(app_id, current_status, new_status, "admin", uuid.UUID(admin["id"]), payload.notes)
     if payload.action == "approve":
         message = f"Congratulations {app_row['customer_name']}!\n\nYour loan application has been APPROVED.\n\nLoan ID: {app_row['loan_id']}\n\nOur team will contact you within 24 hours.\n\n- Your Bank Name"
     else:

@@ -90,6 +90,24 @@ def _common_params(api_code: str, ctx: FetchContext) -> dict[str, Any]:
     }
 
 
+def _parse_lenient_json(text: str) -> Any:
+    """Parse a JSON response, tolerating a valid JSON value followed by EXTRA
+    data. Some VG / galaxypay endpoints append a second concatenated object or
+    trailing text, which makes a strict parse raise 'Extra data: ...'. Recover the
+    first complete JSON value and ignore the rest. Genuinely non-JSON bodies still
+    raise (so the caller retries)."""
+    s = (text or "").strip()
+    try:
+        return _json.loads(s)
+    except _json.JSONDecodeError:
+        obj, _end = _json.JSONDecoder().raw_decode(s)  # first value; raises if not JSON at all
+        logger.warning(
+            "VG Docverify: response had %d trailing chars after the JSON value; "
+            "used the first value.", len(s) - _end,
+        )
+        return obj
+
+
 async def _post(url: str, api_code: str, ctx: FetchContext, fields: dict) -> dict | None:
     """POST one `obj`-wrapped request and return the parsed `result` payload.
 
@@ -102,9 +120,9 @@ async def _post(url: str, api_code: str, ctx: FetchContext, fields: dict) -> dic
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(url, json=body)
         resp.raise_for_status()
-        data = resp.json()
+        data = _parse_lenient_json(resp.text)
     except (httpx.HTTPError, ValueError) as e:
-        # Network error / 5xx / bad JSON → transient: let the worker retry.
+        # Network error / 5xx / genuinely-unparseable body → transient: retry.
         logger.warning("VG Docverify %s call failed: %s", api_code, e)
         raise
     # Envelope: {"requestId": ..., "result": {...|[...]}, "statusCode": 101}

@@ -2912,10 +2912,32 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
-        await db_pool.execute(
-            f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE token_id = $2",
-            file_url, token_row["id"]
+        try:
+            await db_pool.execute(
+                f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE token_id = $2",
+                file_url, token_row["id"]
+            )
+        except Exception as e:
+            # Some field_mapping targets have no column yet (e.g. salary_slips_url);
+            # application_documents below is the durable record, so never fail the upload.
+            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+    # Durable normalized record — accepts ANY document_type (fixes the missing-column
+    # cases) and captures who/when/size. Best-effort: never break the upload.
+    try:
+        approw = await db_pool.fetchrow(
+            "SELECT id, bank_id FROM loan_applications WHERE token_id = $1", token_row["id"]
         )
+        if approw:
+            await db_pool.execute(
+                """INSERT INTO application_documents
+                       (application_id, bank_id, document_type, file_url,
+                        original_filename, content_type, size_bytes, uploaded_by_type)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+                approw["id"], approw["bank_id"], document_type, file_url,
+                file.filename, file.content_type, len(file_content),
+            )
+    except Exception as e:
+        logger.warning("application_documents insert failed for token %s: %s", token_row["id"], e)
     return {"status": "uploaded", "url": file_url, "filename": file.filename, "size": len(file_content)}
 
 
@@ -3749,10 +3771,25 @@ async def upload_document_session(
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
+        try:
+            await db_pool.execute(
+                f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE id = $2",
+                file_url, session["application_id"]
+            )
+        except Exception as e:
+            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+    # Durable normalized record — accepts ANY document_type; best-effort.
+    try:
         await db_pool.execute(
-            f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE id = $2",
-            file_url, session["application_id"]
+            """INSERT INTO application_documents
+                   (application_id, bank_id, document_type, file_url,
+                    original_filename, content_type, size_bytes, uploaded_by_type)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+            app_row["id"], app_row["bank_id"], document_type, file_url,
+            file.filename, file.content_type, len(file_content),
         )
+    except Exception as e:
+        logger.warning("application_documents insert failed for app %s: %s", session["application_id"], e)
     # Update session activity
     await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
     return {"status": "uploaded", "url": file_url, "filename": file.filename, "size": len(file_content)}

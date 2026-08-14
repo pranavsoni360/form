@@ -19,10 +19,12 @@ This document is the precise map of what still needs *code* wiring.
 - **Consent-check before send** ✅ (2026-08-14) — `is_phone_opted_out` guards send_whatsapp_message + send_whatsapp_aisensy; OTP + in-call form-link stay transactional. Last-10-digit match verified.
 - **login_audit** ✅ (2026-08-14) — admin-login + bank-login write login_audit on success (best-effort).
 
-## ⏳ STILL TO WIRE
-- **Scorecard engine → live version**: LRS engine still reads global `lrs_scorecard_config`; make it read the bank's live `scorecard_versions` row + stamp the scored version onto the application.
-- **Retention purge job**: scheduled deletion of recordings/PII past `bank_retention_config` days when `auto_purge_enabled` (⚠️ deletion — build carefully with dry-run first).
-- **Disbursement logging**: log disbursement events to the audit trail.
+- **Governance-audit (application_approvals)** ✅ (2026-08-14) — officer/supervisor approve+reject + disburse all write application_approvals via _record_approval. Subsumes disbursement logging.
+- **DB constraint cleanup (v39)** ✅ (2026-08-14) — junk bank removed, maker-checker test row fixed, bank-code format relaxed to allow lowercase; both governance guards now VALIDATED on QA + prod (0 NOT VALID remaining).
+
+## ⏳ STILL TO WIRE (each needs a dedicated, careful session)
+- **Scorecard engine → per-bank live version** (⚠️ affects LOAN SCORING/DECISIONS): today the editor (PUT /api/lrs/config) and engine (lrs/scorecard.py:162) BOTH use the global `lrs_scorecard_config` (id=1) — internally consistent and working, just not multi-tenant. Making it per-bank means changing the editor write path → bank's `scorecard_versions` live row, the engine read path → application's-bank live version (+ global fallback), and stamping the scored version onto the application. Requires before/after score verification on test applications. NOT a rush job.
+- **Retention purge job**: scheduled deletion of recordings/PII past `bank_retention_config` days when `auto_purge_enabled` (⚠️ DELETES data — build with a dry-run mode first, review carefully).
 
 ---
 

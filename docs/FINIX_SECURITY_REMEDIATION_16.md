@@ -1,8 +1,30 @@
 # Finix — #16 Security Remediation Plan (close unauth endpoints + lock down network)
 
-**Status: PLAN ONLY — execute after the demo.** This is the release blocker for
-selling Finix. Nothing here is applied yet. Ordered least-risk-first; every step
-is independently testable and reversible.
+**Status: IN PROGRESS.** This is the release blocker for selling Finix. Ordered
+least-risk-first; every step is independently testable and reversible.
+
+### Progress log
+- **2026-08-13 — A.1 SHIPPED to QA (commit 181acd4, verified).** The 3 broken-
+  access-control admin endpoints (`/api/admin/applications`, `/api/admin/applications/{id}`,
+  `/api/admin/review`) now use `Depends(get_current_admin)`. Verified: a valid
+  bank_user token gets **403** (previously **200** with all-bank data). Admin panel
+  unaffected (already sends admin token). **QA only — prod still vulnerable until promoted.**
+- Finding: QA JWT secret is a real 62-char value in `backend/.env.qa` (not the
+  `your-jwt-secret-key` code default) — good. Confirm prod's `.env` likewise; the
+  code default must never be what's live (token-forgery risk, ties to #13).
+- **2026-08-14 — Ops-console token wiring SHIPPED to QA (commit 1a05f4e, verified built).**
+  The `/ops/*` pages now send the admin Bearer token on every API call via new
+  `opsFetch` (lib/ops-fetch.ts) + `authHeader` (lib/auth). 22 sites across 11 pages.
+  Purely additive — backend still permissive, so no behavior change yet — but this
+  is the prerequisite for making the agent router strict without breaking the ops
+  console. Typechecks clean; built bundle confirmed to contain the wiring.
+- **NEXT (the strict flip):** harden `get_current_bank_user` (state.py:375) so
+  no-token → 401 and admin-token → operator scope; then add `Depends(get_current_bank_user)`
+  to the 23 A.2 agent endpoints. Verify each: curl no-token → 401, admin-token → 200.
+  ⚠️ Both the bank portal AND ops console now send tokens, but confirm the ops
+  console UI end-to-end (real login) right after the flip — curl proves the backend,
+  not the browser session.
+- Remaining after that: A.4 LRS (bank-scoping), A.5, Stage 0 network bind, prod promotion.
 
 ---
 
@@ -95,6 +117,35 @@ Rewrite `get_current_bank_user` (`state.py:375`):
 - Enforce **bank scoping** in the query (operators unrestricted, bank users
   filtered) — same rule as Stage 1.
 - **Test:** no/expired token ⇒ 401; bank user's export contains only their rows.
+
+### Stage 1b — Agent router (A.2/A.3, 23 endpoints) — DESIGN (from ops-console auth mapping)
+
+**Consumers & their current auth:**
+- **Bank portal** (`app/bank/*`) — already sends `Authorization: Bearer <bank token>`. ✅ No change.
+- **Ops console** (`app/ops/*`) — authenticated (layout gates on `los_admin_token` via
+  `ensureValidToken("admin")`, redirects to `/admin/login`), BUT page fetches use
+  `credentials: "include"` (httpOnly *refresh* cookie, which API routes don't validate) —
+  they do **not** send the admin token as a Bearer header. The token exists in
+  localStorage; it's just not attached. One-off exception: `app/ops/batch/page.tsx:126`
+  already sends it.
+
+**Fix:**
+1. Backend — harden `get_current_bank_user` (`agent/state.py:375`): no token → 401;
+   `user_type=="admin"` → operator (all banks); `user_type=="bank_user"` → bank-scoped.
+   Add `Depends(get_current_bank_user)` to the 23 A.2 endpoints (no dep today); A.3's 4
+   already have it.
+2. Frontend ops — attach `Authorization: Bearer <los_admin_token>` to every `app/ops/*`
+   backend call. Best via a single shared `opsFetch`/`opsPost` helper (wrap
+   `ensureValidToken("admin")` + header) replacing the ad-hoc `credentials:"include"`
+   fetches and the local `postJson` (batch:946). ~7 pages.
+3. Exports via `window.location.href` (can't send headers) → fetch+blob with the header
+   (ops/exports already does a blob download), or a signed one-time download token.
+
+**⚠️ DEPLOY ORDERING (critical — reverse order breaks the ops console):**
+1. Ship the **frontend** token-sending FIRST. Backend still accepts no-token, so nothing
+   breaks; ops console now sends Bearer on every call. Verify ops console fully works.
+2. THEN ship the **backend** strictness. Ops sends tokens → works; anonymous → 401.
+3. Verify: anon `curl /api/agent/calls` → 401; bank token → only that bank; admin token → all.
 
 ### Stage 3 — Sweep the remaining NONE/WEAK endpoints
 For every row in the appendix table:

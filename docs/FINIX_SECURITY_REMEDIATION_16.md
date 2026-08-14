@@ -24,7 +24,22 @@ least-risk-first; every step is independently testable and reversible.
   ⚠️ Both the bank portal AND ops console now send tokens, but confirm the ops
   console UI end-to-end (real login) right after the flip — curl proves the backend,
   not the browser session.
-- Remaining after that: A.4 LRS (bank-scoping), A.5, Stage 0 network bind, prod promotion.
+- **2026-08-14 — STRICT FLIP SHIPPED to QA (commits 141dc88 + fb35270, verified).**
+  - 2a: `get_current_bank_user` hardened (no-token→401, admin→operator, bank→scoped);
+    7 unit tests pass. Fixes the 4 A.3 endpoints. Verified /live-status: no-token 401, admin 200.
+  - 2b: added `Depends(get_current_bank_user)` to all 23 A.2 endpoints (calls.py 10,
+    batch.py 11, callbacks.py 2). Verified on QA: /calls, /export/all-calls,
+    /dashboard-stats, /emergency-stop, /upload-excel, /scheduled-callbacks all
+    return **401 anonymous**, admin token 200. **Anonymous access to call data /
+    exports / mass-calling control is CLOSED.**
+  - ⚠️ TODO: (a) end-to-end click-through of the ops console with a real login to
+    confirm the browser session (curl proves backend only); (b) tenant-scope the
+    bank_user queries so a bank officer sees only their bank (auth is in; per-row
+    bank filtering on /calls etc. is a follow-up — today bank users still see all
+    banks' rows, but no longer anonymously).
+- Remaining: A.4 LRS (5, bank-scoping — entangled w/ scorecard wiring), A.5 (5:
+  ops/in-flight, ops/errors, ops/phone-pools, generate-form-links, code-list),
+  Stage 0 network bind 0.0.0.0→127.0.0.1, prod promotion of the whole #16 set.
 
 ---
 

@@ -1513,6 +1513,26 @@ async def root():
 # AUTH ENDPOINTS
 # ============================================
 
+async def _record_login_audit(*, actor_type, actor_id, username, role, success,
+                              jti=None, bank_id=None, request=None, failure_reason=None):
+    """Best-effort login_audit write — never blocks or fails a login."""
+    try:
+        await db_pool.execute(
+            """INSERT INTO login_audit
+                   (event, actor_type, actor_id, username_tried, actor_username,
+                    actor_role, bank_id, success, jti, failure_reason,
+                    ip_address, user_agent)
+               VALUES ('login_success',$1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10)""",
+            actor_type, actor_id, username, role,
+            uuid.UUID(bank_id) if bank_id else None,
+            success, jti, failure_reason,
+            (request.client.host if request and request.client else None),
+            (request.headers.get("user-agent") if request else None),
+        )
+    except Exception as e:
+        logger.warning("login_audit write failed for %s: %s", username, e)
+
+
 @app.post("/api/auth/admin-login")
 async def auth_admin_login(payload: AdminLogin, request: Request):
     """Super admin login. Sets httpOnly refresh cookie. Rejects bank users."""
@@ -1534,6 +1554,8 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
     refresh_token, jti = create_refresh_token(user_id=user_id, role=row["role"], user_type="admin")
     await _store_refresh_token(user_id, jti, row["role"], "admin")
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
+    await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                              role=row["role"], success=True, jti=jti, request=request)
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1569,6 +1591,8 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     refresh_token, jti = create_refresh_token(user_id=user_id, role=row["role"], user_type="bank_user", bank_id=bank_id)
     await _store_refresh_token(user_id, jti, row["role"], "bank_user", bank_id)
     await db_pool.execute("UPDATE bank_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
+    await _record_login_audit(actor_type="bank_user", actor_id=row["id"], username=payload.username,
+                              role=row["role"], success=True, jti=jti, bank_id=bank_id, request=request)
     resp = JSONResponse({
         "token": access_token,
         "user": {

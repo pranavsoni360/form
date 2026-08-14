@@ -105,6 +105,26 @@ async def test_one_active_scorecard_per_bank(conn):
             )
 
 
+async def test_credit_ledger_debit_reduces_balance_and_autopauses(conn):
+    """Billing invariant: a debit that drives the balance <= 0 auto-pauses calling."""
+    bank_id = await _a_bank(conn)
+    await conn.execute("UPDATE banks SET credit_balance = 0, calling_paused = false WHERE id = $1", bank_id)
+    # topup ₹10 (credit is a positive amount; balance_after = balance + amount)
+    await conn.execute(
+        "INSERT INTO credit_ledger (bank_id, entry_type, amount, currency, actor_type) "
+        "VALUES ($1,'topup',10,'INR','system')", bank_id,
+    )
+    bal, paused = await conn.fetchrow("SELECT credit_balance, calling_paused FROM banks WHERE id=$1", bank_id)
+    assert bal == 10 and paused is False
+    # a ₹15 call debit (negative amount) overshoots -> balance negative, auto-paused
+    await conn.execute(
+        "INSERT INTO credit_ledger (bank_id, entry_type, amount, currency, actor_type) "
+        "VALUES ($1,'debit',-15,'INR','system')", bank_id,
+    )
+    bal, paused = await conn.fetchrow("SELECT credit_balance, calling_paused FROM banks WHERE id=$1", bank_id)
+    assert bal == -5 and paused is True
+
+
 async def test_notification_optout_unique(conn):
     await conn.execute(
         "INSERT INTO notification_optouts (bank_id, phone, channel) VALUES (NULL,$1,'whatsapp')",

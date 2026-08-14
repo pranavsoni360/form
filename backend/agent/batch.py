@@ -377,6 +377,27 @@ async def process_batch_run(batch_uuid_str: str = None):
         except Exception as _e:
             logger.warning("Could not load per-bank calling window for batch %s: %s", batch_id, _e)
 
+        # Prepaid guard: if this bank's wallet auto-paused (credit_ledger AFTER
+        # trigger sets banks.calling_paused when the balance hits <= 0), do NOT dial.
+        # No-op for banks not on billing (calling_paused defaults false, only the
+        # trigger ever flips it). Top up credit to resume.
+        try:
+            _bbid = batch.get("bank_id")
+            if _bbid:
+                _paused = await _state.db_pool.fetchval(
+                    "SELECT calling_paused FROM banks WHERE id = $1",
+                    _bbid if isinstance(_bbid, uuid.UUID) else uuid.UUID(str(_bbid)),
+                )
+                if _paused:
+                    logger.warning(
+                        "Batch %s skipped — bank %s calling is PAUSED (prepaid balance depleted). "
+                        "Top up credit to resume.", batch_id, _bbid,
+                    )
+                    await release_batch_lock()
+                    return
+        except Exception as _e:
+            logger.warning("Could not check calling_paused for batch %s: %s", batch_id, _e)
+
         # ── M4-lite: delegate per-call placement to the concurrent dispatcher ──
         from services.dispatcher import Dispatcher, manager as dispatcher_mgr
 

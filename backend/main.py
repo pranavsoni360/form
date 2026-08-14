@@ -2099,6 +2099,24 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
         app_dict["bank_code"] = bank["code"]
     return {"application": app_dict}
 
+async def _record_approval(app_id, bank_id, approver_type, approver, decision, notes):
+    """Best-effort write to application_approvals (v38 maker-checker audit trail) —
+    a first-class approver/decision record parallel to status_transitions. Never
+    blocks the decision."""
+    try:
+        await db_pool.execute(
+            """INSERT INTO application_approvals
+                   (application_id, bank_id, approver_type, approver_id, approver_name, decision, notes)
+               VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+            app_id, bank_id, approver_type,
+            uuid.UUID(approver["id"]) if approver.get("id") else None,
+            approver.get("full_name") or approver.get("username"),
+            decision, notes,
+        )
+    except Exception as e:
+        logger.warning("application_approvals write failed for %s: %s", app_id, e)
+
+
 @app.post("/api/bank/applications/{app_id}/officer-approve")
 async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_approved, record officer_id, officer_reviewed_at, officer_notes."""
@@ -2120,6 +2138,7 @@ async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict
         officer_id, now_utc(), body.notes, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "officer_approved", "bank_officer", officer_id, body.notes)
+    await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "approved", body.notes)
     return {"status": "success", "message": "Application approved by officer", "new_status": "officer_approved"}
 
 @app.post("/api/bank/applications/{app_id}/officer-reject")
@@ -2146,6 +2165,7 @@ async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict 
         officer_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "officer_rejected", "bank_officer", officer_id, rejection_notes)
+    await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "rejected", rejection_notes)
     # Send WhatsApp notification
     if app_row["phone"]:
         message = (
@@ -2212,6 +2232,7 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
                 print(f"[AiSensy Approval] {phone_formatted} → {resp.status_code} {resp.text}", flush=True)
             except Exception as e:
                 print(f"[AiSensy Approval] ERROR: {e}", flush=True)
+    await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", body.notes)
     return {"status": "success", "message": "Application approved by supervisor", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-reject")
@@ -2238,6 +2259,7 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
         supervisor_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "supervisor_rejected", "bank_supervisor", supervisor_id, rejection_notes)
+    await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "rejected", rejection_notes)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2320,6 +2342,7 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
                 print(f"[AiSensy Disburse] {phone_formatted} → {resp.status_code} {resp.text}", flush=True)
             except Exception as e:
                 print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
+    await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", (body.notes or "") + " [disbursement initiated]")
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/cancel")

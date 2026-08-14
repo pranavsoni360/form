@@ -15,6 +15,7 @@
  */
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import {
   CalendarDays,
   Download,
@@ -88,7 +89,7 @@ export default function OpsExportsPage() {
     setJsonError("");
     try {
       // Pull a big page; bumping page_size to the backend's max=200.
-      const res = await fetch(`${API_URL}/api/agent/calls?page=1&page_size=200`, {
+      const res = await opsFetch(`${API_URL}/api/agent/calls?page=1&page_size=200`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -17,6 +17,7 @@
  */
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   ChevronLeft,
@@ -156,7 +157,7 @@ export default function OpsCallsPage() {
       if (leadFilter !== "all") params.set("lead_quality", leadFilter);
       if (formFilter !== "all") params.set("form_sent", formFilter);
       if (dateFilter) params.set("date", dateFilter);
-      const res = await fetch(`${API_URL}/api/agent/calls?${params.toString()}`, {
+      const res = await opsFetch(`${API_URL}/api/agent/calls?${params.toString()}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -181,7 +182,7 @@ export default function OpsCallsPage() {
   // Global KPI counts — lightweight count-only queries (page_size=1, just read `total`)
   const fetchCount = async (params: Record<string, string>) => {
     const p = new URLSearchParams({ page_size: "1", ...params });
-    const res = await fetch(`${API_URL}/api/agent/calls?${p}`, { credentials: "include" });
+    const res = await opsFetch(`${API_URL}/api/agent/calls?${p}`, { credentials: "include" });
     if (!res.ok) return 0;
     return ((await res.json()) as CallsResponse).total ?? 0;
   };

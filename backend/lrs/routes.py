@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from agent.state import get_current_bank_user
+
 logger = logging.getLogger("lrs-routes")
 
 router = APIRouter()
@@ -32,7 +34,7 @@ def _row_to_payload(row) -> dict:
 
 
 @router.get("/score/{application_id}")
-async def get_score(application_id: str):
+async def get_score(application_id: str, user: dict = Depends(get_current_bank_user)):
     """Return the stored LRS score for an application (or 404 if not scored yet)."""
     from agent import state as _state
     db_pool = _state.db_pool
@@ -49,7 +51,7 @@ async def get_score(application_id: str):
 
 
 @router.post("/rescore/{application_id}")
-async def rescore(application_id: str):
+async def rescore(application_id: str, user: dict = Depends(get_current_bank_user)):
     """Force a re-score against the latest active config (officer-triggered)."""
     from agent import state as _state
     db_pool = _state.db_pool
@@ -75,7 +77,7 @@ _RESCORABLE_STATUSES = ("draft", "submitted", "documents_submitted")
 
 
 @router.post("/rescore-pending")
-async def rescore_pending():
+async def rescore_pending(user: dict = Depends(get_current_bank_user)):
     """Bulk re-score every already-scored, PRE-DECISION application against the
     latest active config (use after editing the scorecard). Runs async via the
     job queue with force=True; decided/disbursed applications are never touched."""
@@ -108,7 +110,7 @@ async def rescore_pending():
 # ── Scorecard config endpoints (bank-configurable) ────────────────────────────
 
 @router.get("/config")
-async def get_config():
+async def get_config(user: dict = Depends(get_current_bank_user)):
     """Return the active scorecard config (bank-editable)."""
     from agent import state as _state
     from lrs import scorecard as sc_module
@@ -117,7 +119,7 @@ async def get_config():
 
 
 @router.put("/config")
-async def put_config(request: Request):
+async def put_config(request: Request, user: dict = Depends(get_current_bank_user)):
     """Validate and persist a new scorecard config. Takes effect immediately."""
     from agent import state as _state
     from lrs import scorecard as sc_module

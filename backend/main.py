@@ -2314,7 +2314,7 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
 # ============================================
 
 @app.post("/api/generate-form-links")
-async def generate_form_links(request: Request):
+async def generate_form_links(request: Request, admin: dict = Depends(get_current_admin)):
     data = await request.json()
     customers_data = data.get("customers", [])
     bank_id_str = data.get("bank_id")

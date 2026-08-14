@@ -68,7 +68,7 @@ def _date_range_bounds(date_from: Optional[str], date_to: Optional[str],
 # ============================================================================
 
 @router.get("/call/{call_id}")
-async def get_call_alias(call_id: str):
+async def get_call_alias(call_id: str, user: dict = Depends(get_current_bank_user)):
     """Alias for /calls/{call_id} (reference UI compatibility)."""
     try:
         call_uuid = uuid.UUID(call_id)
@@ -90,7 +90,7 @@ async def get_call_alias(call_id: str):
     return result
 
 @router.get("/call/{call_id}/transcript")
-async def get_call_transcript_alias(call_id: str):
+async def get_call_transcript_alias(call_id: str, user: dict = Depends(get_current_bank_user)):
     """Alias for /calls/{call_id}/transcript (reference UI compatibility)."""
     try:
         call_uuid = uuid.UUID(call_id)
@@ -122,7 +122,7 @@ async def list_calls(
     date_to: Optional[str] = None,
     lead_quality: Optional[str] = None,
     form_sent: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """List calls with pagination and filters. Bank-scoped if authenticated, all calls for operators."""
     bank_uuid = None  # operator — no bank scoping
@@ -274,7 +274,7 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
 async def categorize_call(
     call_id: str,
     data: CallCategorizeRequest,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Manually categorize / remark a call."""
     try:
@@ -437,7 +437,7 @@ async def submit_form(call_id: str, request: Request):
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
     date: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Dashboard statistics (all calls, no bank scoping)."""
     date_clause = ""
@@ -505,6 +505,7 @@ async def get_dashboard_stats(
 async def get_funnel(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    user: dict = Depends(get_current_bank_user),
 ):
     """Conversion funnel for the /ops/funnel dashboard.
 
@@ -586,7 +587,7 @@ async def get_funnel(
 
 
 @router.get("/analytics")
-async def get_analytics():
+async def get_analytics(user: dict = Depends(get_current_bank_user)):
     """Analytics summary (all calls)."""
     base = "SELECT COUNT(*) FROM agent_calls WHERE TRUE"
 
@@ -622,7 +623,7 @@ async def get_analytics():
 @router.get("/export/daily-report")
 async def export_daily_report(
     date: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Export daily report as Excel."""
     bank_uuid = None  # operator — no bank scoping
@@ -682,7 +683,7 @@ async def export_all_calls(
     category: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    # no auth — operator access
+    user: dict = Depends(get_current_bank_user),
 ):
     """Comprehensive Excel export with all call data."""
     # Operator/admin endpoint — NO bank scoping (mirrors export_daily_report,
@@ -847,7 +848,7 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
 
 
 @router.post("/stale-cleanup")
-async def stale_cleanup():
+async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
     """Clean up calls stuck in 'Calling' status.
 
     Operator action (no auth) — matches /emergency-stop, /resume-calling,

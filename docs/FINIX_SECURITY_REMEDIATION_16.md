@@ -37,9 +37,30 @@ least-risk-first; every step is independently testable and reversible.
     bank_user queries so a bank officer sees only their bank (auth is in; per-row
     bank filtering on /calls etc. is a follow-up — today bank users still see all
     banks' rows, but no longer anonymously).
-- Remaining: A.4 LRS (5, bank-scoping — entangled w/ scorecard wiring), A.5 (5:
-  ops/in-flight, ops/errors, ops/phone-pools, generate-form-links, code-list),
-  Stage 0 network bind 0.0.0.0→127.0.0.1, prod promotion of the whole #16 set.
+- **2026-08-14 — A.4 + A.5 SHIPPED to QA (commit ba2178f, verified).** LRS (5:
+  score/rescore/rescore-pending/get-config/put-config) + ops (in-flight/errors/
+  phone-pools) now Depends(get_current_bank_user); generate-form-links →
+  get_current_admin. Verified: all 401 anonymous, admin 200; PUT /lrs/config 401
+  (was: anyone rewrites the scorecard). code-list left public (dropdown data).
+- **2026-08-14 — OPS CONSOLE E2E VERIFIED.** Injected a real admin token and drove
+  the live QA ops console in a browser: /ops/calls (135 calls rendered), /ops/batch
+  (banks/batch-status/uploads/phone-pools/SSE), /ops/live (in-flight-calls),
+  /ops/errors — every request 200 OK. The strict flip did not break the UI.
+
+### ✅ ALL 40 problem endpoints addressed (QA)
+A.1(3)+A.2(23)+A.3(4)+A.4(5)+A.5(4, code-list public) — anonymous access to loan
+approval, Aadhaar, call data, exports, mass-calling control, scorecard rewrite,
+and ops views is CLOSED. Ops console + bank portal both authenticate and work.
+
+### Remaining (not endpoint-auth)
+1. **Tenant-scoping** — bank_user queries on the agent router aren't bank-filtered
+   yet (a bank officer sees other banks' call rows; no longer anonymous). Follow-up
+   query work; operators (admin) legitimately see all.
+2. **Stage 0 network bind** 0.0.0.0→127.0.0.1 on the uvicorn units — defense-in-depth
+   (auth already gates the direct ports). VERIFY nothing connects to the backend via
+   the public IP (LiveKit agents / SSR) before binding, or it breaks ingest.
+3. **🔴 PROD PROMOTION** — the entire #16 set is QA-only; prod is still fully
+   vulnerable. Needs a reviewed qa→master merge + prod deploy + re-verify.
 
 ---
 

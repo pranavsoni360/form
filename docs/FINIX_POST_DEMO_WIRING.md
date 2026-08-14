@@ -16,11 +16,13 @@ This document is the precise map of what still needs *code* wiring.
 - **Document dual-write** — both upload endpoints write to `application_documents` (any doc type); legacy `*_url` write made best-effort (fixes the 5 phantom-column 500s).
 - **Billing debit-per-call** — transcript webhook debits the bank wallet per-minute at its rate_card (best-effort + idempotent); dispatcher skips `calling_paused` banks; auto-pause at ₹0 verified. **Dormant until a bank gets `rate_card_id` assigned.**
 
+- **Consent-check before send** ✅ (2026-08-14) — `is_phone_opted_out` guards send_whatsapp_message + send_whatsapp_aisensy; OTP + in-call form-link stay transactional. Last-10-digit match verified.
+- **login_audit** ✅ (2026-08-14) — admin-login + bank-login write login_audit on success (best-effort).
+
 ## ⏳ STILL TO WIRE
 - **Scorecard engine → live version**: LRS engine still reads global `lrs_scorecard_config`; make it read the bank's live `scorecard_versions` row + stamp the scored version onto the application.
 - **Retention purge job**: scheduled deletion of recordings/PII past `bank_retention_config` days when `auto_purge_enabled` (⚠️ deletion — build carefully with dry-run first).
-- **Consent-check before send**: skip recipients present in `notification_optouts` before any WhatsApp/SMS send.
-- **Audit-table writes**: ensure `login_audit` on every login + disbursement logging.
+- **Disbursement logging**: log disbursement events to the audit trail.
 
 ---
 

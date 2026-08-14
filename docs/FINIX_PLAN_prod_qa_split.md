@@ -18,6 +18,30 @@ Three independent tracks; ship in this order.
 
 ---
 
+## ⏱ Track A status (2026-08-14)
+**Confirmed state:** QA and prod use the **identical** two numbers + LiveKit trunks —
+`+15076046329` / `ST_2h7bcKSkRDHm` and `+918071583503` / `ST_tVeDdcm85jZh`. (Trunk is
+chosen per-number from `phone_numbers.livekit_trunk_id`, not a global env.) The India
+Vobiz trunk has **3 channels**; prod dispatches at the default **5**, QA was at **3** —
+so QA testing directly contends on the shared India trunk.
+
+**Interim protection applied (QA-only, safe):** QA `DISPATCHER_CONCURRENCY` set to **1**
+(`.env.qa`, backup `/tmp/.env.qa.bak`, QA backend restarted). QA can now hold at most 1
+of the 3 shared India channels, leaving ≥2 for prod. This *reduces* contention; it does
+not eliminate the shared-trunk risk.
+
+**BLOCKED on procurement:** a true split needs a **dedicated QA DID + LiveKit outbound
+trunk**. No spare number exists — both are in prod use. This must be bought from the
+telephony vendor (Vobiz / Twilio) before the split can complete.
+
+**Swap runbook — once a QA number + trunk is provisioned:**
+1. In `los_form_qa`: `UPDATE phone_numbers` (or insert) so QA's pool contains ONLY the new
+   QA number + its `livekit_trunk_id`; remove/deactivate the two prod numbers from QA's pool.
+2. Restore QA `DISPATCHER_CONCURRENCY` to the QA trunk's channel count.
+3. Verify: a QA test call lands on the QA trunk; place a concurrent prod call and confirm
+   the prod India-trunk channel count is unaffected.
+- Rollback: re-point QA `phone_numbers` at the prod numbers (revert the rows) + restore concurrency.
+
 ## Track A — SIP / phone separation (highest value, do first)
 **Problem:** QA test calls burn prod channels + spoof prod caller-ID.
 1. Provision a **separate SIP trunk + test DID** with the telephony vendor (Vobiz/Twilio) for QA — ideally a low-cost/sandbox number.

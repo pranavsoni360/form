@@ -447,10 +447,17 @@ async def get_dashboard_stats(
     date: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
-    """Dashboard statistics (all calls, no bank scoping)."""
+    """Dashboard statistics (bank-scoped for bank users, all banks for operators)."""
     date_clause = ""
     params: list = []
     idx = 1
+
+    bank_uuid = _bank_uuid(user)  # operator -> None (all banks); bank_user -> their bank
+    bank_clause = ""
+    if bank_uuid:
+        bank_clause = f" AND bank_id = ${idx}"
+        params.append(bank_uuid)
+        idx += 1
 
     if date:
         try:
@@ -462,7 +469,7 @@ async def get_dashboard_stats(
         except ValueError:
             pass
 
-    base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{date_clause}"
+    base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{bank_clause}{date_clause}"
 
     total = await _state.db_pool.fetchval(base, *params)
     whatsapp_forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true", *params)
@@ -531,6 +538,12 @@ async def get_funnel(
     params: list = []
     idx = 1
 
+    bank_uuid = _bank_uuid(user)  # operator -> None (all banks); bank_user -> their bank
+    if bank_uuid:
+        where += f" AND bank_id = ${idx}"
+        params.append(bank_uuid)
+        idx += 1
+
     def _parse(d: str) -> Optional[datetime]:
         try:
             return _ist_midnight(d)
@@ -597,21 +610,27 @@ async def get_funnel(
 @router.get("/analytics")
 async def get_analytics(user: dict = Depends(get_current_bank_user)):
     """Analytics summary (all calls)."""
-    base = "SELECT COUNT(*) FROM agent_calls WHERE TRUE"
+    bank_uuid = _bank_uuid(user)  # operator -> None (all banks); bank_user -> their bank
+    bank_clause = ""
+    params: list = []
+    if bank_uuid:
+        bank_clause = " AND bank_id = $1"
+        params.append(bank_uuid)
+    base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{bank_clause}"
 
-    total = await _state.db_pool.fetchval(base)
-    forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true")
-    interested = await _state.db_pool.fetchval(f"{base} AND interested = true")
+    total = await _state.db_pool.fetchval(base, *params)
+    forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true", *params)
+    interested = await _state.db_pool.fetchval(f"{base} AND interested = true", *params)
     success_rate = await _state.db_pool.fetchval(
-        f"{base} AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')")
+        f"{base} AND status IN ('Called', 'Completed', 'Called - Interested', 'Called - Not Interested')", *params)
     failure_rate = await _state.db_pool.fetchval(
-        f"{base} AND status IN ('Failed', 'Not Answered', 'Call Not Connected')")
-    hot = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'")
-    warm = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'")
-    cold = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'cold'")
-    edu = await _state.db_pool.fetchval(f"{base} AND loan_type = 'education'")
-    biz = await _state.db_pool.fetchval(f"{base} AND loan_type = 'business'")
-    per = await _state.db_pool.fetchval(f"{base} AND loan_type = 'personal'")
+        f"{base} AND status IN ('Failed', 'Not Answered', 'Call Not Connected')", *params)
+    hot = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'", *params)
+    warm = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'", *params)
+    cold = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'cold'", *params)
+    edu = await _state.db_pool.fetchval(f"{base} AND loan_type = 'education'", *params)
+    biz = await _state.db_pool.fetchval(f"{base} AND loan_type = 'business'", *params)
+    per = await _state.db_pool.fetchval(f"{base} AND loan_type = 'personal'", *params)
 
     return {
         "total_calls_made": total,

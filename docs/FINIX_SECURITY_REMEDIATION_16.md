@@ -56,11 +56,18 @@ and ops views is CLOSED. Ops console + bank portal both authenticate and work.
 1. **Tenant-scoping** — bank_user queries on the agent router aren't bank-filtered
    yet (a bank officer sees other banks' call rows; no longer anonymous). Follow-up
    query work; operators (admin) legitimately see all.
-2. **Stage 0 network bind** 0.0.0.0→127.0.0.1 on the uvicorn units — defense-in-depth
-   (auth already gates the direct ports). VERIFY nothing connects to the backend via
-   the public IP (LiveKit agents / SSR) before binding, or it breaks ingest.
+2. **Stage 0 network bind — DONE on QA (2026-08-14).** `los-backend-qa.service`
+   ExecStart changed `--host 0.0.0.0` → `--host 127.0.0.1` (backup at
+   /tmp/los-backend-qa.service.bak); verified: 8300 now binds 127.0.0.1 only, nginx
+   :8445 still serves. Confirmed safe first: nothing connects via the public IP,
+   transcript webhook is loopback-gated so agents already use loopback, nginx
+   upstream is 127.0.0.1:8300. NOTE: this is a live unit edit; deploy.sh:399 (prod)
+   still says 0.0.0.0 — left unchanged deliberately so a routine prod deploy doesn't
+   rebind unverified. Prod rebind = a deliberate step during promotion.
 3. **🔴 PROD PROMOTION** — the entire #16 set is QA-only; prod is still fully
-   vulnerable. Needs a reviewed qa→master merge + prod deploy + re-verify.
+   vulnerable. Needs (a) reviewed qa→master merge + prod deploy, (b) prod backend
+   rebind to loopback (edit los-backend prod unit like QA), (c) re-verify curl +
+   admin console on prod. NEEDS EXPLICIT SIGN-OFF ("don't push master without OK").
 
 ---
 

@@ -114,7 +114,7 @@ async def get_config(user: dict = Depends(get_current_bank_user)):
     """Return the active scorecard config (bank-editable)."""
     from agent import state as _state
     from lrs import scorecard as sc_module
-    cfg = await sc_module.get_db_config(_state.db_pool)
+    cfg = await sc_module.get_db_config(_state.db_pool, user.get("bank_id"))
     return cfg
 
 
@@ -128,7 +128,12 @@ async def put_config(request: Request, user: dict = Depends(get_current_bank_use
     except Exception:
         raise HTTPException(status_code=400, detail="invalid JSON body")
     try:
-        await sc_module.save_db_config(_state.db_pool, body)
+        if user.get("bank_id"):
+            # bank editor → new live per-bank version
+            await sc_module.save_bank_config(_state.db_pool, user["bank_id"], body)
+        else:
+            # operator/admin → the global default template new banks seed from
+            await sc_module.save_db_config(_state.db_pool, body)
     except sc_module.ScorecardConfigError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return {"ok": True, "config_version": body.get("config_version", "")}

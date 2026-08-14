@@ -52,7 +52,7 @@ async def run_and_persist(db_pool, application_id, *, force: bool = False) -> di
     )
 
     try:
-        config = await sc_module.get_db_config(db_pool)
+        config = await sc_module.get_db_config(db_pool, app.get("bank_id"))
         result = await service.score_application(app, config=config)
     except Exception as e:
         await db_pool.execute(

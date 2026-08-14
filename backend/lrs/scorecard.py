@@ -151,12 +151,54 @@ def config_version() -> str:
 
 # ── DB-backed config (bank-configurable, mutable) ─────────────────────────────
 
-_live_config: dict | None = None  # in-process cache; invalidated on PUT /api/lrs/config
+_live_config: dict | None = None            # global-config cache (fallback / operator)
+_live_config_by_bank: dict[str, dict] = {}  # per-bank live-version cache
 
 
-async def get_db_config(pool) -> dict:
-    """Return active scorecard config from DB; seeds from file on first call."""
+def _decode_config(raw):
+    # asyncpg returns JSONB as a str unless a codec is registered on the pool;
+    # accept either a str (json) or an already-decoded dict.
+    return json.loads(raw) if isinstance(raw, str) else dict(raw)
+
+
+def invalidate_config_cache(bank_id=None) -> None:
+    """Clear the in-process config cache — a specific bank, or everything."""
     global _live_config
+    if bank_id is None:
+        _live_config = None
+        _live_config_by_bank.clear()
+    else:
+        _live_config_by_bank.pop(str(bank_id), None)
+
+
+async def get_db_config(pool, bank_id=None) -> dict:
+    """Return the active scorecard config.
+
+    If ``bank_id`` has a LIVE per-bank version (scorecard_versions), use it;
+    otherwise fall back to the global lrs_scorecard_config (id=1), which also
+    seeds new banks. Operators (bank_id=None) always get the global config.
+    """
+    global _live_config
+
+    # ── per-bank live version ──
+    if bank_id is not None:
+        key = str(bank_id)
+        cached = _live_config_by_bank.get(key)
+        if cached is not None:
+            return cached
+        row = await pool.fetchrow(
+            "SELECT config FROM scorecard_versions "
+            "WHERE bank_id = $1::uuid AND status = 'live' AND is_deleted = false "
+            "ORDER BY version_number DESC LIMIT 1",
+            key,
+        )
+        if row:
+            cfg = _decode_config(row["config"])
+            _live_config_by_bank[key] = cfg
+            return cfg
+        # no live version for this bank → fall through to the global config
+
+    # ── global config (fallback / operator) ──
     if _live_config is not None:
         return _live_config
     row = await pool.fetchrow("SELECT config FROM lrs_scorecard_config WHERE id = 1")
@@ -164,10 +206,7 @@ async def get_db_config(pool) -> dict:
         cfg = load_scorecard()
         await save_db_config(pool, cfg)
         return cfg
-    # asyncpg returns JSONB as a str unless a codec is registered on the pool;
-    # accept either a str (json) or an already-decoded dict.
-    raw = row["config"]
-    cfg = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    cfg = _decode_config(row["config"])
     _live_config = cfg
     return cfg
 
@@ -183,3 +222,29 @@ async def save_db_config(pool, config: dict) -> None:
         json.dumps(config),
     )
     _live_config = config
+
+
+async def save_bank_config(pool, bank_id, config: dict) -> int:
+    """Persist a new LIVE scorecard version for one bank (archiving the previous
+    live one, so the one-live-per-bank index holds). Validates first. Returns the
+    new version_number and refreshes the per-bank cache."""
+    _validate_scorecard(config)
+    key = str(bank_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE scorecard_versions SET status='archived', updated_at=NOW() "
+                "WHERE bank_id=$1::uuid AND status='live'",
+                key,
+            )
+            nextver = await conn.fetchval(
+                "SELECT COALESCE(MAX(version_number),0)+1 FROM scorecard_versions WHERE bank_id=$1::uuid",
+                key,
+            )
+            await conn.execute(
+                "INSERT INTO scorecard_versions (bank_id, version_number, config, status, change_summary) "
+                "VALUES ($1::uuid, $2, $3::jsonb, 'live', 'edited via scorecard editor')",
+                key, nextver, json.dumps(config),
+            )
+    invalidate_config_cache(key)
+    return nextver

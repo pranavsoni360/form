@@ -1091,7 +1091,33 @@ def generate_random_password(length: int = 12) -> str:
     chars = string.ascii_letters + string.digits + "!@#$%"
     return ''.join(secrets.choice(chars) for _ in range(length))
 
+async def is_phone_opted_out(phone: str, channel: str = "whatsapp") -> bool:
+    """DPDP consent check: True if this phone has a standing opt-out for the
+    channel (from notification_optouts). Matches on the last 10 digits so 10-digit
+    / 91-prefixed / +91 forms all resolve. Best-effort: any error returns False
+    (never block a send on a failed check). OTP is transactional and is NOT gated
+    by this — only outreach/notification sends call it.
+    """
+    try:
+        digits = "".join(c for c in (phone or "") if c.isdigit())
+        last10 = digits[-10:]
+        if len(last10) < 10:
+            return False
+        hit = await db_pool.fetchval(
+            "SELECT 1 FROM notification_optouts WHERE channel IN ($1, 'all') "
+            "AND right(regexp_replace(phone, '\\D', '', 'g'), 10) = $2 LIMIT 1",
+            channel, last10,
+        )
+        return hit is not None
+    except Exception as e:
+        logger.warning("opt-out check failed for %s: %s", phone, e)
+        return False
+
+
 async def send_whatsapp_message(phone: str, message: str, token_id: str = None):
+    if await is_phone_opted_out(phone):
+        logger.info("WhatsApp text skipped — %s has opted out (DPDP)", phone)
+        return {"status": "skipped", "reason": "opted_out"}
     if not WHATSAPP_API_TOKEN or not WHATSAPP_PHONE_ID:
         print(f"[WhatsApp STUB] Would send to {phone}: {message[:80]}...")
         return {"status": "simulated"}
@@ -1144,6 +1170,9 @@ async def send_otp_via_aisensy(phone: str, otp: str) -> dict:
             return {"status": "failed", "error": str(e)}
 
 async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params: list = None):
+    if await is_phone_opted_out(phone):
+        logger.info("AiSensy campaign skipped — %s has opted out (DPDP)", phone)
+        return {"status": "skipped", "reason": "opted_out"}
     if not AISENSY_API_KEY:
         print(f"[AiSensy STUB] Would send to {phone}")
         return {"status": "simulated"}

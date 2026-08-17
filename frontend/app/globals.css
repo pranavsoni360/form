@@ -470,6 +470,34 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
   [class*="border-gray-"], [class*="border-slate-"]
 ) { border-color: var(--fx-border) !important; }
 
+/* Semantic colours in the same legacy panels + components/shared/
+   BatchPreviewModal (the /bank/batch upload-confirmation modal). Saturated
+   emerald/amber/red buttons and text read as a different product next to the
+   Finix accent, so they map onto the status tokens. Only these three families
+   appear in the bridged components — checked, not assumed. */
+.finix-root :is(.bg-emerald-600, .bg-emerald-700, .bg-green-600, .bg-green-700) {
+  background: var(--fx-accent-grad) !important;
+  box-shadow: var(--fx-accent-glow);
+}
+.finix-root :is(.text-emerald-700, .text-emerald-600, .text-emerald-300, .text-emerald-400) {
+  color: var(--fx-green) !important;
+}
+.finix-root :is(.text-amber-700, .text-amber-600, .text-amber-300, .text-amber-400) {
+  color: var(--fx-amber) !important;
+}
+.finix-root :is(.text-red-700, .text-red-600, .text-red-300, .text-red-400, .text-rose-600, .text-rose-500) {
+  color: var(--fx-red) !important;
+}
+.finix-root :is(.bg-emerald-50, .bg-emerald-100, .bg-green-50, [class*="bg-emerald-900"]) {
+  background-color: var(--fx-green-tint) !important;
+}
+.finix-root :is(.bg-amber-50, .bg-amber-100, [class*="bg-amber-900"]) {
+  background-color: var(--fx-amber-tint) !important;
+}
+.finix-root :is(.bg-red-50, .bg-red-100, .bg-rose-50, [class*="bg-red-900"]) {
+  background-color: var(--fx-red-tint) !important;
+}
+
 /* Record-view field grid (components/finix/Tabs.tsx DataGrid). Hairlines are
    drawn as right/bottom borders on each cell, so the grid stays correct however
    the auto-fit columns wrap — a gap-based 1px background would leak the divider

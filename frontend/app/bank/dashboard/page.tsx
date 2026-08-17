@@ -221,7 +221,7 @@ export default function BankDashboardPage() {
           placeholder="Search name, phone, loan ID…"
           className="w-full rounded-[10px] bg-fx-surface2 px-3 py-2 text-[13px] text-fx-text outline-none placeholder:text-fx-text3 focus:shadow-[inset_0_0_0_1px_var(--fx-accent)] sm:max-w-xs"
         />
-        <DateRangeFilter value={dateRange} onChange={setDateRange} finix />
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       <Card>

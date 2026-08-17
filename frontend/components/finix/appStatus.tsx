@@ -94,6 +94,49 @@ export function FormStatusPill({ status }: { status?: string | null }) {
 }
 
 /**
+ * Batch / call run-state pill. This is a THIRD status vocabulary, distinct from
+ * application status and from the call-outcome statuses in callStatus.tsx: it
+ * describes a batch's run state (running / paused / completed / failed) or a
+ * per-row dialling state. Tone mapping copied from the legacy batch page's
+ * StatusBadge, including its lowercase comparison and 'pending' fallback label.
+ */
+export function BatchStatusPill({ status }: { status?: string | null }) {
+  const s = (status || "").toLowerCase();
+  let tone: FinixTone = "neutral";
+  if (s === "completed") tone = "green";
+  else if (s === "running" || s === "in_progress" || s === "calling") tone = "accent";
+  else if (s === "failed") tone = "red";
+  else if (s === "paused" || s === "scheduled") tone = "amber";
+  return <Pill tone={tone}>{status || "pending"}</Pill>;
+}
+
+/**
+ * WhatsApp form-link delivery state. Reads the explicit form_status column
+ * (written from the real AiSensy accept/fail) and falls back to the legacy
+ * boolean for old rows — "Sent" = AiSensy accepted (queued), "Failed" =
+ * rejected. Copied from the batch page's FORM_STATUS_VIEW so the words and the
+ * fallback behaviour are unchanged.
+ */
+const FORM_DELIVERY: Record<string, { label: string; tone: FinixTone }> = {
+  sent: { label: "Sent", tone: "green" },
+  delivered: { label: "Delivered", tone: "green" },
+  sending: { label: "Sending", tone: "accent" },
+  pending: { label: "Pending", tone: "amber" },
+  failed: { label: "Failed", tone: "red" },
+};
+
+export function FormDeliveryMark({ call }: { call: any }) {
+  const key = (call?.form_status as string) || (call?.form_sent ? "sent" : "not_sent");
+  const meta = FORM_DELIVERY[key];
+  if (!meta) return <span className="text-fx-text3">—</span>;
+  return (
+    <span className="text-[12px]" style={{ color: `var(--fx-${meta.tone === "accent" ? "accent" : meta.tone})` }}>
+      {meta.label}
+    </span>
+  );
+}
+
+/**
  * AI/system score pill. Thresholds copied from the legacy applications list:
  * >=70 green, >=50 amber, below that red. Kept here so every screen that shows
  * a score bands it identically.

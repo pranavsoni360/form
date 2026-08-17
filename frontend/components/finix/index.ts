@@ -18,6 +18,8 @@ export {
   SuggestionPill,
   InterestPill,
   FormStatusPill,
+  BatchStatusPill,
+  FormDeliveryMark,
   ScorePill,
   KycMarks,
   appStatusTone,

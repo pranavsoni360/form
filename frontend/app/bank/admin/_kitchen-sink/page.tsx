@@ -39,6 +39,27 @@ import {
   formatINR,
   formatDateTime,
   formatDuration,
+  Field,
+  Input,
+  Textarea,
+  Select,
+  Checkbox,
+  Range,
+  FieldRow,
+  Dropzone,
+  Progress,
+  IndeterminateBar,
+  Utilization,
+  LiveDot,
+  AreaChartFx,
+  LineChartFx,
+  BarChartFx,
+  AppStatusPill,
+  SuggestionPill,
+  InterestPill,
+  FormStatusPill,
+  ScorePill,
+  KycMarks,
   type Column,
 } from "@/components/finix";
 
@@ -66,12 +87,41 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// Chart fixtures — a shape close to what /ops/analytics and /ops/funnel show.
+const SERIES_DATA = [
+  { label: "09:00", calls: 120, errors: 4 },
+  { label: "10:00", calls: 210, errors: 9 },
+  { label: "11:00", calls: 480, errors: 12 },
+  { label: "12:00", calls: 390, errors: 7 },
+  { label: "13:00", calls: 260, errors: 3 },
+  { label: "14:00", calls: 610, errors: 21 },
+  { label: "15:00", calls: 540, errors: 15 },
+  { label: "16:00", calls: 300, errors: 6 },
+];
+
+const FUNNEL_DATA = [
+  { step: "Dialled", n: 8642 },
+  { step: "Connected", n: 6210 },
+  { step: "Form sent", n: 3180 },
+  { step: "Submitted", n: 1490 },
+  { step: "Approved", n: 640 },
+];
+
 export default function KitchenSink() {
   const [filter, setFilter] = React.useState<"all" | "active" | "invited">("all");
   const [toggleA, setToggleA] = React.useState(true);
   const [toggleB, setToggleB] = React.useState(false);
   const [modal, setModal] = React.useState(false);
   const [panel, setPanel] = React.useState(false);
+
+  // Job-2 extension demo state.
+  const [text, setText] = React.useState("Anjali Pawar");
+  const [num, setNum] = React.useState(42);
+  const [sel, setSel] = React.useState("personal");
+  const [note, setNote] = React.useState("");
+  const [check, setCheck] = React.useState(true);
+  const [weight, setWeight] = React.useState(65);
+  const [picked, setPicked] = React.useState<string | null>(null);
 
   const cols: Column<Row>[] = [
     { key: "name", header: "Name", render: (r) => <TwoLine primary={r.name} secondary={<span className="fx-mono">{r.username}</span>} /> },
@@ -176,6 +226,159 @@ export default function KitchenSink() {
         <Table columns={cols} rows={ROWS} rowKey={(r) => r.id} onRowClick={() => {}} />
         <CallLegend />
       </Card>
+
+      {/* ── Job 2 extensions ─────────────────────────────────────────────── */}
+
+      <Section title="Application status vocabulary (Job 2)">
+        <div className="flex flex-wrap items-center gap-2">
+          {["draft", "submitted", "system_reviewed", "officer_approved", "documents_submitted", "approved", "officer_rejected", "disbursed", "cancelled"].map((s) => (
+            <AppStatusPill key={s} status={s} />
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <SuggestionPill suggestion="approve" />
+          <SuggestionPill suggestion="review" />
+          <SuggestionPill suggestion="deny" />
+          <InterestPill interested={true} />
+          <InterestPill interested={false} />
+          <InterestPill interested={null} />
+          <FormStatusPill status="completed" />
+          <FormStatusPill status="in_progress" />
+          <FormStatusPill status="pending" />
+          <ScorePill score={91} />
+          <ScorePill score={61} />
+          <ScorePill score={34} />
+          <KycMarks panVerified aadhaarVerified />
+          <KycMarks panVerified />
+        </div>
+      </Section>
+
+      <Section title="Form controls (Job 2 — scorecard / settings / batch / login)">
+        <FieldRow>
+          <Field label="Full name" htmlFor="ks-name" required>
+            <Input id="ks-name" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Anjali Pawar" />
+          </Field>
+          <Field label="Username" htmlFor="ks-user" error="Username is already taken.">
+            <Input id="ks-user" invalid value="anjali_pawar" onChange={() => {}} />
+          </Field>
+          <Field label="Weight" htmlFor="ks-num" hint="0–100, one decimal allowed.">
+            <Input id="ks-num" type="number" min={0} max={100} step={0.1} value={num} onChange={(e) => setNum(Number(e.target.value))} />
+          </Field>
+          <Field label="Loan type" htmlFor="ks-sel">
+            <Select id="ks-sel" value={sel} onChange={(e) => setSel(e.target.value)}>
+              <option value="personal">Personal</option>
+              <option value="consumer_durable">Consumer durable</option>
+            </Select>
+          </Field>
+          <Field label="Calling window opens" htmlFor="ks-time">
+            <Input id="ks-time" type="time" defaultValue="09:30" />
+          </Field>
+          <Field label="Cut-off date" htmlFor="ks-date">
+            <Input id="ks-date" type="date" defaultValue="2026-08-31" />
+          </Field>
+        </FieldRow>
+        <Field label="Reason for change" htmlFor="ks-note" hint="Recorded in the activity log.">
+          <Textarea id="ks-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note…" />
+        </Field>
+        <div className="flex flex-wrap items-center gap-6">
+          <Checkbox checked={check} onChange={setCheck} label="Document required" />
+          <Checkbox checked={false} onChange={() => {}} label="Needs second approver" />
+          <Checkbox checked disabled onChange={() => {}} label="Managed by Virtual Galaxy" />
+        </div>
+        <Field label="Score weight" hint="Scorecard drives weights with a range + value pair.">
+          <Range value={weight} onChange={setWeight} suffix="%" />
+        </Field>
+      </Section>
+
+      <Section title="File upload (Job 2 — batch / account form)">
+        <Dropzone
+          onFile={(f) => setPicked(f.name)}
+          accept=".xlsx,.xls,.csv"
+          fileName={picked}
+          hint="Excel or CSV, up to 10 MB"
+          maxSize={10 * 1024 * 1024}
+        />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Dropzone onFile={() => {}} accept=".xlsx,.xls,.csv" busy label="Uploading…" />
+          <Dropzone onFile={() => {}} accept=".xlsx" error="rows.txt isn't an accepted file type (.xlsx)." />
+        </div>
+      </Section>
+
+      <Section title="Progress & live state (Job 2 — batch / ops SSE)">
+        <Progress value={0.34} label="Batch AZSB-0819 · 2,940 of 8,642 dialled" />
+        <Progress value={0.86} label="Minutes consumed this period" tone="amber" />
+        <Progress value={1} label="Quota exhausted" tone="red" />
+        <div className="space-y-1">
+          <div className="text-[11px] text-fx-text3">Upload in flight — no known total</div>
+          <IndeterminateBar />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Utilization value={3} max={5} />
+          <Utilization value={9} max={10} />
+          <Utilization value={5} max={5} />
+        </div>
+        <div className="flex flex-wrap items-center gap-5">
+          <LiveDot state="open" />
+          <LiveDot state="connecting" />
+          <LiveDot state="closed" />
+          <LiveDot state="error" />
+        </div>
+      </Section>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Call activity" qualifier="area, two series" />
+          <CardBody>
+            {/* NOT stacked: errors (max 21) under calls (max 610) is invisible
+                and the two strokes overlap into one apparent line. Overlaid
+                series with independent fills reads honestly at these scales. */}
+            <AreaChartFx
+              data={SERIES_DATA}
+              xKey="label"
+              series={[
+                { key: "calls", label: "Calls", tone: "accent" },
+                { key: "errors", label: "Errors", tone: "red" },
+              ]}
+              height={200}
+            />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="Connect rate" qualifier="line" />
+          <CardBody>
+            <LineChartFx
+              data={SERIES_DATA}
+              xKey="label"
+              series={[{ key: "calls", label: "Calls", tone: "green" }]}
+              height={200}
+            />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="Funnel" qualifier="bar" />
+          <CardBody>
+            <BarChartFx
+              data={FUNNEL_DATA}
+              xKey="step"
+              series={[{ key: "n", label: "Applications", tone: "accent" }]}
+              height={200}
+              formatValue={(v) => v.toLocaleString("en-IN")}
+            />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="Chart empty state" qualifier="all-zero data" />
+          <CardBody>
+            <AreaChartFx
+              data={[{ label: "09:00", calls: 0 }, { label: "10:00", calls: 0 }]}
+              xKey="label"
+              series={[{ key: "calls", label: "Calls" }]}
+              height={200}
+              emptyLabel="No call activity in the last 2 minutes"
+            />
+          </CardBody>
+        </Card>
+      </div>
 
       <div className="grid gap-3 md:grid-cols-3">
         <Card><CardHeader title="Empty" /><EmptyState title="No users yet" description="Invite your first officer to get started." action={<Button variant="primary">Invite user</Button>} /></Card>

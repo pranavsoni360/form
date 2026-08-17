@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronRight, Save, RotateCcw, AlertTriangle,
   CheckCircle2, Loader2, ArrowLeft, Info,
 } from 'lucide-react';
+import { FinixThemeProvider, Button } from '@/components/finix';
 
 // ── Formula registry ────────────────────────────────────────────────────────
 // Keyed by input_key. `formula` is how the raw metric is derived (mirrors the
@@ -214,7 +215,7 @@ function InfoButton({ inputKey, title, doc: docProp }: { inputKey?: string; titl
 }
 
 // ── Toggle switch (pill style) ──────────────────────────────────────────────
-function Toggle({ on, onChange, size = 'md', onColor = '#2563EB' }: {
+function Toggle({ on, onChange, size = 'md', onColor = 'var(--fx-accent)' }: {
   on: boolean;
   onChange: (next: boolean) => void;
   size?: 'sm' | 'md';
@@ -232,7 +233,7 @@ function Toggle({ on, onChange, size = 'md', onColor = '#2563EB' }: {
       className="sc-toggle flex-shrink-0"
       style={{
         width: dims.w, height: dims.h, borderRadius: dims.h,
-        background: on ? onColor : '#94A3B8',
+        background: on ? onColor : 'var(--fx-border-strong)',
         padding: dims.pad,
       }}
     >
@@ -366,7 +367,7 @@ function BandEditor({ bands, onChange }: { bands: Band[]; onChange: (b: Band[]) 
     <div className="mt-2 overflow-x-auto">
       <table className="w-full text-xs border-collapse">
         <thead>
-          <tr className="text-left" style={{ color: '#64748B' }}>
+          <tr className="text-left" style={{ color: 'var(--fx-text3)' }}>
             <th className="pb-1 pr-3 font-medium">From</th>
             <th className="pb-1 pr-3 font-medium">To</th>
             <th className="pb-1 pr-3 font-medium">Score</th>
@@ -381,7 +382,7 @@ function BandEditor({ bands, onChange }: { bands: Band[]; onChange: (b: Band[]) 
                   <input type="number" value={b[k]}
                     onChange={e => update(i, k, e.target.value)}
                     className="w-20 px-2 py-1 rounded text-xs outline-none"
-                    style={{ border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#0F172A' }} />
+                    style={{ border: 'none', background: 'var(--fx-surface2)', color: 'var(--fx-text)' }} />
                 </td>
               ))}
               <td className="pb-1">
@@ -389,7 +390,7 @@ function BandEditor({ bands, onChange }: { bands: Band[]; onChange: (b: Band[]) 
                   onChange={e => update(i, 'rating', e.target.value)}
                   placeholder="label"
                   className="w-24 px-2 py-1 rounded text-xs outline-none"
-                  style={{ border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#0F172A' }} />
+                  style={{ border: 'none', background: 'var(--fx-surface2)', color: 'var(--fx-text)' }} />
               </td>
             </tr>
           ))}
@@ -413,7 +414,7 @@ function CategoryEditor({ cats, onChange }: {
     <div className="mt-2 overflow-x-auto">
       <table className="w-full text-xs border-collapse">
         <thead>
-          <tr className="text-left" style={{ color: '#64748B' }}>
+          <tr className="text-left" style={{ color: 'var(--fx-text3)' }}>
             <th className="pb-1 pr-3 font-medium">Category</th>
             <th className="pb-1 pr-3 font-medium">Score</th>
             <th className="pb-1 font-medium">Rating</th>
@@ -423,7 +424,7 @@ function CategoryEditor({ cats, onChange }: {
           {Object.entries(cats).map(([key, cat]) => (
             <tr key={key}>
               <td className="pr-2 pb-1">
-                <span className="text-[11px] font-medium" style={{ color: '#1E293B' }}>
+                <span className="text-[11px] font-medium" style={{ color: 'var(--fx-text)' }}>
                   {CATEGORY_LABEL_MAP[key] ?? key}
                 </span>
               </td>
@@ -431,14 +432,14 @@ function CategoryEditor({ cats, onChange }: {
                 <input type="number" value={cat.score}
                   onChange={e => update(key, 'score', e.target.value)}
                   className="w-16 px-2 py-1 rounded text-xs outline-none"
-                  style={{ border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#0F172A' }} />
+                  style={{ border: 'none', background: 'var(--fx-surface2)', color: 'var(--fx-text)' }} />
               </td>
               <td className="pb-1">
                 <input type="text" value={cat.rating || ''}
                   onChange={e => update(key, 'rating', e.target.value)}
                   placeholder="label"
                   className="w-24 px-2 py-1 rounded text-xs outline-none"
-                  style={{ border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#0F172A' }} />
+                  style={{ border: 'none', background: 'var(--fx-surface2)', color: 'var(--fx-text)' }} />
               </td>
             </tr>
           ))}
@@ -468,7 +469,7 @@ function ParamRow({
   return (
     <div className="mb-2 overflow-hidden"
       style={{
-        border: `1px solid ${disabled ? 'var(--line)' : '#C9D4E3'}`,
+        border: `1px solid ${disabled ? 'var(--line)' : 'var(--fx-border-strong)'}`,
         borderRadius: 10, opacity: disabled ? 0.6 : 1,
         background: 'var(--surface)',
       }}>
@@ -522,7 +523,7 @@ function ParamRow({
               <input type="checkbox" checked={!!param.doc_required}
                 onChange={e => set({ doc_required: e.target.checked })}
                 className="rounded" />
-              <span className="text-xs font-medium" style={{ color: '#374151' }}>Requires document</span>
+              <span className="text-xs font-medium" style={{ color: 'var(--fx-text)' }}>Requires document</span>
             </label>
 
             {param.doc_required && (
@@ -530,20 +531,20 @@ function ParamRow({
                 <select value={param.doc_field || ''}
                   onChange={e => set({ doc_field: e.target.value })}
                   className="text-xs px-2 py-1 rounded outline-none"
-                  style={{ border: '1px solid #CBD5E1', color: '#374151', background: '#F8FAFC' }}>
+                  style={{ border: 'none', color: 'var(--fx-text)', background: 'var(--fx-surface2)' }}>
                   <option value="">— choose field —</option>
                   {DOC_FIELDS.map(d => (
                     <option key={d.value} value={d.value}>{d.label}</option>
                   ))}
                 </select>
 
-                <label className="flex items-center gap-1.5 text-xs" style={{ color: '#374151' }}>
+                <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--fx-text)' }}>
                   Max without doc:
                   <input type="number" min="0" max="100" step="1"
                     value={param.no_doc_max_score ?? 95}
                     onChange={e => set({ no_doc_max_score: parseFloat(e.target.value) || 95 })}
                     className="w-14 px-2 py-1 rounded text-xs outline-none"
-                    style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#0F172A' }} />
+                    style={{ border: 'none', background: 'var(--fx-surface2)', color: 'var(--fx-text)' }} />
                 </label>
               </>
             )}
@@ -563,7 +564,7 @@ function ParamRow({
           {/* Composite: editable sub-parameters with toggle + weight */}
           {param.type === 'composite' && param.children && (
             <div className="text-xs">
-              <p className="mb-2 font-medium" style={{ color: '#374151' }}>Sub-parameters</p>
+              <p className="mb-2 font-medium" style={{ color: 'var(--fx-text)' }}>Sub-parameters</p>
               {(() => {
                 const children = param.children!;
                 const enabledSum = Object.values(children)
@@ -584,23 +585,23 @@ function ParamRow({
                       <Toggle size="sm" on={!cDisabled}
                         onChange={next => setChild(ck, { enabled: next })} />
                       <span className="flex-1 min-w-0 flex items-center gap-1.5">
-                        <span className="truncate" style={{ color: '#475569' }}>{child.title}</span>
+                        <span className="truncate" style={{ color: 'var(--fx-text2)' }}>{child.title}</span>
                         <InfoButton inputKey={child.input_key} title={child.title} />
                       </span>
                       <input type="number" min="0" step="1"
                         value={child.weight} disabled={cDisabled}
                         onChange={e => setChild(ck, { weight: parseFloat(e.target.value) || 0 })}
                         className="w-14 px-2 py-1 rounded text-xs text-right outline-none"
-                        style={{ border: '1px solid #CBD5E1', background: cDisabled ? '#F1F5F9' : '#fff', color: '#0F172A' }} />
+                        style={{ border: 'none', background: cDisabled ? 'var(--fx-bg)' : 'var(--fx-surface2)', color: 'var(--fx-text)' }} />
                       <span className="hidden sm:inline w-24 text-right text-[10px]"
-                        style={{ color: cDisabled ? '#94A3B8' : '#2563EB' }}>
+                        style={{ color: cDisabled ? 'var(--fx-text3)' : 'var(--fx-accent)' }}>
                         {cDisabled ? '(excluded)' : `→ ${cEff.toFixed(1)}% of group`}
                       </span>
                     </div>
                   );
                 });
               })()}
-              <p className="mt-1.5 italic" style={{ color: '#94A3B8' }}>
+              <p className="mt-1.5 italic" style={{ color: 'var(--fx-text3)' }}>
                 Sub-weights are relative — enabled ones are rescaled to 100% of this group.
               </p>
             </div>
@@ -628,32 +629,33 @@ function PillarCard({
   return (
     <div className="sc-card mb-4 overflow-hidden"
       style={{ opacity: pillarDisabled ? 0.65 : 1, borderRadius: 14 }}>
-      {/* Pillar header */}
+      {/* Pillar header. Was white text on a fixed navy fill; that becomes
+          invisible now the fill is a theme surface, so every colour here is a
+          token. The accent left rail is kept — it's the weight-share spine. */}
       <div className="w-full flex items-center gap-3 pr-4 py-3"
         style={{
-          background: pillarDisabled ? '#475569' : 'var(--navy-soft)',
-          color: '#fff',
+          background: 'var(--fx-surface)',
+          color: 'var(--fx-text)',
           // Weight-share spine: a left rail sized to this pillar's % of 100.
-          borderLeft: `4px solid ${pillarDisabled ? 'rgba(255,255,255,0.2)' : '#60A5FA'}`,
+          borderLeft: `4px solid ${pillarDisabled ? 'var(--fx-border-strong)' : 'var(--fx-accent)'}`,
           paddingLeft: 'calc(1rem - 4px)',
         }}>
         <button onClick={() => setOpen(v => !v)} className="flex-shrink-0" aria-label={open ? 'Collapse' : 'Expand'}>
-          {open ? <ChevronDown className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
-                 : <ChevronRight className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />}
+          {open ? <ChevronDown className="w-4 h-4 text-fx-text3" />
+                 : <ChevronRight className="w-4 h-4 text-fx-text3" />}
         </button>
 
         {/* Pillar enable/disable toggle */}
-        <Toggle on={!pillarDisabled} onColor="#3B82F6"
+        <Toggle on={!pillarDisabled} onColor="var(--fx-accent)"
           onChange={next => onTogglePillar(pillarKey, next)} />
 
         <button onClick={() => setOpen(v => !v)} className="flex-1 text-left">
-          <span className="font-semibold text-sm">{pillar.title}</span>
-          {pillarDisabled && <span className="ml-2 text-[10px] font-medium uppercase tracking-wide"
-            style={{ color: 'rgba(255,255,255,0.55)' }}>excluded</span>}
+          <span className="text-[13px] font-medium">{pillar.title}</span>
+          {pillarDisabled && <span className="ml-2 text-[10px] font-medium uppercase tracking-wide text-fx-text3">excluded</span>}
         </button>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          <span className="hidden sm:inline text-[11px]" style={{ color: 'rgba(255,255,255,0.55)', fontVariantNumeric: 'tabular-nums' }}>
+          <span className="fx-mono hidden text-[11px] text-fx-text3 sm:inline">
             {activeCount}/{totalCount} active
           </span>
           <div className="flex items-center gap-1.5">
@@ -661,9 +663,8 @@ function PillarCard({
               value={pillar.weight}
               disabled={pillarDisabled}
               onChange={e => onUpdatePillar(pillarKey, parseFloat(e.target.value) || 0)}
-              className="w-14 px-2 py-1 rounded-md text-xs text-right outline-none font-bold"
-              style={{ background: 'rgba(255,255,255,0.14)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', fontVariantNumeric: 'tabular-nums' }} />
-            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>/ 100</span>
+              className="sc-num w-14 text-xs font-medium" />
+            <span className="text-xs text-fx-text3">/ 100</span>
           </div>
         </div>
       </div>
@@ -827,17 +828,21 @@ export default function ScorecardPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8FAFC' }}>
-        <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#2563EB' }} />
-      </div>
+      <FinixThemeProvider>
+        <div className="finix-root grid min-h-screen place-items-center">
+          <Loader2 className="h-6 w-6 animate-spin" style={{ color: 'var(--fx-accent)' }} />
+        </div>
+      </FinixThemeProvider>
     );
   }
 
   if (!config) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8FAFC' }}>
-        <p className="text-sm" style={{ color: '#EF4444' }}>Failed to load config.</p>
-      </div>
+      <FinixThemeProvider>
+        <div className="finix-root grid min-h-screen place-items-center">
+          <p className="text-[13px]" style={{ color: 'var(--fx-red)' }}>Failed to load config.</p>
+        </div>
+      </FinixThemeProvider>
     );
   }
 
@@ -845,29 +850,46 @@ export default function ScorecardPage() {
   const pillarWeightOk = Math.abs(totalPillarWeight - 100) < 0.5;
 
   return (
-    <div className="min-h-screen sc-root" style={{ background: 'var(--ground)' }}>
+    // finix-root is REQUIRED here, not decorative: the sc-* token block below
+    // now reads --fx-* variables, and those are scoped to .finix-root. Without
+    // it every sc- token resolves to nothing. The provider supplies the theme
+    // because this screen renders its own chrome rather than BankUserShell's.
+    <FinixThemeProvider>
+    <div className="finix-root sc-root min-h-screen" style={{ background: 'var(--ground)' }}>
       <style dangerouslySetInnerHTML={{ __html: `
+        /* FINIX MIGRATION (Job 2): this screen keeps its own sc-* component
+           layer — 1,143 lines of deeply nested band/category editors that drive
+           real credit decisions, so rewriting them carries regression risk that
+           buys nothing visually. Instead every sc- token is REPOINTED at the
+           --fx-* layer, so the whole screen picks up the Finix palette and,
+           crucially, works in BOTH themes: the values below were hard-coded
+           light-only hexes (#FFFFFF surfaces, #0B1E3B ink), which rendered
+           unreadable once the shell went dark.
+           The sc- names are kept so no markup below has to change. */
         .sc-root {
-          --ground: #EEF1F6;
-          --surface: #FFFFFF;
-          --raised: #F7F9FC;
-          --ink: #0B1E3B;
-          --ink-muted: #5A6B85;
-          --ink-faint: #94A3B8;
-          --line: #DBE2EC;
-          --accent: #1D4ED8;
-          --navy: #071A38;
-          --navy-soft: #0D2650;
-          --approve: #047857;
-          --refer: #B45309;
-          --reject: #B91C1C;
+          --ground: var(--fx-bg);
+          --surface: var(--fx-surface);
+          --raised: var(--fx-surface2);
+          --ink: var(--fx-text);
+          --ink-muted: var(--fx-text2);
+          --ink-faint: var(--fx-text3);
+          --line: var(--fx-border);
+          --accent: var(--fx-accent);
+          /* The two "navy" tokens were a fixed dark chrome colour used for the
+             top bar and pillar headers. On the Finix layer that role is surface,
+             which flips correctly per theme. */
+          --navy: var(--fx-surface);
+          --navy-soft: var(--fx-surface2);
+          --approve: var(--fx-green);
+          --refer: var(--fx-amber);
+          --reject: var(--fx-red);
           color: var(--ink);
         }
+        /* Finix cards sit on surface2 with no border — separation by lift. */
         .sc-card {
-          background: var(--surface);
-          border: 1px solid var(--line);
+          background: var(--fx-surface2);
+          border: none;
           border-radius: 14px;
-          box-shadow: 0 1px 2px rgba(11,30,59,0.04);
         }
         .sc-eyebrow {
           font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
@@ -879,15 +901,18 @@ export default function ScorecardPage() {
           font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
         }
         .sc-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+        /* Match components/finix/Field.tsx Input: no border, surface2 fill,
+           accent inset ring on focus, mono figures. */
         .sc-num {
-          border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+          border: none; border-radius: 8px; background: var(--fx-surface2);
           color: var(--ink); padding: 6px 8px; text-align: right; outline: none;
-          font-variant-numeric: tabular-nums; transition: border-color .15s, box-shadow .15s;
+          font-family: var(--fx-mono, ui-monospace, monospace);
+          font-variant-numeric: tabular-nums; transition: box-shadow .15s;
         }
-        .sc-num:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29,78,216,0.12); }
-        .sc-num:disabled { background: var(--raised); color: var(--ink-faint); }
+        .sc-num:focus { box-shadow: inset 0 0 0 1px var(--fx-accent); }
+        .sc-num:disabled { background: var(--fx-bg); color: var(--ink-faint); }
         /* Decision score track */
-        .sc-track { display: flex; height: 12px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(11,30,59,0.06); }
+        .sc-track { display: flex; height: 12px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--fx-border); }
         .sc-track-zone { transition: width .2s ease; }
         /* Header meter */
         .sc-meter { width: 120px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
@@ -900,7 +925,7 @@ export default function ScorecardPage() {
           position: relative; border: none; cursor: pointer; display: inline-flex; align-items: center;
           transition: background .18s ease; outline: none;
         }
-        .sc-toggle:focus-visible { box-shadow: 0 0 0 3px rgba(29,78,216,0.35); }
+        .sc-toggle:focus-visible { box-shadow: var(--fx-focus); }
         .sc-toggle-knob {
           display: block; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.25);
           transition: transform .18s cubic-bezier(.4,.0,.2,1);
@@ -915,8 +940,8 @@ export default function ScorecardPage() {
           width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
           background: transparent; color: var(--ink-faint); transition: color .15s, background .15s;
         }
-        .sc-info-btn:hover { color: var(--accent); background: rgba(29,78,216,0.08); }
-        .sc-info-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(29,78,216,0.3); }
+        .sc-info-btn:hover { color: var(--accent); background: var(--fx-accent-tint); }
+        .sc-info-btn:focus-visible { outline: none; box-shadow: var(--fx-focus); }
         /* NOTE: the popover renders in a document.body portal, OUTSIDE .sc-root,
            so CSS custom properties (--navy etc.) are undefined here. Use literal
            colours only — a var() here resolves to transparent. */
@@ -943,54 +968,64 @@ export default function ScorecardPage() {
         .sc-pop-note { font-size: 10.5px; line-height: 1.45; color: rgba(255,255,255,0.6); margin-top: 6px; font-style: italic; }
       ` }} />
 
-      {/* Top bar */}
-      <div className="sticky top-0 z-20 flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3"
-        style={{ background: '#071A38', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* Top bar — was a fixed navy chrome bar; now the Finix surface so it
+          flips with the theme. Every action and its disabled logic is unchanged. */}
+      <div className="sticky top-0 z-20 flex items-center gap-2 border-b border-fx-border px-3 py-3 sm:gap-3 sm:px-6"
+        style={{ background: 'var(--fx-surface)' }}>
         <button onClick={goBack}
-          className="flex items-center gap-1.5 text-sm flex-shrink-0"
-          style={{ color: 'rgba(255,255,255,0.55)' }}>
+          className="fx-tap flex flex-shrink-0 items-center gap-1.5 text-[13px] text-fx-text2 hover:text-fx-text">
           <ArrowLeft className="w-4 h-4" />
           <span className="hidden sm:inline">Back</span>
         </button>
-        <span className="hidden sm:inline" style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
-        <span className="text-sm font-semibold text-white truncate">
-          <span className="hidden sm:inline">Scorecard Configuration</span>
+        <span className="hidden text-fx-text3 sm:inline">/</span>
+        <span className="truncate text-[13px] font-medium text-fx-text">
+          <span className="hidden sm:inline">Scorecard configuration</span>
           <span className="sm:hidden">Scorecard</span>
         </span>
-        <span className="hidden sm:inline text-xs px-2 py-0.5 rounded font-mono"
-          style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}>
+        <span className="fx-mono hidden rounded px-2 py-0.5 text-[11px] text-fx-text3 sm:inline"
+          style={{ background: 'var(--fx-surface2)' }}>
           {config.config_version}
         </span>
 
         <div className="flex-1" />
 
         {isDirty && (
-          <button onClick={handleReset}
-            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded text-sm flex-shrink-0"
-            style={{ color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.07)' }}>
+          <Button variant="quiet" onClick={handleReset} className="flex-shrink-0">
             <RotateCcw className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Discard</span>
-          </button>
+          </Button>
         )}
-        <button onClick={handleRescorePending} disabled={isDirty || saving || rescoring}
+        <Button
+          variant="quiet"
+          onClick={handleRescorePending}
+          disabled={isDirty || saving || rescoring}
           title={isDirty ? 'Save the scorecard first, then re-score' : 'Re-score draft/submitted applications with the saved config (approved/disbursed untouched)'}
-          className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded text-sm disabled:opacity-40 flex-shrink-0"
-          style={{ color: 'rgba(255,255,255,0.85)', background: 'rgba(255,255,255,0.10)' }}>
+          className="flex-shrink-0"
+        >
           {rescoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
           <span className="hidden sm:inline">{rescoring ? 'Re-scoring…' : 'Re-score pending'}</span>
-        </button>
-        <button onClick={handleSave} disabled={!isDirty || saving || !pillarWeightOk}
-          className="flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded text-sm font-semibold disabled:opacity-40 flex-shrink-0"
-          style={{ background: '#2563EB', color: '#fff' }}>
+        </Button>
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          disabled={!isDirty || saving || !pillarWeightOk}
+          className="flex-shrink-0"
+        >
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-          <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save Changes'}</span>
-        </button>
+          <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save changes'}</span>
+        </Button>
       </div>
 
       {/* Toast */}
       {toast && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm"
-          style={{ background: toast.type === 'ok' ? '#065F46' : '#991B1B', color: '#fff' }}>
+        <div className="fixed left-1/2 top-16 z-50 flex -translate-x-1/2 items-center gap-2 rounded-[10px] px-4 py-2.5 text-[13px]"
+          style={{
+            background: 'var(--fx-surface)',
+            boxShadow: `var(--fx-elevation), inset 0 0 0 1px var(--fx-${toast.type === 'ok' ? 'green' : 'red'})`,
+            color: `var(--fx-${toast.type === 'ok' ? 'green' : 'red'})`,
+          }}
+          role="status"
+        >
           {toast.type === 'ok' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
           {toast.msg}
         </div>
@@ -1000,9 +1035,9 @@ export default function ScorecardPage() {
 
         {/* Pillar weight total warning */}
         {!pillarWeightOk && (
-          <div className="flex items-start gap-2.5 rounded-xl p-3 mb-4 text-sm"
-            style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B' }}>
-            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div className="mb-4 flex items-start gap-2.5 rounded-[10px] p-3 text-[13px]"
+            style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)' }}>
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
             Enabled pillar weights sum to {totalPillarWeight.toFixed(1)} — must equal exactly 100 before saving. Adjust the enabled pillars&apos; weights (disabled pillars are excluded).
           </div>
         )}
@@ -1127,17 +1162,18 @@ export default function ScorecardPage() {
         ))}
 
         {/* Legend */}
-        <div className="rounded-xl p-4 text-xs" style={{ background: '#fff', border: '1px solid #E2E8F0', color: '#64748B' }}>
-          <p className="font-semibold mb-1" style={{ color: '#374151' }}>How weights work</p>
-          <ul className="space-y-1 list-disc list-inside">
+        <div className="sc-card p-4 text-[12px] text-fx-text2">
+          <p className="mb-1 font-medium text-fx-text">How weights work</p>
+          <ul className="list-inside list-disc space-y-1">
             <li>Everything has an <strong>on/off toggle</strong> — whole pillars, parameters, and composite sub-parameters. Turning anything off excludes it and rebalances its siblings.</li>
             <li><strong>Enabled</strong> pillar weights must sum to <strong>100</strong> (disabled pillars are excluded and the rest are rescaled).</li>
-            <li>Parameter and sub-parameter weights are <strong>relative</strong> — set any numbers; the enabled ones are auto-rescaled (to the pillar weight, or to 100% within a composite group). The <span style={{ color: '#2563EB' }}>→ effective</span> value shows each one&apos;s real contribution.</li>
+            <li>Parameter and sub-parameter weights are <strong>relative</strong> — set any numbers; the enabled ones are auto-rescaled (to the pillar weight, or to 100% within a composite group). The <span style={{ color: 'var(--fx-accent)' }}>→ effective</span> value shows each one&apos;s real contribution.</li>
             <li>Disabling or re-weighting anything <strong>proportionally rebalances</strong> the rest automatically — no need to make them add up.</li>
             <li>If a parameter requires a document and none was submitted, its score is capped at the configured max (default 95).</li>
           </ul>
         </div>
       </div>
     </div>
+    </FinixThemeProvider>
   );
 }

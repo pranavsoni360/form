@@ -436,6 +436,40 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
   filter: invert(1) opacity(0.6);
 }
 
+/* ── Legacy-panel bridge ───────────────────────────────────────────────────
+   Two bank panels (components/bank/LRSScorePanel.tsx and AssignVendorPanel.tsx)
+   are embedded in the migrated application-detail screen but keep their own
+   markup: they own the rescore / assign / withdraw mutations, so rewriting their
+   internals is separate work with real regression risk and no visual payoff.
+
+   Their ~66 hard-coded slate/gray utilities are light-only, so inside a dark
+   Finix shell they rendered as a white card with near-white text — the exact
+   white-on-white failure this bridge exists to prevent. Remapping the handful of
+   surface/text/border utilities they actually use is one rule set instead of 66
+   edits, and it cannot change behaviour.
+
+   Scoped to .finix-root so pages still on the legacy design are untouched.
+   DELETE this block when those two panels are migrated properly. */
+.finix-root :is(.bg-white, .bg-slate-50, .bg-slate-100, .bg-gray-50, .bg-gray-100) {
+  background-color: var(--fx-surface2) !important;
+}
+.finix-root :is(.bg-gray-800, .bg-gray-900, .bg-slate-800, .bg-slate-900) {
+  background-color: var(--fx-surface) !important;
+}
+.finix-root :is(
+  .text-gray-900, .text-gray-800, .text-gray-700,
+  .text-slate-900, .text-slate-800, .text-slate-700
+) { color: var(--fx-text) !important; }
+.finix-root :is(
+  .text-gray-600, .text-gray-500, .text-slate-600, .text-slate-500
+) { color: var(--fx-text2) !important; }
+.finix-root :is(
+  .text-gray-400, .text-gray-300, .text-slate-400, .text-slate-300
+) { color: var(--fx-text3) !important; }
+.finix-root :is(
+  [class*="border-gray-"], [class*="border-slate-"]
+) { border-color: var(--fx-border) !important; }
+
 /* Record-view field grid (components/finix/Tabs.tsx DataGrid). Hairlines are
    drawn as right/bottom borders on each cell, so the grid stays correct however
    the auto-fit columns wrap — a gap-based 1px background would leak the divider

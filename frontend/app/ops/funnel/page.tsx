@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -81,7 +82,7 @@ export default function OpsFunnelPage() {
     queryKey: ["funnel", range.from, range.to],
     queryFn: async () => {
       const url = `${API_URL}/api/agent/funnel?date_from=${range.from}&date_to=${range.to}`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await opsFetch(url, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },

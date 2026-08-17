@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery } from "@tanstack/react-query";
 import {
   Building2,
@@ -69,7 +70,7 @@ export default function OpsPhonesPage() {
   const seed = useQuery<PhonePoolsResponse>({
     queryKey: ["phone-pools"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/ops/phone-pools`, {
+      const res = await opsFetch(`${API_URL}/api/ops/phone-pools`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

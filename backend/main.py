@@ -1091,7 +1091,33 @@ def generate_random_password(length: int = 12) -> str:
     chars = string.ascii_letters + string.digits + "!@#$%"
     return ''.join(secrets.choice(chars) for _ in range(length))
 
+async def is_phone_opted_out(phone: str, channel: str = "whatsapp") -> bool:
+    """DPDP consent check: True if this phone has a standing opt-out for the
+    channel (from notification_optouts). Matches on the last 10 digits so 10-digit
+    / 91-prefixed / +91 forms all resolve. Best-effort: any error returns False
+    (never block a send on a failed check). OTP is transactional and is NOT gated
+    by this — only outreach/notification sends call it.
+    """
+    try:
+        digits = "".join(c for c in (phone or "") if c.isdigit())
+        last10 = digits[-10:]
+        if len(last10) < 10:
+            return False
+        hit = await db_pool.fetchval(
+            "SELECT 1 FROM notification_optouts WHERE channel IN ($1, 'all') "
+            "AND right(regexp_replace(phone, '\\D', '', 'g'), 10) = $2 LIMIT 1",
+            channel, last10,
+        )
+        return hit is not None
+    except Exception as e:
+        logger.warning("opt-out check failed for %s: %s", phone, e)
+        return False
+
+
 async def send_whatsapp_message(phone: str, message: str, token_id: str = None):
+    if await is_phone_opted_out(phone):
+        logger.info("WhatsApp text skipped — %s has opted out (DPDP)", phone)
+        return {"status": "skipped", "reason": "opted_out"}
     if not WHATSAPP_API_TOKEN or not WHATSAPP_PHONE_ID:
         print(f"[WhatsApp STUB] Would send to {phone}: {message[:80]}...")
         return {"status": "simulated"}
@@ -1144,6 +1170,9 @@ async def send_otp_via_aisensy(phone: str, otp: str) -> dict:
             return {"status": "failed", "error": str(e)}
 
 async def send_whatsapp_aisensy(phone: str, customer_name: str, template_params: list = None):
+    if await is_phone_opted_out(phone):
+        logger.info("AiSensy campaign skipped — %s has opted out (DPDP)", phone)
+        return {"status": "skipped", "reason": "opted_out"}
     if not AISENSY_API_KEY:
         print(f"[AiSensy STUB] Would send to {phone}")
         return {"status": "simulated"}
@@ -1484,6 +1513,26 @@ async def root():
 # AUTH ENDPOINTS
 # ============================================
 
+async def _record_login_audit(*, actor_type, actor_id, username, role, success,
+                              jti=None, bank_id=None, request=None, failure_reason=None):
+    """Best-effort login_audit write — never blocks or fails a login."""
+    try:
+        await db_pool.execute(
+            """INSERT INTO login_audit
+                   (event, actor_type, actor_id, username_tried, actor_username,
+                    actor_role, bank_id, success, jti, failure_reason,
+                    ip_address, user_agent)
+               VALUES ('login_success',$1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10)""",
+            actor_type, actor_id, username, role,
+            uuid.UUID(bank_id) if bank_id else None,
+            success, jti, failure_reason,
+            (request.client.host if request and request.client else None),
+            (request.headers.get("user-agent") if request else None),
+        )
+    except Exception as e:
+        logger.warning("login_audit write failed for %s: %s", username, e)
+
+
 @app.post("/api/auth/admin-login")
 async def auth_admin_login(payload: AdminLogin, request: Request):
     """Super admin login. Sets httpOnly refresh cookie. Rejects bank users."""
@@ -1505,6 +1554,8 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
     refresh_token, jti = create_refresh_token(user_id=user_id, role=row["role"], user_type="admin")
     await _store_refresh_token(user_id, jti, row["role"], "admin")
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
+    await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                              role=row["role"], success=True, jti=jti, request=request)
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1540,6 +1591,8 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     refresh_token, jti = create_refresh_token(user_id=user_id, role=row["role"], user_type="bank_user", bank_id=bank_id)
     await _store_refresh_token(user_id, jti, row["role"], "bank_user", bank_id)
     await db_pool.execute("UPDATE bank_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
+    await _record_login_audit(actor_type="bank_user", actor_id=row["id"], username=payload.username,
+                              role=row["role"], success=True, jti=jti, bank_id=bank_id, request=request)
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1927,13 +1980,9 @@ async def admin_stats(admin: dict = Depends(get_current_admin)):
 async def admin_get_applications(
     status: Optional[str] = None,
     bank_id: Optional[str] = None,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    admin: dict = Depends(get_current_admin),
 ):
     """List ALL applications across all banks (with optional status/bank filters)."""
-    try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
     # Build dynamic query
     conditions = []
     params = []
@@ -1958,12 +2007,8 @@ async def admin_get_applications(
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/admin/applications/{app_id}")
-async def admin_get_application(app_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def admin_get_application(app_id: str, admin: dict = Depends(get_current_admin)):
     """Admin: full application detail (read-only, any bank)."""
-    try:
-        jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", uuid.UUID(app_id))
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -2054,6 +2099,24 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
         app_dict["bank_code"] = bank["code"]
     return {"application": app_dict}
 
+async def _record_approval(app_id, bank_id, approver_type, approver, decision, notes):
+    """Best-effort write to application_approvals (v38 maker-checker audit trail) —
+    a first-class approver/decision record parallel to status_transitions. Never
+    blocks the decision."""
+    try:
+        await db_pool.execute(
+            """INSERT INTO application_approvals
+                   (application_id, bank_id, approver_type, approver_id, approver_name, decision, notes)
+               VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+            app_id, bank_id, approver_type,
+            uuid.UUID(approver["id"]) if approver.get("id") else None,
+            approver.get("full_name") or approver.get("username"),
+            decision, notes,
+        )
+    except Exception as e:
+        logger.warning("application_approvals write failed for %s: %s", app_id, e)
+
+
 @app.post("/api/bank/applications/{app_id}/officer-approve")
 async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_approved, record officer_id, officer_reviewed_at, officer_notes."""
@@ -2075,6 +2138,7 @@ async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict
         officer_id, now_utc(), body.notes, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "officer_approved", "bank_officer", officer_id, body.notes)
+    await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "approved", body.notes)
     return {"status": "success", "message": "Application approved by officer", "new_status": "officer_approved"}
 
 @app.post("/api/bank/applications/{app_id}/officer-reject")
@@ -2101,6 +2165,7 @@ async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict 
         officer_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "officer_rejected", "bank_officer", officer_id, rejection_notes)
+    await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "rejected", rejection_notes)
     # Send WhatsApp notification
     if app_row["phone"]:
         message = (
@@ -2167,6 +2232,7 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
                 print(f"[AiSensy Approval] {phone_formatted} → {resp.status_code} {resp.text}", flush=True)
             except Exception as e:
                 print(f"[AiSensy Approval] ERROR: {e}", flush=True)
+    await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", body.notes)
     return {"status": "success", "message": "Application approved by supervisor", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-reject")
@@ -2193,6 +2259,7 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
         supervisor_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id)
     )
     await record_transition(uuid.UUID(app_id), current_status, "supervisor_rejected", "bank_supervisor", supervisor_id, rejection_notes)
+    await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "rejected", rejection_notes)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2275,6 +2342,7 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
                 print(f"[AiSensy Disburse] {phone_formatted} → {resp.status_code} {resp.text}", flush=True)
             except Exception as e:
                 print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
+    await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", (body.notes or "") + " [disbursement initiated]")
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/cancel")
@@ -2322,7 +2390,7 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
 # ============================================
 
 @app.post("/api/generate-form-links")
-async def generate_form_links(request: Request):
+async def generate_form_links(request: Request, admin: dict = Depends(get_current_admin)):
     data = await request.json()
     customers_data = data.get("customers", [])
     bank_id_str = data.get("bank_id")
@@ -2920,10 +2988,32 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
-        await db_pool.execute(
-            f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE token_id = $2",
-            file_url, token_row["id"]
+        try:
+            await db_pool.execute(
+                f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE token_id = $2",
+                file_url, token_row["id"]
+            )
+        except Exception as e:
+            # Some field_mapping targets have no column yet (e.g. salary_slips_url);
+            # application_documents below is the durable record, so never fail the upload.
+            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+    # Durable normalized record — accepts ANY document_type (fixes the missing-column
+    # cases) and captures who/when/size. Best-effort: never break the upload.
+    try:
+        approw = await db_pool.fetchrow(
+            "SELECT id, bank_id FROM loan_applications WHERE token_id = $1", token_row["id"]
         )
+        if approw:
+            await db_pool.execute(
+                """INSERT INTO application_documents
+                       (application_id, bank_id, document_type, file_url,
+                        original_filename, content_type, size_bytes, uploaded_by_type)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+                approw["id"], approw["bank_id"], document_type, file_url,
+                file.filename, file.content_type, len(file_content),
+            )
+    except Exception as e:
+        logger.warning("application_documents insert failed for token %s: %s", token_row["id"], e)
     return {"status": "uploaded", "url": file_url, "filename": file.filename, "size": len(file_content)}
 
 
@@ -3018,11 +3108,7 @@ async def submit_form(token: str, request: Request):
 # ============================================
 
 @app.post("/api/admin/review")
-async def review_application(payload: ReviewAction, request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    try:
-        admin_payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+async def review_application(payload: ReviewAction, request: Request, admin: dict = Depends(get_current_admin)):
     app_id = uuid.UUID(payload.application_id)
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", app_id)
     if not app_row:
@@ -3032,14 +3118,14 @@ async def review_application(payload: ReviewAction, request: Request, credential
     if payload.action == "reject":
         await db_pool.execute(
             "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 WHERE id=$6",
-            new_status, uuid.UUID(admin_payload["user_id"]), now_utc(), payload.notes, payload.rejection_reason, app_id
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, payload.rejection_reason, app_id
         )
     else:
         await db_pool.execute(
             "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4 WHERE id=$5",
-            new_status, uuid.UUID(admin_payload["user_id"]), now_utc(), payload.notes, app_id
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, app_id
         )
-    await record_transition(app_id, current_status, new_status, "admin", uuid.UUID(admin_payload["user_id"]), payload.notes)
+    await record_transition(app_id, current_status, new_status, "admin", uuid.UUID(admin["id"]), payload.notes)
     if payload.action == "approve":
         message = f"Congratulations {app_row['customer_name']}!\n\nYour loan application has been APPROVED.\n\nLoan ID: {app_row['loan_id']}\n\nOur team will contact you within 24 hours.\n\n- Your Bank Name"
     else:
@@ -3761,10 +3847,25 @@ async def upload_document_session(
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
+        try:
+            await db_pool.execute(
+                f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE id = $2",
+                file_url, session["application_id"]
+            )
+        except Exception as e:
+            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+    # Durable normalized record — accepts ANY document_type; best-effort.
+    try:
         await db_pool.execute(
-            f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE id = $2",
-            file_url, session["application_id"]
+            """INSERT INTO application_documents
+                   (application_id, bank_id, document_type, file_url,
+                    original_filename, content_type, size_bytes, uploaded_by_type)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+            app_row["id"], app_row["bank_id"], document_type, file_url,
+            file.filename, file.content_type, len(file_content),
         )
+    except Exception as e:
+        logger.warning("application_documents insert failed for app %s: %s", session["application_id"], e)
     # Update session activity
     await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
     return {"status": "uploaded", "url": file_url, "filename": file.filename, "size": len(file_content)}

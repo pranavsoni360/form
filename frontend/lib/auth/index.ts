@@ -15,6 +15,18 @@ export function getAccessToken(type: AuthType): string | null {
   return localStorage.getItem(TOKEN_KEYS[type]);
 }
 
+// Merge the Bearer access token for a role into a headers object. Use on raw
+// fetch() calls (e.g. the /ops/* pages) that send `credentials:"include"` but
+// must ALSO present the access token so the backend can authenticate/scope the
+// request. No-op (returns `extra` unchanged) when no token is stored.
+export function authHeader(
+  type: AuthType,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  const token = getAccessToken(type);
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };
+}
+
 // Decode a JWT payload WITHOUT verifying the signature. This is a client-side
 // convenience only (to read `exp`); the backend remains the real authority.
 // Returns null for a malformed token.

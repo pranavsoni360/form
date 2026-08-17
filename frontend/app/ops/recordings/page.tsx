@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Headphones, Mic, MicOff } from "lucide-react";
 
@@ -48,7 +49,7 @@ export default function OpsRecordingsPage() {
       if (filter !== "all") params.set("lead_quality", filter);
       params.set("page", "1");
       const url = `${API_URL}/api/agent/calls?${params.toString()}`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await opsFetch(url, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },

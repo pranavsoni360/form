@@ -55,9 +55,12 @@ FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001"
 # JWT -- reuse the same secret as main.py
 JWT_SECRET = os.getenv("JWT_SECRET", "your-jwt-secret-key")
 
-# Call time window (IST)
+# Call time window (IST) — this is the LEGAL CAP (RBI/TRAI). Outbound calling for
+# loans must stay inside daytime hours; midnight calling is non-compliant. Both
+# ends are env-overridable, but the defaults are the compliant window. A bank may
+# NARROW this via bank_settings.calling_window_start/end but never widen past it.
 CALL_START_HOUR = int(os.getenv("CALL_START_HOUR", "10"))  # 10 AM
-CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "24"))      # midnight
+CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "19"))      # 7 PM (RBI/TRAI-compliant)
 MAX_RETRIES = int(os.getenv("MAX_CALL_RETRIES", "2"))       # max retry attempts AFTER initial dial
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -223,9 +226,38 @@ def now_ist_str() -> str:
     return now_ist().strftime("%b %d, %Y %I:%M %p")
 
 
-def is_within_calling_hours() -> bool:
+def _hhmm_to_hour(v):
+    """'19:00' -> 19, '19:30' -> 19 (hour granularity, matching the hour-based
+    window check). Returns None for empty/invalid so the global cap applies."""
+    if v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    try:
+        return int(str(v).split(":")[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def is_within_calling_hours(bank_window=None) -> bool:
+    """True if NOW (IST) is inside the calling window.
+
+    CALL_START_HOUR..CALL_END_HOUR is the legal cap (RBI/TRAI). An optional
+    per-bank window (bank_window=(start, end) as 'HH:MM' strings or hour ints)
+    may only NARROW that cap — a bank can call less, never later. None parts fall
+    back to the global cap. Backward-compatible: called with no args it enforces
+    the global cap exactly as before.
+    """
     hour = now_ist().hour
-    return CALL_START_HOUR <= hour < CALL_END_HOUR
+    start, end = CALL_START_HOUR, CALL_END_HOUR
+    if bank_window:
+        bs = _hhmm_to_hour(bank_window[0])
+        be = _hhmm_to_hour(bank_window[1])
+        if bs is not None:
+            start = max(start, bs)
+        if be is not None:
+            end = min(end, be)
+    return start <= hour < end
 
 
 # ── Row serialization ─────────────────────────────────────────────────────────
@@ -343,11 +375,20 @@ security = HTTPBearer(auto_error=False)  # auto_error=False allows unauthenticat
 async def get_current_bank_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
-    """Decode JWT if provided, otherwise return operator-level access (no bank_id filter).
-    Bank officers get bank_id scoping; operators (no auth) see everything."""
+    """Authenticated access with tenant scoping.
+
+    Security (#16): a MISSING token is rejected. Previously no-token silently
+    returned operator access with bank_id=None — and _bank_filter() then applied
+    no filter, so any unauthenticated caller could read every bank's data.
+
+    - No token          -> 401.
+    - admin JWT         -> operator scope (bank_id=None, sees all banks). VGIPL
+                           platform operators authenticate via the admin login and
+                           reach the ops views this way.
+    - bank_user JWT     -> scoped to their own bank_id (officer/supervisor only).
+    """
     if not credentials:
-        # No auth — operator mode (sees all banks)
-        return {"user_id": "operator", "role": "operator", "bank_id": None, "user_type": "operator"}
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     try:
         payload = pyjwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
@@ -356,17 +397,28 @@ async def get_current_bank_user(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    if payload.get("user_type") != "bank_user":
-        raise HTTPException(status_code=403, detail="Bank user access required")
-    if payload.get("role") not in ("bank_officer", "bank_supervisor"):
-        raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+    user_type = payload.get("user_type")
 
-    return {
-        "user_id": payload["user_id"],
-        "role": payload["role"],
-        "bank_id": payload.get("bank_id"),
-        "user_type": payload["user_type"],
-    }
+    # Platform operators (admin token) get cross-bank operator scope.
+    if user_type == "admin":
+        return {
+            "user_id": payload.get("user_id", "operator"),
+            "role": "operator",
+            "bank_id": None,
+            "user_type": "operator",
+        }
+
+    if user_type == "bank_user":
+        if payload.get("role") not in ("bank_officer", "bank_supervisor"):
+            raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+        return {
+            "user_id": payload["user_id"],
+            "role": payload["role"],
+            "bank_id": payload.get("bank_id"),
+            "user_type": "bank_user",
+        }
+
+    raise HTTPException(status_code=403, detail="Bank user or operator access required")
 
 
 def _bank_uuid(user: dict):

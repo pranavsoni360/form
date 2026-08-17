@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { Radio } from "lucide-react";
 
 import { AppShell } from "@/components/shared/AppShell";
@@ -29,7 +30,7 @@ import type { RealtimeEvent } from "@/lib/realtime/RealtimeProvider";
  */
 async function seedInFlightCalls(): Promise<RealtimeEvent[]> {
   try {
-    const res = await fetch(`${API_URL}/api/ops/in-flight-calls?_t=${Date.now()}`, {
+    const res = await opsFetch(`${API_URL}/api/ops/in-flight-calls?_t=${Date.now()}`, {
       cache: "no-store",
     });
     if (!res.ok) return [];

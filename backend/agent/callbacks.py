@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 
 from . import state as _state
 from .state import (
@@ -62,7 +62,7 @@ async def _ensure_manual_batch() -> None:
 
 
 @router.post("/schedule-callback-manual")
-async def schedule_callback_manual(request: Request):
+async def schedule_callback_manual(request: Request, user: dict = Depends(_state.get_current_bank_user)):
     """Operator-created callback: schedule a fresh outbound call to a customer at
     a chosen time. Creates a new agent_calls row (status 'Called - Callback
     Requested') under the persistent manual-callbacks batch, so the dispatcher
@@ -132,7 +132,7 @@ async def schedule_callback_manual(request: Request):
 
 
 @router.get("/scheduled-callbacks")
-async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200)):
+async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200), user: dict = Depends(_state.get_current_bank_user)):
     """List upcoming scheduled callbacks ordered by callback time.
     Used by the dashboard's 'Upcoming Callbacks' section."""
     rows = await _state.db_pool.fetch(

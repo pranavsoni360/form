@@ -1,7 +1,9 @@
 # backend/agent/transcript.py
 import json
+import math
 import uuid
 import logging
+from decimal import Decimal
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
@@ -18,6 +20,59 @@ router = APIRouter()
 # Both status names indicate a callback was already scheduled during this call.
 # We must preserve whichever variant is stored so the dispatcher still picks it up.
 _CALLBACK_STATUSES = {"Scheduled", "Called - Callback Requested"}
+
+
+async def _bill_completed_call(call: dict, billable_seconds: int) -> None:
+    """Debit the bank's prepaid wallet for a CONNECTED call, per-minute at the
+    bank's rate card. Runs inside the call-completion webhook, so it is:
+      * best-effort — any failure is logged, NEVER raised (billing must never
+        break call finalization);
+      * idempotent — guarded on usage_records.call_id so a re-fired webhook can't
+        double-bill;
+      * graceful — a bank with no rate_card_id is simply not billed (logged).
+    The credit_ledger BEFORE trigger computes balance_after (= balance + amount, so
+    a debit is a NEGATIVE amount) and the AFTER trigger auto-pauses at <= 0.
+    """
+    try:
+        bank_id = call.get("bank_id")
+        call_id = call.get("id")
+        if not bank_id or not call_id or billable_seconds <= 0:
+            return  # no bank to bill, or the call never connected
+        bank_uuid = uuid.UUID(str(bank_id))
+        call_uuid = uuid.UUID(str(call_id))
+
+        # idempotency — already billed for this call?
+        if await _state.db_pool.fetchval("SELECT 1 FROM usage_records WHERE call_id = $1 LIMIT 1", call_uuid):
+            return
+
+        rate = await _state.db_pool.fetchval(
+            """SELECT rc.rate_per_minute FROM banks b
+                 JOIN rate_cards rc ON rc.id = b.rate_card_id
+                WHERE b.id = $1 AND rc.is_active AND NOT rc.is_deleted""",
+            bank_uuid,
+        )
+        if rate is None:
+            return  # bank not on a rate card yet — nothing to bill
+
+        minutes = max(1, math.ceil(billable_seconds / 60))  # per-minute, rounded up, min 1
+        amount = Decimal(minutes) * rate  # positive cost
+
+        await _state.db_pool.execute(
+            """INSERT INTO usage_records
+                   (bank_id, call_id, billable_seconds, billable_minutes,
+                    rate_per_minute, amount, currency, billing_period)
+               VALUES ($1,$2,$3,$4,$5,$6,'INR', CURRENT_DATE)""",
+            bank_uuid, call_uuid, billable_seconds, minutes, rate, amount,
+        )
+        await _state.db_pool.execute(
+            """INSERT INTO credit_ledger
+                   (bank_id, entry_type, amount, currency, related_call_id, actor_type, note)
+               VALUES ($1,'debit',$2,'INR',$3,'system',$4)""",
+            bank_uuid, -amount, call_uuid, f"Call {call_id}: {minutes} min @ {rate}/min",
+        )
+        logger.info("Billed bank %s ₹%s for call %s (%s min)", bank_id, amount, call_id, minutes)
+    except Exception as e:
+        logger.warning("Billing skipped for call %s: %s", call.get("id"), e)
 
 
 @router.post("/transcript")
@@ -171,6 +226,11 @@ async def save_transcript(data: TranscriptPayload):
         json.dumps(call_analysis),
         actual_uuid,
     )
+
+    # Meter + debit the bank's prepaid wallet for this CONNECTED call (a transcript
+    # means the call was answered). Best-effort + idempotent; never blocks the webhook.
+    if transcript:
+        await _bill_completed_call(call, duration_seconds)
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:

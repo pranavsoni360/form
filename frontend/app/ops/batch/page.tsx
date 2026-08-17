@@ -25,6 +25,7 @@
  */
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -122,7 +123,7 @@ export default function OpsBatchPage() {
   /* ─── Banks list (for bank assignment dropdown) ───────────────────────── */
   const banks = useQuery<{ banks: Array<{ id: string; name: string }> }>({
     queryKey: ["banks-list"],
-    queryFn: () => fetch(`${API_URL}/api/admin/banks`, {
+    queryFn: () => opsFetch(`${API_URL}/api/admin/banks`, {
       headers: { Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('los_admin_token') || '' : ''}` }
     }).then(r => r.json()),
     staleTime: 60_000,
@@ -145,7 +146,7 @@ export default function OpsBatchPage() {
   }>({
     queryKey: ["phone-pools"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/ops/phone-pools`, { credentials: "include" });
+      const res = await opsFetch(`${API_URL}/api/ops/phone-pools`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -176,7 +177,7 @@ export default function OpsBatchPage() {
   const status = useQuery<BatchStatus>({
     queryKey: ["batch-status"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/batch-status`, { credentials: "include" });
+      const res = await opsFetch(`${API_URL}/api/agent/batch-status`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -191,7 +192,7 @@ export default function OpsBatchPage() {
   const uploads = useQuery<{ uploads: Upload[] }>({
     queryKey: ["uploads"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/uploads`, { credentials: "include" });
+      const res = await opsFetch(`${API_URL}/api/agent/uploads`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -215,7 +216,7 @@ export default function OpsBatchPage() {
     const params = new URLSearchParams({ language, gender, agent_type: agentType, commit: String(commit) });
     if (phoneNumberId) params.set("phone_number_id", phoneNumberId);
     if (bankId) params.set("bank_id", bankId);
-    const res = await fetch(`${API_URL}/api/agent/upload-excel?${params}`, {
+    const res = await opsFetch(`${API_URL}/api/agent/upload-excel?${params}`, {
       method: "POST",
       body: fd,
       credentials: "include",
@@ -312,7 +313,7 @@ export default function OpsBatchPage() {
     mutationFn: async (batchId: string) => {
       const url = new URL(`${API_URL}/api/agent/stop-batch`);
       url.searchParams.set("batch_id", batchId);
-      const res = await fetch(url.toString(), {
+      const res = await opsFetch(url.toString(), {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -805,7 +806,7 @@ function BatchDetailDialog({
     queryKey: ["batch-detail", batchId],
     enabled: Boolean(batchId && open),
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/upload/${batchId}`, { credentials: "include" });
+      const res = await opsFetch(`${API_URL}/api/agent/upload/${batchId}`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -817,7 +818,7 @@ function BatchDetailDialog({
     if (!batchId) return;
     setDownloading(true);
     try {
-      const res = await fetch(`${API_URL}/api/agent/upload/${batchId}/download`, { credentials: "include" });
+      const res = await opsFetch(`${API_URL}/api/agent/upload/${batchId}/download`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const disposition = res.headers.get("Content-Disposition") || "";
@@ -955,7 +956,7 @@ function postJson(
         if (v != null && v !== "") url.searchParams.set(k, v);
       }
     }
-    const res = await fetch(url.toString(), {
+    const res = await opsFetch(url.toString(), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },

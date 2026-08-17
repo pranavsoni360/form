@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -109,7 +110,7 @@ export default function OpsOverviewPage() {
   const stats = useQuery<DashboardStats>({
     queryKey: ["dashboard-stats"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/dashboard-stats`, {
+      const res = await opsFetch(`${API_URL}/api/agent/dashboard-stats`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -122,7 +123,7 @@ export default function OpsOverviewPage() {
   const recent = useQuery<{ calls?: RecentCall[]; recent_calls?: RecentCall[] }>({
     queryKey: ["recent-calls"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/recent_calls?limit=10`, {
+      const res = await opsFetch(`${API_URL}/api/agent/recent_calls?limit=10`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -15,6 +15,7 @@
  */
 
 import * as React from "react";
+import { opsFetch } from "@/lib/ops-fetch";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -54,7 +55,7 @@ export default function OpsAnalyticsPage() {
   const query = useQuery<AnalyticsResponse>({
     queryKey: ["analytics"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/agent/analytics`, {
+      const res = await opsFetch(`${API_URL}/api/agent/analytics`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

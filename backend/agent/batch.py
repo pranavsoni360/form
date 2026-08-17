@@ -621,7 +621,29 @@ async def upload_excel(
     user: dict = Depends(get_current_bank_user),
 ):
     """Upload Excel/CSV with customer data for batch calling."""
-    # bank_id comes from the query param (operator selects which bank)
+    # ── Bank assignment is MANDATORY ──────────────────────────────────────────
+    # Every call must belong to a bank so it shows up in that bank's portals.
+    # Previously an operator could upload with no bank and the rows landed
+    # unattributed (the LEGACY/UNASSIGNED placeholder), invisible to every real
+    # bank's dashboards. Rules:
+    #   • Bank user (token carries a bank_id) → force THIS bank; a bank user can
+    #     only upload for their own tenant, so any query override is ignored.
+    #   • Operator (admin token, no bank_id) → MUST pass a bank_id (the /ops
+    #     "Assign to bank" dropdown). Reject the upload otherwise.
+    token_bank_id = user.get("bank_id")
+    if token_bank_id:
+        bank_id = str(token_bank_id)
+    elif not bank_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select a bank to assign this batch to before uploading.",
+        )
+    try:
+        _bank_check_uuid = uuid.UUID(bank_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid bank_id.")
+    if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", _bank_check_uuid):
+        raise HTTPException(status_code=404, detail="Bank not found.")
 
     try:
         filename = file.filename.lower()

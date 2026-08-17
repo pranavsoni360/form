@@ -340,6 +340,12 @@ export default function OpsBatchPage() {
   const fileRef = React.useRef<HTMLInputElement>(null);
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
+    // Bank assignment is required — guard here too (the button is also disabled).
+    if (f && !bankId) {
+      toast.warning("Select a bank to assign this batch to before uploading.");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     if (f) upload.mutate(f);
     // reset so picking the same file again triggers onChange
     if (fileRef.current) fileRef.current.value = "";
@@ -475,18 +481,18 @@ export default function OpsBatchPage() {
             {/* Bank assignment — without this, calls won't appear in any bank portal */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Select
-                label="Assign to bank"
+                label="Assign to bank (required)"
                 value={bankId}
                 onChange={setBankId}
                 options={[
-                  { value: "", label: banks.isLoading ? "Loading banks…" : "⚠️ No bank (ops only)" },
+                  { value: "", label: banks.isLoading ? "Loading banks…" : "Select a bank…" },
                   ...(banks.data?.banks ?? []).map((b) => ({ value: b.id, label: b.name })),
                 ]}
               />
               {!bankId && (
                 <div className="flex items-center text-xs text-muted-foreground">
                   <span className="rounded-md bg-warning/10 px-2 py-1 text-warning ring-1 ring-warning/20">
-                    Without a bank, applications won't appear in the bank officer portal.
+                    Pick a bank first — every batch must be assigned to a bank, or its calls won't appear in any portal.
                   </span>
                 </div>
               )}
@@ -504,7 +510,8 @@ export default function OpsBatchPage() {
               />
               <Button
                 onClick={() => fileRef.current?.click()}
-                disabled={upload.isPending}
+                disabled={upload.isPending || !bankId}
+                title={!bankId ? "Select a bank first" : undefined}
                 className="btn-solid"
               >
                 {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}

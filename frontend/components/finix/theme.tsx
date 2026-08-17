@@ -2,11 +2,19 @@
 
 // Finix theme controller (design_handoff_finix/README.md §Theme switching).
 //
-// Dark is the default. The choice persists in localStorage under `finix.theme`
-// and is restored on load; it falls back to the `defaultTheme` prop, then dark.
-// The active theme is written to `data-theme` on <html> so the oklch token
-// layer in globals.css (.finix-root) resolves. A pre-paint inline script in
-// app/layout.tsx sets the same attribute to avoid a flash before hydration.
+// The choice persists in localStorage under `finix.theme` and is restored on
+// load; it falls back to the `defaultTheme` prop. The active theme is written
+// to `data-theme` on <html> so the oklch token layer in globals.css
+// (.finix-root) resolves. A pre-paint inline script in app/layout.tsx sets the
+// same attribute to avoid a flash before hydration.
+//
+// DEFAULT IS LIGHT, deliberately diverging from the handoff spec's dark
+// default: this app has always been light-by-default (legacy `los-theme`), and
+// the Job-2 migration must not flip the theme for users who never chose dark.
+// The layout head script seeds `finix.theme` from `los-theme` on first run, so
+// existing dark-mode users keep dark. This default must stay in sync with that
+// script's fallback — if they disagree, migrated screens flash the wrong theme
+// before hydration.
 
 import * as React from "react";
 
@@ -29,7 +37,7 @@ function readStored(): FinixTheme | null {
 
 export function FinixThemeProvider({
   children,
-  defaultTheme = "dark",
+  defaultTheme = "light",
 }: {
   children: React.ReactNode;
   defaultTheme?: FinixTheme;

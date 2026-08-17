@@ -230,14 +230,21 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 
    - Tokens are `--fx-*`, never the shadcn `--background` etc.
    - Theme is driven by `data-theme` on <html> (dark | light), NOT the `.dark`
-     class. Dark is the default (bare `.finix-root` = dark), so a page with no
-     data-theme set still renders dark per the spec.
+     class.
+   - LIGHT is the fallback: bare `.finix-root` (no data-theme resolved) renders
+     light. This diverges from the handoff spec's dark default on purpose — the
+     live app has always been light-by-default via the legacy `los-theme` flag,
+     and the Job-2 migration must not flip themes under users who never chose
+     dark. The layout head script seeds `finix.theme` from `los-theme`, so
+     established dark-mode users keep dark. Dark therefore requires an explicit
+     [data-theme="dark"]; if the head script is ever blocked, the safe fallback
+     is the historical light, not an unexpected dark flash.
+     Keep this in sync with FinixThemeProvider's `defaultTheme`.
    - Scoped under `.finix-root` so these variables only exist inside a Finix
      shell; legacy pages are completely unaffected.
    - Values transcribed EXACTLY from the README colour tables — do not round.
    ════════════════════════════════════════════════════════════════════════ */
 
-.finix-root,
 [data-theme="dark"] .finix-root {
   --fx-bg:            oklch(0.145 0.02 265);
   --fx-surface:       oklch(0.185 0.02 265);
@@ -267,6 +274,7 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
   color-scheme: dark;
 }
 
+.finix-root,
 [data-theme="light"] .finix-root {
   --fx-bg:            oklch(0.955 0.005 265);
   --fx-surface:       #ffffff;
@@ -284,7 +292,9 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 
   --fx-accent-grad:   linear-gradient(180deg, oklch(0.60 0.20 265), oklch(0.50 0.20 265));
   --fx-accent-glow:   0 6px 18px oklch(0.52 0.20 265 / 0.28);
-  --fx-elevation:     0 24px 60px oklch(0.1 0.02 265 / 0.5);
+  /* Lighter than the dark theme's elevation: a near-black 50% shadow reads as
+     a smudge on white surfaces. Same geometry, softer ink. */
+  --fx-elevation:     0 20px 48px oklch(0.1 0.02 265 / 0.16);
 
   /* Light: status colour at 10% alpha. */
   --fx-accent-tint:  oklch(0.52 0.20 265 / 0.10);

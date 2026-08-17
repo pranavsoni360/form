@@ -1,11 +1,38 @@
 'use client';
 
+// Bank Call Logs — Finix design migration (Job 2, screen 1).
+//
+// NO FEATURE LOSS. Everything the old page did is preserved 1:1; only the
+// presentation moved to the Finix shell + primitives. Reused VERBATIM from the
+// old page: the GET /api/agent/calls fetch (page_size=200 + date range), the
+// FAILED/PENDING/COMPLETED status buckets + matchesFilter (which keep this page
+// reconciled with the batch dashboard — see backend/agent/batch.py), the 8
+// filter tabs + live counts, the interest-cell logic, name/phone search, and
+// the loading/empty states. Added per the design: the Form ✆ column + legend.
+
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
-import { ArrowLeft, Phone, Search, Loader2 } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
+import { BankUserShell } from '../_shell/BankUserShell';
+import {
+  Toolbar,
+  PeriodChip,
+  Breadcrumb,
+  PageTitle,
+  FilterPills,
+  Card,
+  CardHeader,
+  Table,
+  TwoLine,
+  CallStatusPill,
+  CallLegend,
+  FormSentMark,
+  LoadingState,
+  EmptyState,
+  formatDuration,
+  type Column,
+} from '@/components/finix';
 import DateRangeFilter, { DateRangeValue, DEFAULT_RANGE } from '@/components/DateRangeFilter';
 
 interface Call {
@@ -23,29 +50,13 @@ interface Call {
   form_sent?: boolean;
 }
 
-const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  'Called - Interested':     { label: 'Interested',     color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
-  'Called - Not Interested': { label: 'Not Interested', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-  'Not Answered':            { label: 'Not Answered',   color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
-  'Failed':                  { label: 'Failed',         color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
-  'Invalid Phone':           { label: 'Invalid Phone',  color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
-  'Call Not Connected':      { label: 'Not Connected',  color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' },
-  'Calling':                 { label: 'Calling',        color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  'Pending':                 { label: 'Pending',        color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
-  'Scheduled':               { label: '📅 Scheduled',   color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
-  'Wrong Contact':           { label: 'Wrong Contact',  color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
-};
-
-// Status groupings MUST match the batch dashboard's buckets (see
-// backend/agent/batch.py batch_status) so the two pages always reconcile:
+// ── Status buckets — COPIED VERBATIM from the old page. These MUST match the
+// batch dashboard's buckets (backend/agent/batch.py batch_status) so the two
+// pages always reconcile. Do not reinterpret.
 //   pending   = Pending + Calling + Scheduled + Called - Callback Requested
 //   completed = Called + Called - Interested + Called - Not Interested
 //   failed    = Failed + Invalid Phone + Call Not Connected
 //   not_answered = Not Answered
-// Every possible status lands in exactly one tab, so the tab counts sum to the
-// total and equal the batch dashboard's cards. "Interested" / "Not Interested"
-// are sub-views of completed; a bare "Called" (completed but uncategorised)
-// counts under "Completed" so nothing is orphaned.
 const FAILED_STATUSES    = ['Failed', 'Invalid Phone', 'Call Not Connected'];
 const PENDING_STATUSES   = ['Pending', 'Calling', 'Scheduled', 'Called - Callback Requested'];
 const COMPLETED_STATUSES = ['Called', 'Called - Interested', 'Called - Not Interested'];
@@ -60,14 +71,14 @@ const matchesFilter = (status: string, key: string) => {
 };
 
 const FILTERS: { key: string; label: string }[] = [
-  { key: 'all',                    label: 'All' },
-  { key: 'Completed',              label: 'Completed' },
-  { key: 'Called - Interested',    label: 'Interested' },
-  { key: 'Called - Not Interested',label: 'Not Interested' },
-  { key: 'Not Answered',           label: 'Not Answered' },
-  { key: 'Wrong Contact',          label: 'Wrong Contact' },
-  { key: 'Failed',                 label: 'Failed' },
-  { key: 'Pending',                label: 'Pending' },
+  { key: 'all',                     label: 'All' },
+  { key: 'Completed',               label: 'Completed' },
+  { key: 'Called - Interested',     label: 'Interested' },
+  { key: 'Called - Not Interested', label: 'Not interested' },
+  { key: 'Not Answered',            label: 'Not answered' },
+  { key: 'Wrong Contact',           label: 'Wrong contact' },
+  { key: 'Failed',                  label: 'Failed' },
+  { key: 'Pending',                 label: 'Pending' },
 ];
 
 export default function CallsPage() {
@@ -113,110 +124,69 @@ export default function CallsPage() {
   const countFor = (key: string) =>
     key === 'all' ? allCalls.length : allCalls.filter(c => matchesFilter(c.status, key)).length;
 
+  const filterOptions = FILTERS.map(f => ({ key: f.key, label: f.label, count: countFor(f.key) }));
+
+  const cols: Column<Call>[] = [
+    {
+      key: 'customer',
+      header: 'Customer',
+      render: (c) => <TwoLine primary={c.customer_name || 'Unknown'} secondary={<span className="fx-mono">{c.phone}</span>} />,
+    },
+    { key: 'status', header: 'Status', render: (c) => <CallStatusPill status={c.status} /> },
+    { key: 'form', header: 'Form', align: 'center', width: 60, render: (c) => <FormSentMark sent={!!c.form_sent} /> },
+    {
+      key: 'duration', header: 'Duration', align: 'right', width: 110,
+      render: (c) => <span className="fx-mono">{c.call_duration ? formatDuration(c.call_duration) : '—'}</span>,
+    },
+    { key: 'language', header: 'Language', render: (c) => <span className="text-fx-text2">{c.language || '—'}</span> },
+    {
+      key: 'interest', header: 'Interest',
+      render: (c) => {
+        // Interest-cell logic — preserved exactly from the old page.
+        if (['Calling', 'Pending'].includes(c.status)) return <span className="text-fx-text3">—</span>;
+        if (c.interested === true) return <span style={{ color: 'var(--fx-green)' }}>Interested</span>;
+        if (c.interested === false) return <span className="text-fx-text2">Not interested</span>;
+        return <span className="text-fx-text3">—</span>;
+      },
+    },
+    { key: 'date', header: 'Date', align: 'right', render: (c) => <span className="fx-mono text-fx-text2">{c.created_at || '—'}</span> },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors">
-      <div className="bg-white dark:bg-dark-card shadow dark:shadow-gray-900/50">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/bank/dashboard')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition">
-              <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-            </button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Call Logs</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{filtered.length} of {allCalls.length} calls</p>
-            </div>
-          </div>
-          <ThemeToggle />
-        </div>
+    <BankUserShell>
+      <Toolbar
+        left={<><PeriodChip>{dateRange.from && dateRange.to ? `${dateRange.from} – ${dateRange.to}` : 'All dates'}</PeriodChip><Breadcrumb>call logs</Breadcrumb></>}
+      />
+      <PageTitle title="Call logs" subtitle={`${filtered.length} of ${allCalls.length} calls`} />
+
+      {/* Search + date range */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or phone…"
+          className="w-full rounded-[10px] bg-fx-surface2 px-3 py-2 text-[13px] text-fx-text outline-none placeholder:text-fx-text3 focus:shadow-[inset_0_0_0_1px_var(--fx-accent)] sm:max-w-xs"
+        />
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
-        {/* Search + Filter */}
-        <div className="flex flex-col gap-3">
-          <div className="relative">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or phone..."
-              className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-          </div>
-          <DateRangeFilter value={dateRange} onChange={setDateRange} />
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {FILTERS.map(f => {
-              const count = countFor(f.key);
-              return (
-                <button key={f.key} onClick={() => setStatusFilter(f.key)}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                    statusFilter === f.key ? 'bg-blue-600 text-white' : 'bg-white dark:bg-dark-section border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-400'
-                  }`}>
-                  {f.label}
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                    statusFilter === f.key ? 'bg-white/20 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
-                  }`}>{count}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Calls Table */}
+      <Card>
+        <CardHeader
+          title="Calls"
+          qualifier={`${filtered.length} shown`}
+          right={<FilterPills options={filterOptions} value={statusFilter} onChange={setStatusFilter} />}
+        />
         {loading ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl p-12 text-center">
-            <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-3" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">Loading calls...</p>
-          </div>
+          <LoadingState label="Loading calls…" rows={8} />
         ) : filtered.length === 0 ? (
-          <div className="bg-white dark:bg-dark-card rounded-xl p-12 text-center">
-            <Phone className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">No calls found</p>
-          </div>
+          <EmptyState title="No calls found" description="No calls match the current filters and date range." />
         ) : (
-          <div className="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700/50">
-              <thead className="bg-gray-50 dark:bg-dark-section">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Customer</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Duration</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Language</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Interest</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
-                {filtered.map(call => {
-                  const st = STATUS_MAP[call.status] || { label: call.status, color: 'bg-gray-100 text-gray-700' };
-                  return (
-                    <tr key={call._id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition">
-                      <td className="px-4 py-3">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">{call.customer_name || 'Unknown'}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">{call.phone}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${st.color}`}>{st.label}</span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
-                        {call.call_duration ? `${Math.floor(call.call_duration / 60)}:${String(call.call_duration % 60).padStart(2, '0')}` : '--'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{call.language || '--'}</td>
-                      <td className="px-4 py-3">
-                        {['Calling', 'Pending'].includes(call.status) ? (
-                          <span className="text-gray-400 text-xs">—</span>
-                        ) : call.interested === true ? (
-                          <span className="text-green-600 text-xs font-medium">Interested</span>
-                        ) : call.interested === false ? (
-                          <span className="text-red-600 text-xs font-medium">Not Interested</span>
-                        ) : (
-                          <span className="text-gray-400 text-xs">--</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{call.created_at || '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <Table columns={cols} rows={filtered} rowKey={(c) => c._id} />
+            <CallLegend />
+          </>
         )}
-      </div>
-    </div>
+      </Card>
+    </BankUserShell>
   );
 }

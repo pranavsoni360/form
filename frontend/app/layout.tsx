@@ -77,11 +77,32 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               try {
                 var t = localStorage.getItem('los-theme');
                 if (t === 'dark') document.documentElement.classList.add('dark');
-                // Finix theme (bank-admin portal): dark default, persisted under
-                // 'finix.theme'. Set data-theme pre-paint to avoid a flash.
+
+                // Finix theme, persisted under 'finix.theme' and applied to
+                // <html data-theme> pre-paint so the oklch token layer resolves
+                // without a flash.
+                //
+                // MIGRATION SEEDING: the Finix spec defaults to dark, but the
+                // live app has always been light-by-default via 'los-theme'.
+                // Flipping every migrated screen to dark on deploy day would
+                // change the theme under users who never asked for it, so the
+                // first time we see no 'finix.theme' we seed it from the
+                // legacy key: los-theme==='dark' -> dark, anything else
+                // (including unset) -> light. After that the user's Finix
+                // ThemePill owns the value and this branch never runs again.
+                // 'los-theme' stays live for the not-yet-migrated public
+                // forms, which still use the legacy ThemeToggle.
                 var f = localStorage.getItem('finix.theme');
-                document.documentElement.setAttribute('data-theme', f === 'light' ? 'light' : 'dark');
-              } catch(e) {}
+                if (f !== 'light' && f !== 'dark') {
+                  f = (t === 'dark') ? 'dark' : 'light';
+                  localStorage.setItem('finix.theme', f);
+                }
+                document.documentElement.setAttribute('data-theme', f);
+              } catch(e) {
+                // Storage blocked (private mode): fall back to light to match
+                // the app's historical default rather than the spec default.
+                try { document.documentElement.setAttribute('data-theme', 'light'); } catch(e2) {}
+              }
             })();`,
           }}
         />

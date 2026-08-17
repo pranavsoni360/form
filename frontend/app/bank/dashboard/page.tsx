@@ -158,18 +158,18 @@ export default function BankDashboardPage() {
       key: 'customer', header: 'Customer',
       render: (a) => <TwoLine primary={a.customer_name} secondary={<span className="fx-mono">{a.phone}</span>} />,
     },
-    { key: 'loan_id', header: 'Loan ID', render: (a) => <span className="fx-mono text-fx-text2">{a.loan_id}</span> },
-    { key: 'type', header: 'Type', render: (a) => <span className="text-fx-text2">{loanTypeLabel(a.consumer_loan_type)}</span> },
+    { key: 'loan_id', header: 'Loan ID', nowrap: true, render: (a) => <span className="fx-mono text-fx-text2">{a.loan_id}</span> },
+    { key: 'type', header: 'Type', nowrap: true, render: (a) => <span className="text-fx-text2">{loanTypeLabel(a.consumer_loan_type)}</span> },
     {
       key: 'requested', header: 'Requested', align: 'right',
       render: (a) => (a.loan_amount_requested ? formatCurrency(a.loan_amount_requested) : '—'),
     },
-    { key: 'status', header: 'Status', render: (a) => <AppStatusPill status={a.status} /> },
-    { key: 'interested', header: 'Interested', render: (a) => <InterestPill interested={a.interested} /> },
-    { key: 'form', header: 'Form', render: (a) => <FormStatusPill status={a.form_status} /> },
-    { key: 'suggestion', header: 'Suggestion', render: (a) => <SuggestionPill suggestion={a.system_suggestion} /> },
+    { key: 'status', header: 'Status', nowrap: true, render: (a) => <AppStatusPill status={a.status} /> },
+    { key: 'interested', header: 'Interested', nowrap: true, render: (a) => <InterestPill interested={a.interested} /> },
+    { key: 'form', header: 'Form', nowrap: true, render: (a) => <FormStatusPill status={a.form_status} /> },
+    { key: 'suggestion', header: 'Suggestion', nowrap: true, render: (a) => <SuggestionPill suggestion={a.system_suggestion} /> },
     {
-      key: 'kyc', header: 'KYC',
+      key: 'kyc', header: 'KYC', nowrap: true,
       render: (a) => <KycMarks panVerified={a.pan_verified} aadhaarVerified={a.aadhaar_verified} />,
     },
     {
@@ -221,7 +221,7 @@ export default function BankDashboardPage() {
           placeholder="Search name, phone, loan ID…"
           className="w-full rounded-[10px] bg-fx-surface2 px-3 py-2 text-[13px] text-fx-text outline-none placeholder:text-fx-text3 focus:shadow-[inset_0_0_0_1px_var(--fx-accent)] sm:max-w-xs"
         />
-        <DateRangeFilter value={dateRange} onChange={setDateRange} />
+        <DateRangeFilter value={dateRange} onChange={setDateRange} finix />
       </div>
 
       <Card>

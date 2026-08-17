@@ -18,6 +18,13 @@ export type Column<T> = {
   header: React.ReactNode;
   align?: Align;
   width?: number | string;
+  /**
+   * Keep the cell on one line. Short mono values — IDs, dates, durations,
+   * amounts — wrap mid-token in a narrow column ("LN-\n24019", "14 Aug\n2026"),
+   * which is unreadable and misaligns the row. Right-aligned columns get this
+   * automatically since they are numeric by convention.
+   */
+  nowrap?: boolean;
   render: (row: T, index: number) => React.ReactNode;
 };
 
@@ -50,7 +57,10 @@ export function Table<T>({
           {columns.map((c) => (
             <th
               key={c.key}
-              className={cn("h-[32px] px-[14px] text-[11px] font-normal text-fx-text3", alignClass[c.align ?? "left"])}
+              className={cn(
+                "h-[32px] whitespace-nowrap px-[14px] text-[11px] font-normal text-fx-text3",
+                alignClass[c.align ?? "left"],
+              )}
               style={{ width: c.width }}
             >
               {c.header}
@@ -74,7 +84,8 @@ export function Table<T>({
                 className={cn(
                   "h-[44px] px-[14px] py-[7px] align-middle text-[13px] text-fx-text",
                   alignClass[c.align ?? "left"],
-                  (c.align ?? "left") === "right" && "fx-mono",
+                  (c.align ?? "left") === "right" && "fx-mono whitespace-nowrap",
+                  c.nowrap && "whitespace-nowrap",
                 )}
               >
                 {c.render(row, i)}

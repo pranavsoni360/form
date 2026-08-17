@@ -53,9 +53,23 @@ const PRESETS: { key: RangePreset; label: string }[] = [
 export default function DateRangeFilter({
   value,
   onChange,
+  /**
+   * Render with the Finix token palette instead of the legacy Tailwind one.
+   *
+   * This component is shared by migrated screens (/bank/dashboard, /bank/calls)
+   * and not-yet-migrated ones (/bank/batch). Its legacy look — white pills with
+   * a saturated blue active state — reads as foreign inside a Finix shell and is
+   * outright broken on the dark palette. Rather than fork the component (which
+   * would duplicate the date maths that callers depend on), the presentation
+   * switches and every date behaviour stays shared.
+   *
+   * Remove the flag once /bank/batch is migrated and make Finix the only style.
+   */
+  finix = false,
 }: {
   value: DateRangeValue;
   onChange: (v: DateRangeValue) => void;
+  finix?: boolean;
 }) {
   const selectPreset = (preset: RangePreset) => {
     if (preset === 'custom') {
@@ -72,19 +86,40 @@ export default function DateRangeFilter({
     onChange({ ...value, preset: 'custom', [field]: v });
   };
 
+  // Finix: 30px quiet chips matching FilterPills/PeriodChip, active = accent
+  // ring on surface2. Date inputs use the mono face like every other Finix
+  // figure, and color-scheme is inherited so the native picker matches.
+  const presetClass = (active: boolean) =>
+    finix
+      ? `fx-tap inline-flex h-[30px] items-center whitespace-nowrap rounded-[10px] px-3 text-[12px] transition-colors ${
+          active
+            ? 'bg-fx-surface2 text-fx-text shadow-[inset_0_0_0_1px_var(--fx-accent)]'
+            : 'text-fx-text2 hover:bg-fx-surface2 hover:text-fx-text'
+        }`
+      : `px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+          active
+            ? 'bg-blue-600 text-white'
+            : 'bg-white dark:bg-dark-section border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-400'
+        }`;
+
+  const labelClass = finix
+    ? 'text-[11px] text-fx-text3'
+    : 'text-xs font-medium text-gray-500 dark:text-gray-400';
+
+  const inputClass = finix
+    ? 'fx-mono rounded-[10px] bg-fx-surface2 px-2 py-1.5 text-[12px] text-fx-text outline-none focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]'
+    : 'px-2 py-1.5 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500';
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className={finix ? 'flex gap-1.5 overflow-x-auto' : 'flex gap-2 overflow-x-auto pb-1'}>
         {PRESETS.map((p) => (
           <button
             key={p.key}
             type="button"
             onClick={() => selectPreset(p.key)}
-            className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-              value.preset === p.key
-                ? 'bg-blue-600 text-white'
-                : 'bg-white dark:bg-dark-section border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-400'
-            }`}
+            aria-pressed={value.preset === p.key}
+            className={presetClass(value.preset === p.key)}
           >
             {p.label}
           </button>
@@ -92,21 +127,21 @@ export default function DateRangeFilter({
       </div>
       {value.preset === 'custom' && (
         <div className="flex items-center gap-2 flex-wrap">
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">From</label>
+          <label className={labelClass}>From</label>
           <input
             type="date"
             value={value.from}
             max={value.to || undefined}
             onChange={(e) => setCustom('from', e.target.value)}
-            className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            className={inputClass}
           />
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">To</label>
+          <label className={labelClass}>To</label>
           <input
             type="date"
             value={value.to}
             min={value.from || undefined}
             onChange={(e) => setCustom('to', e.target.value)}
-            className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            className={inputClass}
           />
         </div>
       )}

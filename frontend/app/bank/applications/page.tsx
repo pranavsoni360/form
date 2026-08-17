@@ -148,9 +148,9 @@ export default function BankApplicationsListPage() {
         />
       ),
     },
-    { key: "loan_id", header: "Loan ID", render: (a) => <span className="fx-mono text-fx-text2">{a.loan_id || "—"}</span> },
+    { key: "loan_id", header: "Loan ID", nowrap: true, render: (a) => <span className="fx-mono text-fx-text2">{a.loan_id || "—"}</span> },
     {
-      key: "type", header: "Type",
+      key: "type", header: "Type", nowrap: true,
       render: (a) => (
         <span className="text-fx-text2">
           {a.consumer_loan_type === "consumer_durable" ? "Consumer durable" : a.consumer_loan_type === "personal" ? "Personal" : "—"}
@@ -161,9 +161,9 @@ export default function BankApplicationsListPage() {
       key: "amount", header: "Amount", align: "right",
       render: (a) => fmtINR(a.requested_loan_amount ?? a.loan_amount_requested),
     },
-    { key: "status", header: "Status", render: (a) => <AppStatusPill status={a.status} /> },
-    { key: "interested", header: "Interested", render: (a) => <InterestPill interested={a.interested} /> },
-    { key: "form", header: "Form", render: (a) => <FormStatusPill status={a.form_status} /> },
+    { key: "status", header: "Status", nowrap: true, render: (a) => <AppStatusPill status={a.status} /> },
+    { key: "interested", header: "Interested", nowrap: true, render: (a) => <InterestPill interested={a.interested} /> },
+    { key: "form", header: "Form", nowrap: true, render: (a) => <FormStatusPill status={a.form_status} /> },
     { key: "score", header: "AI score", align: "right", render: (a) => <ScorePill score={a.system_score} /> },
     {
       key: "submitted", header: "Submitted", align: "right",

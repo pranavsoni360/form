@@ -167,7 +167,7 @@ export default function CallsPage() {
           placeholder="Search by name or phone…"
           className="w-full rounded-[10px] bg-fx-surface2 px-3 py-2 text-[13px] text-fx-text outline-none placeholder:text-fx-text3 focus:shadow-[inset_0_0_0_1px_var(--fx-accent)] sm:max-w-xs"
         />
-        <DateRangeFilter value={dateRange} onChange={setDateRange} />
+        <DateRangeFilter value={dateRange} onChange={setDateRange} finix />
       </div>
 
       <Card>

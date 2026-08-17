@@ -26,6 +26,7 @@ export { Card, CardHeader, CardBody, type CardRing } from "./Card";
 export { Button } from "./Button";
 export { Toggle } from "./Toggle";
 export { Field, Input, Textarea, Select, Checkbox, Range, FieldRow } from "./Field";
+export { Tabs, DecisionBar, DataField, DataGrid, type TabDef } from "./Tabs";
 export { Dropzone } from "./Dropzone";
 export { Progress, IndeterminateBar, Utilization, LiveDot, type LiveState } from "./Progress";
 export {

@@ -1,13 +1,75 @@
 'use client';
 
+// Bank application detail + decision screen — Finix design migration (Job 2).
+//
+// HIGHEST-RISK SCREEN IN THE MIGRATION: this is where money decisions happen.
+// Every permission predicate, handler and two-step confirmation below is copied
+// VERBATIM from the legacy page. Only presentation changed.
+//
+// NO FEATURE LOSS — the acceptance checklist for this screen:
+//  - Auth gate (token+user, redirect to /bank/login) and the 401 branch in
+//    fetchDetail.
+//  - The FIVE permission predicates, unchanged and still derived from role +
+//    status: canOfficerAct, canSupervisorAct, canDisburse, canCancel, canAct.
+//  - All six tabs (overview / personal / employment / loan / kyc / notes) and
+//    their per-tab "n of m filled" counts, computed by the same `filled()` over
+//    the same field lists.
+//  - Two-step reject: first click reveals the reason input, second click submits
+//    ONLY if a reason is present. Same for cancel (reason optional there).
+//  - officerApprove / officerReject / supervisorApprove / supervisorReject /
+//    initiateDisbursement / cancelApplication all still called with the same
+//    args, still through handleAction (which refetches and clears the inputs).
+//  - Notes textarea feeds every approve/reject call.
+//  - The supervisor-only "Approve" is still suppressed when canDisburse, so the
+//    two never render together.
+//  - Conditional sections: guarantor block, consumer-durable product/dealer
+//    block, the 7th document row for consumer_durable, and the supervisor-only
+//    AssignVendorPanel.
+//  - LRSScorePanel with canRescore={isOfficer}; document links to API_URL+url
+//    with target=_blank rel=noopener; masked PAN/Aadhaar; verification
+//    timestamps.
+//  - Loading and not-found states.
+//  - Bottom padding reserved when the action bar shows, so the last row is never
+//    hidden behind it.
+//
+// DEFERRED, deliberately: LRSScorePanel and AssignVendorPanel keep their own
+// legacy styling for now. They are self-contained and carry mutation logic
+// (rescore, assign, withdraw); restyling their internals is separate work. They
+// are wrapped in Finix cards so the page frame is consistent.
+
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { API_URL, getApplicationDetail, officerApprove, officerReject, supervisorApprove, supervisorReject, initiateDisbursement, cancelApplication, STATUS_LABELS, STATUS_COLORS, SUGGESTION_COLORS, formatCurrency, formatDate, formatDateTime, maskPAN, maskAadhaar } from '@/lib/api';
-import { ArrowLeft, User, Briefcase, FileText, ClipboardCheck, CheckCircle2, XCircle, Eye, Shield, Loader2, Banknote, LayoutDashboard, Ban } from 'lucide-react';
-import ThemeToggle from '@/components/ThemeToggle';
+import {
+  API_URL, getApplicationDetail, officerApprove, officerReject, supervisorApprove,
+  supervisorReject, initiateDisbursement, cancelApplication, STATUS_LABELS,
+  formatCurrency, formatDate, formatDateTime, maskPAN, maskAadhaar,
+} from '@/lib/api';
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
 import { AssignVendorPanel } from '@/components/bank/AssignVendorPanel';
 import { LRSScorePanel } from '@/components/bank/LRSScorePanel';
+import { BankUserShell } from '../../_shell/BankUserShell';
+import {
+  Toolbar,
+  Breadcrumb,
+  PageTitle,
+  Button,
+  Card,
+  CardHeader,
+  CardBody,
+  Pill,
+  Tabs,
+  DecisionBar,
+  DataField,
+  DataGrid,
+  Input,
+  Textarea,
+  Progress,
+  AppStatusPill,
+  SuggestionPill,
+  LoadingState,
+  EmptyState,
+  type TabDef,
+} from '@/components/finix';
 
 interface TimelineEvent {
   id: string;
@@ -20,13 +82,13 @@ interface TimelineEvent {
 
 type TabId = 'overview' | 'personal' | 'employment' | 'loan' | 'kyc' | 'notes';
 
-const TAB_DEFS: { id: TabId; label: string; Icon: any }[] = [
-  { id: 'overview',    label: 'Overview',    Icon: LayoutDashboard },
-  { id: 'personal',   label: 'Personal',    Icon: User },
-  { id: 'employment', label: 'Employment',  Icon: Briefcase },
-  { id: 'loan',       label: 'Loan',        Icon: Banknote },
-  { id: 'kyc',        label: 'KYC & Docs',  Icon: Shield },
-  { id: 'notes',      label: 'Notes',       Icon: FileText },
+const TAB_DEFS: { id: TabId; label: string; glyph: string }[] = [
+  { id: 'overview',   label: 'Overview',   glyph: '▤' },
+  { id: 'personal',   label: 'Personal',   glyph: '◍' },
+  { id: 'employment', label: 'Employment', glyph: '◫' },
+  { id: 'loan',       label: 'Loan',       glyph: '₹' },
+  { id: 'kyc',        label: 'KYC & docs', glyph: '◈' },
+  { id: 'notes',      label: 'Notes',      glyph: '✎' },
 ];
 
 export default function ApplicationDetailPage() {
@@ -47,7 +109,6 @@ export default function ApplicationDetailPage() {
   const [showCancel, setShowCancel] = useState(false);
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
-  const [grown, setGrown] = useState(false);
 
   useEffect(() => {
     const t = getAccessToken('bank');
@@ -58,11 +119,6 @@ export default function ApplicationDetailPage() {
   }, []);
 
   useEffect(() => { if (token) fetchDetail(); }, [token]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setGrown(true), 120);
-    return () => clearTimeout(timer);
-  }, []);
 
   const fetchDetail = async () => {
     setLoading(true);
@@ -92,20 +148,27 @@ export default function ApplicationDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
+      <BankUserShell>
+        <Card><LoadingState label="Loading application…" rows={8} /></Card>
+      </BankUserShell>
     );
   }
 
   if (!app) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
-        <p className="text-gray-500 dark:text-gray-400">Application not found</p>
-      </div>
+      <BankUserShell>
+        <Card>
+          <EmptyState
+            title="Application not found"
+            description="It may have been withdrawn, or you may not have access to it."
+            action={<Button variant="quiet" onClick={() => router.push('/bank/dashboard')}>Back to my queue</Button>}
+          />
+        </Card>
+      </BankUserShell>
     );
   }
 
+  // ── Permission predicates — COPIED VERBATIM. Do not reinterpret. ──────────
   const isOfficer = user?.role === 'bank_officer' || user?.role === 'bank_supervisor';
   const isSupervisor = user?.role === 'bank_supervisor';
   const canOfficerAct = isOfficer && ['submitted', 'system_reviewed'].includes(app.status);
@@ -129,34 +192,20 @@ export default function ApplicationDetailPage() {
     notes: '',
   };
 
-  const Field = ({ label, value }: { label: string; value: any }) => (
-    <div className="bg-white dark:bg-gray-900 p-4 flex flex-col gap-1.5 min-w-0">
-      <span className="text-[9px] font-semibold tracking-[0.16em] uppercase text-gray-400 dark:text-gray-500">{label}</span>
-      <span className={`text-sm leading-snug break-words ${value ? 'font-semibold text-gray-900 dark:text-gray-100' : 'font-medium text-gray-400 dark:text-gray-600'}`}>{value || '—'}</span>
-    </div>
-  );
-
-  const DocItem = ({ label, url }: { label: string; url?: string }) => (
-    <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
-      <span className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
-        <FileText className="w-3.5 h-3.5 text-gray-400" />
-      </span>
-      <span className="text-sm flex-1 min-w-0 text-gray-700 dark:text-gray-300">{label}</span>
-      {url ? (
-        <a href={`${API_URL}${url}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-500 dark:text-blue-400 text-xs hover:underline flex-shrink-0">
-          <Eye className="w-3.5 h-3.5" /> View
-        </a>
-      ) : (
-        <span className="text-xs text-gray-400 flex-shrink-0">Not uploaded</span>
-      )}
-    </div>
-  );
+  const tabs: TabDef<TabId>[] = TAB_DEFS.map(t => ({
+    id: t.id, label: t.label, glyph: t.glyph, count: tabCounts[t.id],
+  }));
 
   const kycVerified = [app.pan_verified, app.aadhaar_verified].filter(Boolean).length;
   const kycPending  = kycVerified < 2;
+
+  const requestedAmount = app.loan_amount_requested
+    ? formatCurrency(app.loan_amount_requested)
+    : app.loan_amount ? formatCurrency(app.loan_amount) : '—';
+
   const statsFacts = [
-    { label: 'Requested', value: app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : app.loan_amount ? formatCurrency(app.loan_amount) : '—', large: true },
-    { label: 'Product',   value: app.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : app.consumer_loan_type === 'personal_loan' ? 'Personal Loan' : '—' },
+    { label: 'Requested', value: requestedAmount, large: true },
+    { label: 'Product',   value: app.consumer_loan_type === 'consumer_durable' ? 'Consumer durable' : app.consumer_loan_type === 'personal_loan' ? 'Personal loan' : '—' },
     { label: 'Created',   value: app.created_at ? formatDate(app.created_at) : '—' },
     { label: 'KYC',       value: `${kycVerified} of 2 verified`, warn: kycPending },
     { label: 'Officer',   value: app.assigned_to_name || app.officer_name || '—' },
@@ -169,489 +218,437 @@ export default function ApplicationDetailPage() {
     { label: 'KYC & documents',  have: filled(kycFields), total: 9 },
   ];
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 transition-colors" style={{ paddingBottom: canAct ? 72 : 0 }}>
+  const docs: { label: string; url?: string }[] = [
+    { label: 'PAN card', url: app.pan_card_url },
+    { label: 'Aadhaar front', url: app.aadhaar_front_url },
+    { label: 'Aadhaar back', url: app.aadhaar_back_url },
+    { label: 'Photo', url: app.photo_url },
+    { label: 'Income proof', url: app.income_proof_url },
+    { label: 'Bank statement', url: app.bank_statement_url },
+    // 7th row only for consumer durable — same condition as the legacy page.
+    ...(app.consumer_loan_type === 'consumer_durable' ? [{ label: 'Dealer quotation', url: app.quotation_url }] : []),
+  ];
+  const docsUploaded = docs.filter(d => d.url).length;
 
-      {/* ── HEADER ─────────────────────────────────────────────── */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-20">
-
-        {/* Top row */}
-        <div className="px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3.5 min-w-0" style={{ flex: '1 1 320px' }}>
-            <button
-              onClick={() => router.push('/bank/dashboard')}
-              className="w-8 h-8 flex-shrink-0 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-            <span
-              className="w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center text-sm font-semibold"
-              style={{ background: 'rgba(125,159,209,0.14)', border: '1px solid rgba(125,159,209,0.3)', color: '#7d9fd1' }}
-            >
-              {(app.customer_name || 'U')[0].toUpperCase()}
-            </span>
-            <span className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-[19px] font-semibold tracking-tight leading-tight text-gray-900 dark:text-gray-100 truncate">{app.customer_name}</span>
-              <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500 font-mono tracking-tight break-all">{app.loan_id}</span>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 whitespace-nowrap">
-              {STATUS_LABELS[app.status] || app.status}
-            </span>
-            {kycPending ? (
-              <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1.5 rounded-full bg-amber-400 text-gray-900 whitespace-nowrap">KYC pending</span>
-            ) : (
-              <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1.5 rounded-full text-white whitespace-nowrap" style={{ background: '#7d9fd1' }}>KYC verified</span>
-            )}
-            <ThemeToggle />
-          </div>
-        </div>
-
-        {/* Stats bar */}
-        <div
-          className="grid border-t border-gray-100 dark:border-gray-800"
-          style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '1px', background: 'transparent' }}
+  const DocRow = ({ label, url }: { label: string; url?: string }) => (
+    <div className="flex items-center gap-3 border-b border-fx-border px-3.5 py-2.5 last:border-0">
+      <span className="fx-mono text-[12px] text-fx-text3" aria-hidden>▤</span>
+      <span className="min-w-0 flex-1 text-[13px] text-fx-text2">{label}</span>
+      {url ? (
+        <a
+          href={`${API_URL}${url}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-[12px] transition-colors hover:underline"
+          style={{ color: 'var(--fx-accent)' }}
         >
-          {statsFacts.map((f, i) => (
-            <div
-              key={i}
-              className={`flex flex-col gap-1.5 px-5 py-3.5 min-w-0 border-r border-gray-100 dark:border-gray-800 ${i === 0 ? 'bg-blue-500/5 dark:bg-blue-400/5' : 'bg-white dark:bg-gray-900'}`}
-            >
-              <span className="text-[9px] font-semibold tracking-[0.16em] uppercase text-gray-400 dark:text-gray-500">{f.label}</span>
-              <span
-                className={`font-semibold tracking-tight leading-tight ${f.warn ? 'text-amber-500' : 'text-gray-900 dark:text-gray-100'}`}
-                style={{ fontSize: f.large ? '20px' : '13px' }}
-              >
-                {f.value}
-              </span>
-            </div>
-          ))}
+          View ↗
+        </a>
+      ) : (
+        <span className="shrink-0 text-[11px] text-fx-text3">Not uploaded</span>
+      )}
+    </div>
+  );
+
+  const IdentityRow = ({
+    label, verified, masked, timestamp,
+  }: { label: string; verified?: boolean; masked?: string | null; timestamp?: string }) => (
+    <div className="flex items-center gap-3 border-b border-fx-border p-3.5 last:border-0">
+      <span
+        className="fx-mono grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px] text-[12px]"
+        style={{
+          background: verified ? 'var(--fx-green-tint)' : 'var(--fx-amber-tint)',
+          color: verified ? 'var(--fx-green)' : 'var(--fx-amber)',
+        }}
+        aria-hidden
+      >
+        {verified ? '✓' : '!'}
+      </span>
+      <div className="min-w-0 flex-1 leading-tight">
+        <div className="text-[13px] text-fx-text">{label}</div>
+        <div className="fx-mono text-[11px] text-fx-text3">{masked || 'Not provided'}</div>
+        {timestamp && <div className="text-[10px] text-fx-text3">Verified {formatDateTime(timestamp)}</div>}
+      </div>
+    </div>
+  );
+
+  return (
+    <BankUserShell>
+      {/* Space for the fixed decision bar so the last row is never hidden. */}
+      <div style={{ paddingBottom: canAct ? 72 : 0 }} className="space-y-4">
+        <Toolbar
+          left={<Breadcrumb>applications / {app.loan_id}</Breadcrumb>}
+          right={
+            <Button variant="quiet" onClick={() => router.push('/bank/dashboard')}>
+              ← My queue
+            </Button>
+          }
+        />
+
+        <div className="flex flex-wrap items-start gap-3">
+          <span
+            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] text-[14px] font-medium"
+            style={{ background: 'var(--fx-accent-tint)', color: 'var(--fx-accent)' }}
+          >
+            {(app.customer_name || 'U')[0].toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <PageTitle title={app.customer_name} subtitle={<span className="fx-mono">{app.loan_id}</span>} />
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <AppStatusPill status={app.status} />
+            {kycPending
+              ? <Pill tone="amber">KYC pending</Pill>
+              : <Pill tone="green">KYC verified</Pill>}
+          </div>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex items-stretch flex-wrap border-t border-gray-100 dark:border-gray-800 px-2 overflow-x-auto">
-          {TAB_DEFS.map(t => {
-            const active = activeTab === t.id;
-            const count  = tabCounts[t.id];
-            return (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
-                className="relative flex items-center gap-2 px-4 py-3.5 bg-transparent border-0 text-[10.5px] font-semibold tracking-widest uppercase whitespace-nowrap cursor-pointer transition-colors"
-                style={{ color: active ? undefined : '#8ea9a3' }}
-              >
-                <t.Icon className="w-3.5 h-3.5 flex-shrink-0" />
-                {t.label}
-                {count && (
-                  <span
-                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full tabular-nums"
-                    style={{
-                      background: active ? 'rgba(125,159,209,0.14)' : 'rgba(100,116,139,0.1)',
-                      color: active ? '#7d9fd1' : '#8ea9a3',
-                    }}
-                  >
-                    {count}
-                  </span>
-                )}
+        {/* Facts strip */}
+        <Card>
+          <DataGrid min={150}>
+            {statsFacts.map((f) => (
+              <div key={f.label} className="flex min-w-0 flex-col gap-1 p-3.5">
+                <span className="text-[10px] uppercase tracking-[0.12em] text-fx-text3">{f.label}</span>
                 <span
-                  className="absolute left-3 right-3 bottom-0 h-0.5 rounded-full transition-transform origin-left duration-300"
-                  style={{ background: '#7d9fd1', transform: `scaleX(${active ? 1 : 0})` }}
-                />
-              </button>
-            );
-          })}
-        </div>
-      </header>
-
-      {/* ── MAIN CONTENT ───────────────────────────────────────── */}
-      <main className="px-6 py-6 max-w-6xl mx-auto">
-
-        {/* OVERVIEW TAB */}
-        {activeTab === 'overview' && (
-          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,300px),1fr))' }}>
-
-            {/* Credit assessment + LRS */}
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 flex-wrap gap-y-2">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Credit assessment</span>
-                <button
-                  onClick={fetchDetail}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9.5px] font-semibold tracking-widest uppercase text-white cursor-pointer transition-colors"
-                  style={{ background: '#7d9fd1' }}
+                  className={f.large ? 'text-[20px] font-medium leading-none' : 'text-[13px]'}
+                  style={{ color: f.warn ? 'var(--fx-amber)' : 'var(--fx-text)' }}
                 >
-                  Re-run
-                </button>
+                  {f.value}
+                </span>
               </div>
+            ))}
+          </DataGrid>
+        </Card>
+
+        <Tabs tabs={tabs} value={activeTab} onChange={setActiveTab} />
+
+        {/* ── OVERVIEW ─────────────────────────────────────────────────── */}
+        {activeTab === 'overview' && (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Card>
+              <CardHeader
+                title="Credit assessment"
+                right={<Button variant="quiet" onClick={fetchDetail}>Re-run</Button>}
+              />
               {app.system_suggestion ? (
-                <div className="p-4 flex items-start gap-3">
-                  <ClipboardCheck className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">System Recommendation</span>
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${SUGGESTION_COLORS[app.system_suggestion] || ''}`}>
-                        {app.system_suggestion.charAt(0).toUpperCase() + app.system_suggestion.slice(1)}
-                      </span>
-                      {app.system_score && <span className="text-xs text-gray-400">Score: {app.system_score}/100</span>}
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{app.system_suggestion_reason || 'No detailed reason provided'}</p>
+                <CardBody className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[13px] text-fx-text">System recommendation</span>
+                    <SuggestionPill suggestion={app.system_suggestion} />
+                    {app.system_score != null && (
+                      <span className="fx-mono text-[11px] text-fx-text3">Score {app.system_score}/100</span>
+                    )}
                   </div>
-                </div>
+                  <p className="text-[12px] leading-relaxed text-fx-text2">
+                    {app.system_suggestion_reason || 'No detailed reason provided'}
+                  </p>
+                </CardBody>
               ) : (
-                <div className="p-5 flex items-center gap-3">
-                  <span className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
-                    <ClipboardCheck className="w-4 h-4 text-gray-400" />
-                  </span>
-                  <span className="flex flex-col gap-0.5 min-w-0">
-                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">No assessment yet</span>
-                    <span className="text-xs text-gray-400 leading-snug">Needs income proof and KYC on file.</span>
-                  </span>
-                </div>
+                <CardBody>
+                  <div className="text-[13px] text-fx-text2">No assessment yet</div>
+                  <div className="mt-1 text-[11px] text-fx-text3">Needs income proof and KYC on file.</div>
+                </CardBody>
               )}
               {token && (
-                <div className="border-t border-gray-100 dark:border-gray-800">
+                <div className="border-t border-fx-border">
+                  {/* Legacy-styled panel, deliberately not restyled yet — it owns
+                      the rescore mutation. */}
                   <LRSScorePanel token={token} applicationId={appId} canRescore={isOfficer} />
                 </div>
               )}
-            </div>
+            </Card>
 
-            {/* File completeness */}
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">File completeness</span>
-              </div>
-              <div className="p-4 flex flex-col gap-4">
-                {progressItems.map(p => (
-                  <span key={p.label} className="flex flex-col gap-1.5">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="text-[10px] font-semibold tracking-widest uppercase text-gray-400 dark:text-gray-500">{p.label}</span>
-                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 tabular-nums">{p.have} / {p.total}</span>
-                    </span>
-                    <span className="block h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800">
-                      <span
-                        className="block h-2 rounded-full transition-all duration-700"
-                        style={{
-                          width: grown ? `${Math.round(p.have / p.total * 100)}%` : '0%',
-                          background: p.have === 0 ? '#d9b174' : '#7d9fd1',
-                        }}
-                      />
-                    </span>
-                  </span>
-                ))}
-              </div>
-            </div>
+            <div className="space-y-3">
+              <Card>
+                <CardHeader title="File completeness" />
+                <CardBody className="space-y-3">
+                  {progressItems.map(p => (
+                    <Progress
+                      key={p.label}
+                      value={p.total ? p.have / p.total : 0}
+                      label={`${p.label} · ${p.have} of ${p.total}`}
+                      tone={p.have === 0 ? 'amber' : 'accent'}
+                      showPct={false}
+                    />
+                  ))}
+                </CardBody>
+              </Card>
 
-            {/* Status timeline */}
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Status timeline</span>
-              </div>
-              <div className="p-4">
-                {timeline.length > 0 ? timeline.map((event, i) => (
-                  <div key={event.id} className="grid gap-3" style={{ gridTemplateColumns: '20px 1fr' }}>
-                    <span className="flex flex-col items-center">
-                      <span className="w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0" style={{ background: '#7d9fd1', boxShadow: '0 0 0 1px #7d9fd1' }} />
-                      {i < timeline.length - 1 && <span className="w-px flex-1 bg-gray-200 dark:bg-gray-700 min-h-3 mt-1" />}
-                    </span>
-                    <span className="flex flex-col gap-1 pb-3.5 min-w-0">
-                      <span className="flex items-center gap-2 flex-wrap">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_COLORS[event.to_status] || ''}`}>
-                          {STATUS_LABELS[event.to_status] || event.to_status}
-                        </span>
-                        <span className="text-[10px] text-gray-400 tabular-nums">{formatDateTime(event.created_at)}</span>
-                      </span>
-                      {event.notes && <span className="text-xs text-gray-500 dark:text-gray-400">{event.notes}</span>}
-                      <span className="text-[10px] text-gray-400">by {event.changed_by_type}</span>
-                    </span>
-                  </div>
-                )) : (
-                  <p className="text-sm text-gray-400">No status history available</p>
+              <Card>
+                <CardHeader title="Status timeline" qualifier={`${timeline.length} events`} />
+                {timeline.length > 0 ? (
+                  <CardBody className="space-y-0">
+                    {timeline.map((event, i) => (
+                      <div key={event.id} className="grid gap-3" style={{ gridTemplateColumns: '10px 1fr' }}>
+                        <div className="flex flex-col items-center">
+                          <span
+                            className="mt-1.5 h-[7px] w-[7px] shrink-0 rounded-full"
+                            style={{ background: 'var(--fx-accent)' }}
+                          />
+                          {i < timeline.length - 1 && <span className="min-h-3 w-px flex-1 bg-fx-border" />}
+                        </div>
+                        <div className="min-w-0 pb-3.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <AppStatusPill status={event.to_status} />
+                            <span className="fx-mono text-[10px] text-fx-text3">{formatDateTime(event.created_at)}</span>
+                          </div>
+                          {event.notes && <div className="mt-1 text-[12px] text-fx-text2">{event.notes}</div>}
+                          <div className="mt-0.5 text-[10px] text-fx-text3">by {event.changed_by_type}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardBody>
+                ) : (
+                  <EmptyState title="No status history" description="Nothing has changed on this application yet." />
                 )}
-              </div>
+              </Card>
             </div>
           </div>
         )}
 
-        {/* PERSONAL TAB */}
+        {/* ── PERSONAL ─────────────────────────────────────────────────── */}
         {activeTab === 'personal' && (
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
-              <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Personal details</span>
-              <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{filled(personalFields)} of 9 filled</span>
-            </div>
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
-              <Field label="Full Name" value={app.customer_name} />
-              <Field label="Phone" value={app.phone} />
-              <Field label="Email" value={app.email} />
-              <Field label="Date of Birth" value={app.date_of_birth} />
-              <Field label="Gender" value={app.gender} />
-              <Field label="Marital Status" value={app.marital_status} />
-              <Field label="Current Address" value={app.current_address} />
-              <Field label="Permanent Address" value={app.same_as_current ? 'Same as current' : app.permanent_address} />
-              <Field label="Qualification" value={app.qualification_label || app.qualification} />
-            </div>
-          </div>
+          <Card>
+            <CardHeader title="Personal details" qualifier={`${filled(personalFields)} of 9 filled`} />
+            <DataGrid>
+              <DataField label="Full name" value={app.customer_name} />
+              <DataField label="Phone" value={app.phone} />
+              <DataField label="Email" value={app.email} />
+              <DataField label="Date of birth" value={app.date_of_birth} />
+              <DataField label="Gender" value={app.gender} />
+              <DataField label="Marital status" value={app.marital_status} />
+              <DataField label="Current address" value={app.current_address} />
+              <DataField label="Permanent address" value={app.same_as_current ? 'Same as current' : app.permanent_address} />
+              <DataField label="Qualification" value={app.qualification_label || app.qualification} />
+            </DataGrid>
+          </Card>
         )}
 
-        {/* EMPLOYMENT TAB */}
+        {/* ── EMPLOYMENT ───────────────────────────────────────────────── */}
         {activeTab === 'employment' && (
-          <div className="flex flex-col gap-4">
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Employment & Financial</span>
-                <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{filled(employmentFields)} of 8 filled</span>
-              </div>
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
-                <Field label="Employment Type" value={app.employment_type_label || app.employment_type} />
-                <Field label="Employer" value={app.employer_name} />
-                <Field label="Designation" value={app.designation} />
-                <Field label="Experience" value={app.total_work_experience ? `${app.total_work_experience} years` : null} />
-                <Field label="Monthly Gross Income" value={app.monthly_gross_income ? formatCurrency(app.monthly_gross_income) : null} />
-                <Field label="Monthly Deductions" value={app.monthly_deductions ? formatCurrency(app.monthly_deductions) : null} />
-                <Field label="Existing EMIs" value={app.monthly_emi_existing ? formatCurrency(app.monthly_emi_existing) : null} />
-                <Field label="Net Income" value={app.monthly_net_income ? formatCurrency(app.monthly_net_income) : null} />
-              </div>
-            </div>
+          <div className="space-y-3">
+            <Card>
+              <CardHeader title="Employment & financial" qualifier={`${filled(employmentFields)} of 8 filled`} />
+              <DataGrid>
+                <DataField label="Employment type" value={app.employment_type_label || app.employment_type} />
+                <DataField label="Employer" value={app.employer_name} />
+                <DataField label="Designation" value={app.designation} />
+                <DataField label="Experience" value={app.total_work_experience ? `${app.total_work_experience} years` : null} />
+                <DataField label="Monthly gross income" value={app.monthly_gross_income ? formatCurrency(app.monthly_gross_income) : null} />
+                <DataField label="Monthly deductions" value={app.monthly_deductions ? formatCurrency(app.monthly_deductions) : null} />
+                <DataField label="Existing EMIs" value={app.monthly_emi_existing ? formatCurrency(app.monthly_emi_existing) : null} />
+                <DataField label="Net income" value={app.monthly_net_income ? formatCurrency(app.monthly_net_income) : null} />
+              </DataGrid>
+            </Card>
 
+            {/* Same condition as legacy: only when any guarantor field exists. */}
             {(app.guarantor_name || app.guarantor_phone || app.guarantor_consent) && (
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-                <div className="px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
-                  <span className="text-[10px] font-semibold tracking-widest uppercase text-orange-500">Guarantor details</span>
-                </div>
-                <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
-                  <Field label="Guarantor Name" value={app.guarantor_name} />
-                  <Field label="Guarantor Phone" value={app.guarantor_phone} />
-                  <Field label="Consent" value={
-                    app.guarantor_consent === 'yes' ? 'Yes' :
-                    app.guarantor_consent === 'no' ? 'No' :
-                    app.guarantor_consent === 'no_answer' ? 'No answer' :
-                    app.guarantor_consent === 'pending' ? 'Pending' : null
-                  } />
-                </div>
-              </div>
+              <Card>
+                <CardHeader title="Guarantor details" />
+                <DataGrid>
+                  <DataField label="Guarantor name" value={app.guarantor_name} />
+                  <DataField label="Guarantor phone" value={app.guarantor_phone} />
+                  <DataField
+                    label="Consent"
+                    value={
+                      app.guarantor_consent === 'yes' ? 'Yes' :
+                      app.guarantor_consent === 'no' ? 'No' :
+                      app.guarantor_consent === 'no_answer' ? 'No answer' :
+                      app.guarantor_consent === 'pending' ? 'Pending' : null
+                    }
+                  />
+                </DataGrid>
+              </Card>
             )}
           </div>
         )}
 
-        {/* LOAN TAB */}
+        {/* ── LOAN ─────────────────────────────────────────────────────── */}
         {activeTab === 'loan' && (
-          <div className="flex flex-col gap-4">
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Loan details</span>
-                <span className="text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{filled(loanFields)} of 5 filled</span>
-              </div>
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
-                <Field label="Loan Type" value={app.consumer_loan_type === 'consumer_durable' ? 'Consumer Durable' : 'Personal Loan'} />
-                <Field label="Requested Amount" value={app.loan_amount_requested ? formatCurrency(app.loan_amount_requested) : app.loan_amount ? formatCurrency(app.loan_amount) : null} />
-                <Field label="Purpose" value={app.purpose_of_loan_label || app.purpose_of_loan} />
-                <Field label="Tenure" value={app.repayment_period_years ? `${app.repayment_period_years} years` : null} />
-                <Field label="Scheme" value={app.scheme} />
-              </div>
-            </div>
+          <div className="space-y-3">
+            <Card>
+              <CardHeader title="Loan details" qualifier={`${filled(loanFields)} of 5 filled`} />
+              <DataGrid>
+                <DataField label="Loan type" value={app.consumer_loan_type === 'consumer_durable' ? 'Consumer durable' : 'Personal loan'} />
+                <DataField label="Requested amount" value={requestedAmount === '—' ? null : requestedAmount} />
+                <DataField label="Purpose" value={app.purpose_of_loan_label || app.purpose_of_loan} />
+                <DataField label="Tenure" value={app.repayment_period_years ? `${app.repayment_period_years} years` : null} />
+                <DataField label="Scheme" value={app.scheme} />
+              </DataGrid>
+            </Card>
 
             {app.consumer_loan_type === 'consumer_durable' && (
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-                <div className="px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
-                  <span className="text-[10px] font-semibold tracking-widest uppercase text-orange-500">Product & dealer details</span>
-                </div>
-                <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,210px),1fr))', gap: '1px', background: '#e5e7eb' }}>
-                  <Field label="Product Name" value={app.product_name} />
-                  <Field label="Brand" value={app.brand} />
-                  <Field label="Model Number" value={app.model_number} />
-                  <Field label="Quotation Amount" value={app.quotation_amount ? formatCurrency(app.quotation_amount) : null} />
-                  <Field label="Dealer Name" value={app.dealer_name} />
-                  <Field label="Dealer Address" value={app.dealer_address} />
-                </div>
-              </div>
+              <Card>
+                <CardHeader title="Product & dealer details" />
+                <DataGrid>
+                  <DataField label="Product name" value={app.product_name} />
+                  <DataField label="Brand" value={app.brand} />
+                  <DataField label="Model number" value={app.model_number} />
+                  <DataField label="Quotation amount" value={app.quotation_amount ? formatCurrency(app.quotation_amount) : null} />
+                  <DataField label="Dealer name" value={app.dealer_name} />
+                  <DataField label="Dealer address" value={app.dealer_address} />
+                </DataGrid>
+              </Card>
             )}
           </div>
         )}
 
-        {/* KYC & DOCS TAB */}
+        {/* ── KYC & DOCS ───────────────────────────────────────────────── */}
         {activeTab === 'kyc' && (
-          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,340px),1fr))' }}>
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800 flex-wrap gap-y-2">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Identity documents</span>
-                <span className={`text-[9.5px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full ${!kycPending ? 'text-white' : 'bg-amber-400 text-gray-900'}`} style={!kycPending ? { background: '#7d9fd1', color: '#fff' } : {}}>
-                  {kycVerified} of 2 verified
-                </span>
-              </div>
-              <div className="p-4 border-b border-gray-100 dark:border-gray-800">
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${app.pan_verified ? 'bg-green-100 dark:bg-green-900/20' : 'bg-amber-100 dark:bg-amber-900/20'}`}>
-                    {app.pan_verified ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-amber-500" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">PAN Card</div>
-                    <div className="text-xs text-gray-400">{app.pan_number ? maskPAN(app.pan_number) : 'Not provided'}</div>
-                    {app.pan_verification_timestamp && <div className="text-[10px] text-gray-400 mt-0.5">Verified: {formatDateTime(app.pan_verification_timestamp)}</div>}
-                  </div>
-                </div>
-              </div>
-              <div className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${app.aadhaar_verified ? 'bg-green-100 dark:bg-green-900/20' : 'bg-amber-100 dark:bg-amber-900/20'}`}>
-                    {app.aadhaar_verified ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-amber-500" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">Aadhaar</div>
-                    <div className="text-xs text-gray-400">{app.aadhaar_last4 ? maskAadhaar(app.aadhaar_last4) : 'Not provided'}</div>
-                    {app.aadhaar_verification_timestamp && <div className="text-[10px] text-gray-400 mt-0.5">Verified: {formatDateTime(app.aadhaar_verification_timestamp)}</div>}
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Card>
+              <CardHeader
+                title="Identity documents"
+                right={kycPending
+                  ? <Pill tone="amber">{kycVerified} of 2 verified</Pill>
+                  : <Pill tone="green">{kycVerified} of 2 verified</Pill>}
+              />
+              <IdentityRow
+                label="PAN card"
+                verified={app.pan_verified}
+                masked={app.pan_number ? maskPAN(app.pan_number) : null}
+                timestamp={app.pan_verification_timestamp}
+              />
+              <IdentityRow
+                label="Aadhaar"
+                verified={app.aadhaar_verified}
+                masked={app.aadhaar_last4 ? maskAadhaar(app.aadhaar_last4) : null}
+                timestamp={app.aadhaar_verification_timestamp}
+              />
+            </Card>
 
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
-              <div className="flex items-center justify-between gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
-                <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Documents</span>
-                <span className="text-[9.5px] font-semibold tracking-widest uppercase text-gray-400">
-                  {[app.pan_card_url, app.aadhaar_front_url, app.aadhaar_back_url, app.photo_url, app.income_proof_url, app.bank_statement_url, app.quotation_url].filter(Boolean).length} of {app.consumer_loan_type === 'consumer_durable' ? 7 : 6} uploaded
-                </span>
-              </div>
-              <DocItem label="PAN Card" url={app.pan_card_url} />
-              <DocItem label="Aadhaar Front" url={app.aadhaar_front_url} />
-              <DocItem label="Aadhaar Back" url={app.aadhaar_back_url} />
-              <DocItem label="Photo" url={app.photo_url} />
-              <DocItem label="Income Proof" url={app.income_proof_url} />
-              <DocItem label="Bank Statement" url={app.bank_statement_url} />
-              {app.consumer_loan_type === 'consumer_durable' && <DocItem label="Dealer Quotation" url={app.quotation_url} />}
-            </div>
+            <Card>
+              <CardHeader title="Documents" qualifier={`${docsUploaded} of ${docs.length} uploaded`} />
+              {docs.map(d => <DocRow key={d.label} label={d.label} url={d.url} />)}
+            </Card>
           </div>
         )}
 
-        {/* NOTES TAB */}
+        {/* ── NOTES ────────────────────────────────────────────────────── */}
         {activeTab === 'notes' && (
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden max-w-2xl">
-            <div className="px-4 py-3.5 border-b border-gray-100 dark:border-gray-800" style={{ boxShadow: 'inset 3px 0 0 #7d9fd1' }}>
-              <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-600 dark:text-gray-300">Officer notes</span>
-            </div>
-            <div className="p-4 flex flex-col gap-3">
-              <textarea
+          <Card className="max-w-2xl">
+            <CardHeader title="Officer notes" />
+            <CardBody className="space-y-2">
+              <Textarea
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
                 placeholder="Add a note for the file…"
                 rows={5}
-                className="w-full resize-y px-3.5 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100 text-sm font-medium leading-relaxed outline-none focus:border-blue-400 transition-colors"
               />
-              <span className="text-xs text-gray-400">Notes are included with any approval or rejection action.</span>
-            </div>
-          </div>
+              <span className="text-[11px] text-fx-text3">
+                Notes are included with any approval or rejection action.
+              </span>
+            </CardBody>
+          </Card>
         )}
 
         {isSupervisor && (
-          <div className="mt-4">
+          <Card>
+            <CardHeader title="Vendor assignment" />
+            {/* Legacy-styled panel, deliberately not restyled yet — it owns the
+                assign/withdraw mutations. */}
             <AssignVendorPanel token={token} applicationId={appId} applicationStatus={app.status} />
-          </div>
+          </Card>
         )}
-      </main>
+      </div>
 
-      {/* ── FIXED BOTTOM ACTION BAR ────────────────────────────── */}
+      {/* ── FIXED DECISION BAR ─────────────────────────────────────────── */}
       {canAct && (
-        <div className="fixed left-0 right-0 bottom-0 z-30 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 px-6 py-3.5 flex items-center justify-between gap-4 flex-wrap">
-          <span className="flex items-center gap-3 min-w-0">
-            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: '#d9b174' }} />
-            <span className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Awaiting your decision</span>
-              <span className="text-[11px] text-gray-400">
-                {kycPending ? 'KYC incomplete · ' : ''}{STATUS_LABELS[app.status] || app.status}
-              </span>
-            </span>
-          </span>
+        <DecisionBar
+          title="Awaiting your decision"
+          detail={`${kycPending ? 'KYC incomplete · ' : ''}${STATUS_LABELS[app.status] || app.status}`}
+        >
+          {/* Two-step reject: the input only appears after the first click, and
+              submit requires a reason — same as legacy. */}
+          {showReject && (
+            <Input
+              value={rejectionReason}
+              onChange={e => setRejectionReason(e.target.value)}
+              placeholder="Rejection reason…"
+              invalid
+              className="w-[200px]"
+            />
+          )}
+          {showCancel && (
+            <Input
+              value={cancelReason}
+              onChange={e => setCancelReason(e.target.value)}
+              placeholder="Cancellation reason (optional)…"
+              className="w-[220px]"
+            />
+          )}
 
-          <span className="flex items-center gap-2 flex-wrap">
-            {showReject && (
-              <input
-                value={rejectionReason}
-                onChange={e => setRejectionReason(e.target.value)}
-                placeholder="Rejection reason…"
-                className="px-3 py-2 border border-red-300 dark:border-red-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-red-400"
-                style={{ minWidth: 180 }}
-              />
-            )}
-
-            {showCancel && (
-              <input
-                value={cancelReason}
-                onChange={e => setCancelReason(e.target.value)}
-                placeholder="Cancellation reason (optional)…"
-                className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-slate-400"
-                style={{ minWidth: 200 }}
-              />
-            )}
-
-            {canOfficerAct && (
-              <>
-                <button
-                  onClick={() => { if (showReject && rejectionReason) handleAction(() => officerReject(token, appId, notes, rejectionReason)); else setShowReject(s => !s); }}
-                  disabled={actionLoading}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-[10px] font-semibold tracking-widest uppercase text-gray-500 dark:text-gray-400 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
-                >
-                  {showReject ? 'Confirm Reject' : 'Reject'}
-                </button>
-                <button
-                  onClick={() => handleAction(() => officerApprove(token, appId, notes))}
-                  disabled={actionLoading}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-[10px] font-semibold tracking-widest uppercase text-white cursor-pointer disabled:opacity-50 transition-colors"
-                  style={{ background: '#7d9fd1' }}
-                >
-                  {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  Approve
-                </button>
-              </>
-            )}
-
-            {canSupervisorAct && (
-              <>
-                <button
-                  onClick={() => { if (showReject && rejectionReason) handleAction(() => supervisorReject(token, appId, notes, rejectionReason)); else setShowReject(s => !s); }}
-                  disabled={actionLoading}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-[10px] font-semibold tracking-widest uppercase text-gray-500 dark:text-gray-400 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  {showReject ? 'Confirm Reject' : 'Reject'}
-                </button>
-                {!canDisburse && (
-                  <button
-                    onClick={() => handleAction(() => supervisorApprove(token, appId, notes))}
-                    disabled={actionLoading}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-[10px] font-semibold tracking-widest uppercase text-white cursor-pointer disabled:opacity-50 transition-colors"
-                    style={{ background: '#7d9fd1' }}
-                  >
-                    {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                    Approve
-                  </button>
-                )}
-              </>
-            )}
-
-            {canDisburse && (
-              <button
-                onClick={() => handleAction(() => initiateDisbursement(token, appId, notes))}
+          {canOfficerAct && (
+            <>
+              <Button
+                variant="quiet"
                 disabled={actionLoading}
-                className="flex items-center gap-2 px-4 py-2.5 bg-cyan-600 rounded-lg text-[10px] font-semibold tracking-widest uppercase text-white cursor-pointer hover:bg-cyan-700 disabled:opacity-50 transition-colors"
+                onClick={() => {
+                  if (showReject && rejectionReason) handleAction(() => officerReject(token, appId, notes, rejectionReason));
+                  else setShowReject(s => !s);
+                }}
               >
-                <Banknote className="w-3.5 h-3.5" />
-                Approve & Disburse
-              </button>
-            )}
-
-            {canCancel && (
-              <button
-                onClick={() => { if (showCancel) handleAction(() => cancelApplication(token, appId, cancelReason)); else setShowCancel(s => !s); }}
+                {showReject ? 'Confirm reject' : 'Reject'}
+              </Button>
+              <Button
+                variant="primary"
                 disabled={actionLoading}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 rounded-lg text-[10px] font-semibold tracking-widest uppercase text-white cursor-pointer hover:bg-slate-800 disabled:opacity-50 transition-colors"
+                onClick={() => handleAction(() => officerApprove(token, appId, notes))}
               >
-                {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
-                {showCancel ? 'Confirm Cancel' : 'Cancel'}
-              </button>
-            )}
-          </span>
-        </div>
+                {actionLoading ? 'Working…' : 'Approve'}
+              </Button>
+            </>
+          )}
+
+          {canSupervisorAct && (
+            <>
+              <Button
+                variant="quiet"
+                disabled={actionLoading}
+                onClick={() => {
+                  if (showReject && rejectionReason) handleAction(() => supervisorReject(token, appId, notes, rejectionReason));
+                  else setShowReject(s => !s);
+                }}
+              >
+                {showReject ? 'Confirm reject' : 'Reject'}
+              </Button>
+              {/* Suppressed when canDisburse so the two never render together. */}
+              {!canDisburse && (
+                <Button
+                  variant="primary"
+                  disabled={actionLoading}
+                  onClick={() => handleAction(() => supervisorApprove(token, appId, notes))}
+                >
+                  {actionLoading ? 'Working…' : 'Approve'}
+                </Button>
+              )}
+            </>
+          )}
+
+          {canDisburse && (
+            <Button
+              variant="primary"
+              disabled={actionLoading}
+              onClick={() => handleAction(() => initiateDisbursement(token, appId, notes))}
+            >
+              {actionLoading ? 'Working…' : 'Approve & disburse'}
+            </Button>
+          )}
+
+          {canCancel && (
+            <Button
+              variant="danger"
+              disabled={actionLoading}
+              onClick={() => {
+                if (showCancel) handleAction(() => cancelApplication(token, appId, cancelReason));
+                else setShowCancel(s => !s);
+              }}
+            >
+              {showCancel ? 'Confirm cancel' : 'Cancel'}
+            </Button>
+          )}
+        </DecisionBar>
       )}
-    </div>
+    </BankUserShell>
   );
 }

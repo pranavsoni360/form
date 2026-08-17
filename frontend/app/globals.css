@@ -436,6 +436,17 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
   filter: invert(1) opacity(0.6);
 }
 
+/* Record-view field grid (components/finix/Tabs.tsx DataGrid). Hairlines are
+   drawn as right/bottom borders on each cell, so the grid stays correct however
+   the auto-fit columns wrap — a gap-based 1px background would leak the divider
+   colour into the trailing empty space of the last row. Negative margins on the
+   container hide the outermost edges. */
+.fx-datagrid { margin-right: -1px; margin-bottom: -1px; }
+.fx-datagrid > * {
+  border-right: 1px solid var(--fx-border);
+  border-bottom: 1px solid var(--fx-border);
+}
+
 /* Indeterminate progress sweep (components/finix/Progress.tsx). */
 @keyframes fx-indeterminate {
   0%   { transform: translateX(-110%); }

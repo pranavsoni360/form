@@ -409,8 +409,14 @@ async def get_current_bank_user(
         }
 
     if user_type == "bank_user":
-        if payload.get("role") not in ("bank_officer", "bank_supervisor"):
-            raise HTTPException(status_code=403, detail="Bank officer or supervisor role required")
+        # bank_admin is the senior bank role and must have at least the same
+        # bank-scoped READ access as officers/supervisors — the scorecard editor
+        # (/api/lrs/config), call logs, etc. Excluding it here 403'd bank_admins
+        # out of those pages ("Failed to load config"). Approval/maker-checker
+        # actions stay officer/supervisor-only via get_bank_officer, which keeps
+        # its own stricter check, so this does not let admins self-approve.
+        if payload.get("role") not in ("bank_officer", "bank_supervisor", "bank_admin"):
+            raise HTTPException(status_code=403, detail="Bank user access required")
         return {
             "user_id": payload["user_id"],
             "role": payload["role"],

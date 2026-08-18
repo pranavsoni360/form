@@ -440,9 +440,22 @@ function UserPill() {
   );
 }
 
+function useTodayLabel() {
+  const [label, setLabel] = React.useState("");
+  React.useEffect(() => {
+    const d = new Date();
+    const day = d.getDate();
+    const month = d.toLocaleDateString("en-GB", { month: "short" });
+    const year = d.getFullYear();
+    setLabel(`Today, ${day} ${month} ${year}`);
+  }, []);
+  return label;
+}
+
 export function TopBar({ title }: { title?: string }) {
   const pathname = usePathname();
   const crumbs = derivedCrumbs(pathname || "/ops");
+  const todayLabel = useTodayLabel();
 
   return (
     <header
@@ -451,6 +464,21 @@ export function TopBar({ title }: { title?: string }) {
     >
       {/* Mobile hamburger */}
       <MobileNav />
+
+      {/* Date pill */}
+      {todayLabel && (
+        <div
+          className="hidden lg:flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs flex-shrink-0"
+          style={{ border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)" }}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0" style={{ color: "rgba(255,255,255,0.4)" }}>
+            <rect x="1" y="2" width="14" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M1 6h14" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M5 1v2M11 1v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          {todayLabel}
+        </div>
+      )}
 
       {/* Breadcrumb — "VGIPL / ops / page" */}
       <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">

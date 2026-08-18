@@ -210,8 +210,21 @@ export function Sidebar({ className }: { className?: string }) {
         </nav>
       </div>
 
+      {/* Bottom CTA */}
+      <div className="px-3 pb-2 pt-2">
+        <div
+          className="rounded-xl p-3 mb-2"
+          style={{ background: "linear-gradient(135deg, #1D4ED8, #0EA5E9)" }}
+        >
+          <div className="text-sm font-semibold text-white leading-tight">Export view</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>
+            All calls in the current filter
+          </div>
+        </div>
+      </div>
+
       {/* Collapse */}
-      <div className="px-3 pb-5 pt-2">
+      <div className="px-3 pb-4">
         <div
           className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none"
           style={{ color: "rgba(255,255,255,0.25)" }}

@@ -9,29 +9,23 @@ import {
   Briefcase,
   Building2,
   CalendarClock,
+  ChevronLeft,
   Download,
   FileText,
   ListChecks,
   Mic,
+  Moon,
   PhoneCall,
   Radio,
+  Star,
   TrendingUp,
   Upload,
   Users,
 } from "lucide-react";
-
+import * as React from "react";
 import { cn } from "@/lib/utils";
 
-/**
- * Finix-style sidebar.
- *
- * Top: "vv" logo mark + VIRTUALVAANI / Admin Portal label
- * Body: NAVIGATION section header + nav items (icon + label + active pill)
- * Bottom: user pill + LOS version stamp
- *
- * Active state matches the screenshot exactly: dark-navy filled pill,
- * white text, slightly inset radius.
- */
+/* ─── Types (kept for MobileNav compatibility) ───────────────────────────── */
 
 export type NavItem = {
   href: string;
@@ -39,10 +33,6 @@ export type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
-// Sidebar groups — matches the way an operator thinks about the system:
-// "Show me state" (Dashboard / Live) → "Show me data" (Calls / Recordings /
-// Callbacks / Analytics) → "Take action" (Batch / Exports) → "Show me the
-// system" (Phones / Workers / Errors / Funnel).
 export type NavGroup = { label: string; items: ReadonlyArray<NavItem> };
 
 export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
@@ -56,7 +46,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   {
     label: "Calls",
     items: [
-      { href: "/ops/calls", label: "All Calls", icon: ListChecks },
+      { href: "/ops/calls", label: "All calls", icon: ListChecks },
       { href: "/ops/recordings", label: "Recordings", icon: Mic },
       { href: "/ops/callbacks", label: "Callbacks", icon: CalendarClock },
       { href: "/ops/analytics", label: "Analytics", icon: TrendingUp },
@@ -65,14 +55,14 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   {
     label: "Operate",
     items: [
-      { href: "/ops/batch", label: "Batch", icon: Upload },
+      { href: "/ops/batch", label: "Batch calling", icon: Upload },
       { href: "/ops/exports", label: "Exports", icon: Download },
     ],
   },
   {
     label: "System",
     items: [
-      { href: "/ops/phones", label: "Phone Pool", icon: PhoneCall },
+      { href: "/ops/phones", label: "Phone pool", icon: PhoneCall },
       { href: "/ops/workers", label: "Workers", icon: Users },
       { href: "/ops/errors", label: "Errors", icon: AlertOctagon },
       { href: "/ops/funnel", label: "Funnel", icon: Activity },
@@ -88,79 +78,148 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   },
 ];
 
+/* ─── Flat nav list for the sidebar visual ──────────────────────────────── */
+
+const FLAT_NAV = [
+  { href: "/ops",           label: "Dashboard",    icon: BarChart3,    exact: true },
+  { href: "/ops/live",      label: "Live calls",   icon: Radio },
+  { href: "/ops/calls",     label: "All calls",    icon: ListChecks },
+  { href: "/ops/batch",     label: "Batch calling",icon: Upload },
+  { href: "/ops/phones",    label: "Phone pool",   icon: PhoneCall },
+  { href: "/ops/callbacks", label: "Callbacks",    icon: CalendarClock },
+  { href: "/ops/funnel",    label: "Funnel",       icon: Activity },
+  { href: "/ops/exports",   label: "Exports",      icon: Download },
+  { href: "/ops/recordings",label: "Recordings",   icon: Mic },
+  { href: "/ops/workers",   label: "Workers",      icon: Users },
+  { href: "/ops/errors",    label: "Errors",       icon: AlertOctagon },
+  { href: "/ops/analytics", label: "Analytics",    icon: TrendingUp },
+];
+
+/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+
 export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
+  const [dateStr, setDateStr] = React.useState("");
+  const [name, setName] = React.useState("Admin");
+
+  React.useEffect(() => {
+    const d = new Date();
+    const day = d.toLocaleDateString("en-GB", { weekday: "long" });
+    const date = d.getDate();
+    const month = d.toLocaleDateString("en-GB", { month: "short" });
+    const year = d.getFullYear();
+    setDateStr(`${day}, ${date} ${month} ${year}`);
+  }, []);
+
+  React.useEffect(() => {
+    try {
+      const u = localStorage.getItem("los_admin_user");
+      if (u) {
+        const parsed = JSON.parse(u);
+        const display = parsed?.username || parsed?.email?.split("@")[0] || "Admin";
+        setName(display.charAt(0).toUpperCase() + display.slice(1));
+      }
+    } catch {}
+  }, []);
+
+  const initials = name.slice(0, 2).toUpperCase();
+
   return (
     <aside
-      className={cn(
-        // Hidden on mobile/tablet — the hamburger MobileNav takes over there.
-        "hidden h-screen w-64 shrink-0 sticky top-0 flex-col border-r border-border bg-card lg:flex",
-        className
-      )}
+      className={cn("hidden h-screen w-64 shrink-0 sticky top-0 flex-col lg:flex", className)}
+      style={{ background: "#0D1117", borderRight: "1px solid rgba(255,255,255,0.06)" }}
     >
-      {/* Brand */}
-      <Link
-        href="/ops"
-        className="flex items-center gap-3 px-5 py-5"
-        aria-label="Finix Ops"
-      >
-        <span className="grid h-10 w-10 place-items-center rounded-xl text-white shadow-sm"
-          style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%)' }}>
-          <span className="font-mono text-sm font-bold tracking-tighter">vv</span>
+      {/* Logo */}
+      <Link href="/ops" className="flex items-center gap-2.5 px-5 pt-5 pb-4" aria-label="Finix Ops">
+        <span
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+          style={{ background: "linear-gradient(135deg, #1D4ED8, #0EA5E9)", fontFamily: "var(--font-heading)" }}
+        >
+          F
         </span>
-        <div className="leading-tight">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-foreground">
-            Finix
-          </div>
-          <div className="text-sm font-semibold tracking-tight text-foreground">
-            Admin Portal
+        <span
+          className="font-bold text-white text-base"
+          style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.02em" }}
+        >
+          Finix
+        </span>
+      </Link>
+
+      {/* User card */}
+      <div
+        className="mx-3 mb-4 rounded-xl p-3"
+        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}
+      >
+        <div className="flex items-center justify-between mb-2.5">
+          <span
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+            style={{ background: "linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)" }}
+          >
+            {initials}
+          </span>
+          <div className="flex items-center gap-0.5">
+            <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "rgba(255,255,255,0.35)" }}>
+              <Moon className="w-3.5 h-3.5" />
+            </span>
+            <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "rgba(255,255,255,0.35)" }}>
+              <Star className="w-3.5 h-3.5" />
+            </span>
           </div>
         </div>
-      </Link>
+        {dateStr && (
+          <div className="text-[10px] mb-1 leading-tight" style={{ color: "rgba(255,255,255,0.3)" }}>
+            {dateStr}
+          </div>
+        )}
+        <div className="text-sm font-semibold text-white leading-tight">{name}</div>
+        <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>
+          Virtual Galaxy · calling ops
+        </div>
+      </div>
 
       {/* Navigation */}
       <div className="flex-1 overflow-y-auto min-h-0 px-3">
-        <div className="mb-2 mt-2 px-3 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Navigation
-        </div>
-        <nav className="flex flex-col gap-3">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.label} className="space-y-0.5">
-              <div className="mb-1 px-3 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
-                {group.label}
-              </div>
-              {group.items.map((item) => {
-                const isActive =
-                  item.href === "/ops"
-                    ? pathname === "/ops"
-                    : pathname?.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all",
-                      isActive
-                        ? "bg-primary text-white shadow-sm"
-                        : "text-foreground/70 hover:bg-muted hover:text-foreground"
-                    )}
-                  >
-                    <Icon
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        isActive ? "text-white" : "text-muted-foreground group-hover:text-foreground"
-                      )}
-                    />
-                    <span className="font-medium">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+        <nav className="flex flex-col gap-0.5">
+          {FLAT_NAV.map((item) => {
+            const isActive = item.exact
+              ? pathname === item.href
+              : !!(pathname?.startsWith(item.href) && item.href !== "/ops");
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+                  isActive ? "text-white" : "hover:text-white/80"
+                )}
+                style={
+                  isActive
+                    ? { background: "rgba(255,255,255,0.09)", color: "#fff" }
+                    : { color: "rgba(255,255,255,0.48)" }
+                }
+              >
+                <Icon
+                  className="h-4 w-4 shrink-0"
+                  style={{ color: isActive ? "#fff" : "rgba(255,255,255,0.32)" }}
+                />
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
       </div>
 
+      {/* Collapse */}
+      <div className="px-3 pb-5 pt-2">
+        <div
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none"
+          style={{ color: "rgba(255,255,255,0.25)" }}
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          Collapse
+        </div>
+      </div>
     </aside>
   );
 }

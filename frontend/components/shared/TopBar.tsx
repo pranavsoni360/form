@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { AlertTriangle, Bell, CheckCircle2, ChevronRight, Eye, EyeOff, Info, KeyRound, LogOut, Moon, Sun, X } from "lucide-react";
+import { AlertTriangle, Bell, CheckCircle2, Eye, EyeOff, Info, KeyRound, LogOut, Moon, Sun, X } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -445,44 +445,34 @@ export function TopBar({ title }: { title?: string }) {
   const crumbs = derivedCrumbs(pathname || "/ops");
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-card/80 px-4 backdrop-blur-md sm:gap-4 lg:px-8">
-      {/* Mobile hamburger — hidden on desktop (sidebar is visible there) */}
+    <header
+      className="sticky top-0 z-30 flex h-14 items-center gap-3 px-4 backdrop-blur-md sm:gap-4 lg:px-6"
+      style={{ background: "rgba(13,17,23,0.95)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+    >
+      {/* Mobile hamburger */}
       <MobileNav />
 
-      {/* Breadcrumb */}
+      {/* Breadcrumb — "VGIPL / ops / page" */}
       <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
         {crumbs.map((c, i) => (
           <React.Fragment key={c.href + i}>
             {i > 0 && (
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs select-none" style={{ color: "rgba(255,255,255,0.2)" }}>/</span>
             )}
             <span
-              className={cn(
-                i === crumbs.length - 1
-                  ? "font-semibold text-foreground"
-                  : "text-muted-foreground"
-              )}
+              className={cn("text-sm", i === crumbs.length - 1 ? "font-semibold" : "")}
+              style={{ color: i === crumbs.length - 1 ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.35)" }}
             >
               {c.label}
             </span>
           </React.Fragment>
         ))}
-        {title && (
-          <span className="ml-3 hidden border-l border-border pl-3 text-xs text-muted-foreground lg:inline">
-            {title}
-          </span>
-        )}
       </nav>
 
       {/* Right actions */}
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-1.5">
         <ConnectionDot className="mr-1 hidden lg:inline-flex" />
-
-        <ThemeToggle />
-
         <NotificationBell />
-
-        {/* User avatar pill */}
         <UserPill />
       </div>
     </header>
@@ -494,27 +484,26 @@ export function TopBar({ title }: { title?: string }) {
 
 function derivedCrumbs(pathname: string): { href: string; label: string }[] {
   const parts = pathname.split("/").filter(Boolean);
-  // /ops → ["ops"] → "Admin › Dashboard"
-  // /ops/live → ["ops","live"] → "Admin › Live Calls"
+  // /ops → "VGIPL / ops / dashboard"
+  // /ops/calls → "VGIPL / ops / all calls"
+  const org = { href: "/ops", label: "VGIPL" };
+  const ops = { href: "/ops", label: "ops" };
   if (parts[0] === "ops") {
-    const root = { href: "/ops", label: "Admin" };
-    if (parts.length === 1) return [root, { href: "/ops", label: "Dashboard" }];
+    if (parts.length === 1) return [org, ops, { href: "/ops", label: "dashboard" }];
     const last = parts[parts.length - 1];
-    return [root, { href: pathname, label: prettify(last) }];
+    return [org, ops, { href: pathname, label: last.replace(/-/g, " ") }];
   }
-  // Fallback for any other route — Title Case each segment
+  if (parts[0] === "admin") {
+    const admin = { href: "/admin/dashboard", label: "admin" };
+    if (parts.length === 1) return [org, admin];
+    const last = parts[parts.length - 1];
+    return [org, admin, { href: pathname, label: last.replace(/-/g, " ") }];
+  }
   let acc = "";
-  return parts.map((p) => {
+  return [org, ...parts.map((p) => {
     acc += "/" + p;
-    return { href: acc, label: prettify(p) };
-  });
-}
-
-function prettify(s: string): string {
-  return s
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+    return { href: acc, label: p.replace(/-/g, " ") };
+  })];
 }
 
 /* ─── Theme toggle ────────────────────────────────────────────────────────── */

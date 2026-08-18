@@ -29,6 +29,11 @@ export { Button } from "./Button";
 export { Toggle } from "./Toggle";
 export { Field, Input, Textarea, Select, Checkbox, Range, FieldRow } from "./Field";
 export { Tabs, DecisionBar, DataField, DataGrid, type TabDef } from "./Tabs";
+export {
+  PermissionMatrix,
+  type PermissionItem,
+  type PermissionSource,
+} from "./PermissionMatrix";
 export { Dropzone } from "./Dropzone";
 export { Progress, IndeterminateBar, Utilization, LiveDot, type LiveState } from "./Progress";
 export {

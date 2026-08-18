@@ -1255,6 +1255,23 @@ async def get_bank_supervisor(credentials: HTTPAuthorizationCredentials = Depend
         raise HTTPException(status_code=403, detail="Bank supervisor role required")
     return user
 
+async def _require_perm(user: dict, code: str) -> None:
+    """
+    Enforce a data-driven permission on top of the coarse role dependency.
+
+    The Depends(get_bank_officer/supervisor) gates above still run first and keep
+    the broad shape of who may reach an endpoint. This adds the fine-grained,
+    per-person layer the bank-admin console configures: a supervisor whose
+    'application.disburse' right was revoked is still a supervisor, but can no
+    longer move money. See services/permissions.py and migration_v40.
+
+    Kept as a thin wrapper so the permission code appears literally at each call
+    site — that is what makes an audit of "who can disburse" a grep.
+    """
+    from services import permissions as _perms
+    await _perms.require_permission(db_pool, user, code)
+
+
 # ============================================
 # TYPE COERCION FOR DB COLUMNS
 # ============================================
@@ -2120,6 +2137,7 @@ async def _record_approval(app_id, bank_id, approver_type, approver, decision, n
 @app.post("/api/bank/applications/{app_id}/officer-approve")
 async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_approved, record officer_id, officer_reviewed_at, officer_notes."""
+    await _require_perm(officer, "application.officer_approve")
     bank_id = uuid.UUID(officer["bank_id"])
     officer_id = uuid.UUID(officer["id"])
     app_row = await db_pool.fetchrow(
@@ -2144,6 +2162,7 @@ async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict
 @app.post("/api/bank/applications/{app_id}/officer-reject")
 async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_rejected, record officer_id, notes, rejection_reason."""
+    await _require_perm(officer, "application.officer_reject")
     bank_id = uuid.UUID(officer["bank_id"])
     officer_id = uuid.UUID(officer["id"])
     app_row = await db_pool.fetchrow(
@@ -2194,6 +2213,7 @@ async def supervisor_list_applications(supervisor: dict = Depends(get_bank_super
 @app.post("/api/bank/applications/{app_id}/supervisor-approve")
 async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=approved."""
+    await _require_perm(supervisor, "application.supervisor_approve")
     bank_id = uuid.UUID(supervisor["bank_id"])
     supervisor_id = uuid.UUID(supervisor["id"])
     app_row = await db_pool.fetchrow(
@@ -2238,6 +2258,7 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
 @app.post("/api/bank/applications/{app_id}/supervisor-reject")
 async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=supervisor_rejected."""
+    await _require_perm(supervisor, "application.supervisor_reject")
     bank_id = uuid.UUID(supervisor["bank_id"])
     supervisor_id = uuid.UUID(supervisor["id"])
     app_row = await db_pool.fetchrow(
@@ -2273,6 +2294,7 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
 @app.post("/api/bank/applications/{app_id}/request-documents")
 async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=documents_requested, documents_requested_at."""
+    await _require_perm(supervisor, "application.request_documents")
     bank_id = uuid.UUID(supervisor["bank_id"])
     supervisor_id = uuid.UUID(supervisor["id"])
     app_row = await db_pool.fetchrow(
@@ -2304,6 +2326,7 @@ async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor:
 @app.post("/api/bank/applications/{app_id}/disburse")
 async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=approved, approved_at."""
+    await _require_perm(supervisor, "application.disburse")
     bank_id = uuid.UUID(supervisor["bank_id"])
     supervisor_id = uuid.UUID(supervisor["id"])
     app_row = await db_pool.fetchrow(
@@ -2354,6 +2377,7 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
     stays 'approved' even after vendor disbursement — see routers/vendors.py), so
     a disbursed loan can never be cancelled here. Sets status='cancelled' and
     records the actor + reason in the status_transitions audit log."""
+    await _require_perm(user, "application.cancel")
     bank_id = uuid.UUID(user["bank_id"])
     actor_id = uuid.UUID(user["id"])
     app_row = await db_pool.fetchrow(

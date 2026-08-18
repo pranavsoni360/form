@@ -11,6 +11,7 @@ Step 4a covers users + invites + activity. Step 4b adds usage & call statistics
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import secrets
@@ -25,6 +26,8 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+
+from services import permissions as perms
 
 logger = logging.getLogger("bank-admin")
 security = HTTPBearer()
@@ -173,6 +176,11 @@ class CreateUser(BaseModel):
     role: str  # bank_officer | bank_supervisor
     branch: Optional[str] = None
     employee_id: Optional[str] = None
+    # Full desired permission set from the console grid. None => take the role
+    # default untouched. An explicit [] means "no rights at all", which is a
+    # legitimate choice for a not-yet-active account, so None and [] must stay
+    # distinguishable.
+    permissions: Optional[list[str]] = None
 
 
 class UpdateUser(BaseModel):
@@ -190,6 +198,15 @@ class InviteUser(BaseModel):
     custom_role_label: Optional[str] = None
     branch: Optional[str] = None
     employee_id: Optional[str] = None
+    # Same semantics as CreateUser.permissions. Stored on the invite row and
+    # applied when it is accepted, so choices made now survive until then.
+    permissions: Optional[list[str]] = None
+
+
+class SetPermissions(BaseModel):
+    """Desired permission set for one existing user (from the console grid)."""
+    permissions: list[str]
+    reason: Optional[str] = None
 
 
 def _validate_new_user(full_name: str, username: str, email: Optional[str], role: str):
@@ -280,6 +297,15 @@ async def create_user(body: CreateUser, admin: dict = Depends(get_bank_admin)):
             )
             await log_activity(conn, bank_id, admin, "create_user",
                                {"username": username, "role": body.role}, str(row["id"]))
+    # Permission deltas are written after the user row commits: set_user_permissions
+    # opens its own transaction, and nesting acquire() on the same pool inside the
+    # block above would deadlock. A failure here leaves the user on their plain
+    # role default rather than half-configured, which is the safe direction.
+    if body.permissions is not None:
+        await perms.set_user_permissions(
+            _db(), str(row["id"]), body.role, body.permissions,
+            actor_id=str(admin["id"]), reason="set at creation",
+        )
     out = _row(row)
     out["generated_password"] = password  # shown once
     return {"user": out}
@@ -444,13 +470,26 @@ async def invite_user(body: InviteUser, admin: dict = Depends(get_bank_admin)):
     expires = _now() + timedelta(days=INVITE_TTL_DAYS)
     async with _db().acquire() as conn:
         async with conn.transaction():
+            overrides_json = None
+            if body.permissions is not None:
+                # Diff against the role default NOW: the admin ticked boxes
+                # relative to today's default, and storing the absolute set would
+                # silently re-interpret their intent if the default shifts before
+                # the invite is accepted.
+                defaults = await perms.role_default_permissions(conn, body.role)
+                desired = set(body.permissions)
+                overrides_json = json.dumps(
+                    [{"permission_code": c, "effect": "grant"} for c in sorted(desired - defaults)]
+                    + [{"permission_code": c, "effect": "revoke"} for c in sorted(defaults - desired)]
+                )
             row = await conn.fetchrow(
                 "INSERT INTO bank_invites (bank_id, email, full_name, employee_id, role, custom_role_label, "
-                "branch, token, invited_by, invited_by_name, expires_at) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+                "branch, token, invited_by, invited_by_name, expires_at, permission_overrides) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *",
                 uuid.UUID(bank_id), email, full_name, body.employee_id, body.role,
                 body.custom_role_label if body.role == "custom" else None, body.branch, token,
                 uuid.UUID(admin["id"]), admin.get("full_name") or admin.get("name"), expires,
+                overrides_json,
             )
             await log_activity(conn, bank_id, admin, "invite_user", {"email": email, "role": body.role})
 
@@ -497,6 +536,76 @@ async def revoke_invite(invite_id: str, admin: dict = Depends(get_bank_admin)):
 
 
 # ── activity ─────────────────────────────────────────────────────────────────
+# ── permissions ──────────────────────────────────────────────────────────────
+# The console renders a permission matrix per user: every catalogue permission,
+# its role default, and whether this person has an explicit exception. These
+# three endpoints are what make that grid editable rather than decorative.
+
+@router.get("/permissions/catalogue")
+async def permission_catalogue(admin: dict = Depends(get_bank_admin)):
+    """Every permission plus each role's default set — prefills the grid before a user exists."""
+    await perms.require_permission(_db(), admin, "user.view")
+    rows = await _db().fetch(
+        "SELECT permission_code, category, description, is_dangerous FROM permissions "
+        "ORDER BY category, permission_code"
+    )
+    defaults = await _db().fetch("SELECT role, permission_code FROM bank_role_default_permissions")
+    by_role: dict[str, list[str]] = {}
+    for d in defaults:
+        by_role.setdefault(d["role"], []).append(d["permission_code"])
+    return {
+        "permissions": [dict(r) for r in rows],
+        "role_defaults": {k: sorted(v) for k, v in by_role.items()},
+    }
+
+
+@router.get("/users/{user_id}/permissions")
+async def get_user_permissions(user_id: str, admin: dict = Depends(get_bank_admin)):
+    """This user's matrix: allowed state + whether it came from the role or an override."""
+    await perms.require_permission(_db(), admin, "user.view")
+    row = await _db().fetchrow(
+        "SELECT id, role FROM bank_users WHERE id = $1 AND bank_id = $2",
+        uuid.UUID(user_id), uuid.UUID(admin["bank_id"]),
+    )
+    if not row:
+        raise HTTPException(404, "User not found in this bank.")
+    detail = await perms.user_permission_detail(_db(), user_id, row["role"])
+    return {"user_id": user_id, "role": row["role"], "permissions": detail}
+
+
+@router.put("/users/{user_id}/permissions")
+async def put_user_permissions(user_id: str, body: SetPermissions, admin: dict = Depends(get_bank_admin)):
+    """
+    Replace this user's permission set. Stored as deltas against the role default.
+
+    Bank-scoped by the WHERE clause below, never by a path param the caller
+    controls, so one bank's admin cannot reach another bank's user.
+    """
+    await perms.require_permission(_db(), admin, "user.manage_permissions")
+    bank_id = admin["bank_id"]
+    row = await _db().fetchrow(
+        "SELECT id, role, username FROM bank_users WHERE id = $1 AND bank_id = $2",
+        uuid.UUID(user_id), uuid.UUID(bank_id),
+    )
+    if not row:
+        raise HTTPException(404, "User not found in this bank.")
+
+    # An admin must not be able to remove their own ability to manage
+    # permissions — that would strand the bank with no one able to fix it.
+    if str(row["id"]) == str(admin["id"]) and "user.manage_permissions" not in set(body.permissions):
+        raise HTTPException(400, "You cannot remove your own permission-management right.")
+
+    result = await perms.set_user_permissions(
+        _db(), user_id, row["role"], body.permissions,
+        actor_id=str(admin["id"]), reason=body.reason,
+    )
+    async with _db().acquire() as conn:
+        await log_activity(conn, bank_id, admin, "set_permissions",
+                           {"username": row["username"], **result}, user_id)
+    detail = await perms.user_permission_detail(_db(), user_id, row["role"])
+    return {"user_id": user_id, "role": row["role"], "permissions": detail, **result}
+
+
 @router.get("/activity")
 async def list_activity(
     limit: int = Query(50, ge=1, le=200),

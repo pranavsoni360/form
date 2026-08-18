@@ -21,7 +21,7 @@ import {
   Table,
   TwoLine,
   RowMenu,
-  PermissionMatrix,
+  PermissionGrid,
   SplitBar,
   Modal,
   SidePanel,
@@ -51,6 +51,7 @@ import {
   setUserPermissions,
   type PermissionCatalogue,
 } from "@/lib/api/bankAdmin";
+import { PERMISSION_MODULES, unmappedCodes } from "@/lib/utils/permissionModules";
 
 type FilterKey = "all" | "active" | "invited" | "suspended";
 
@@ -391,13 +392,15 @@ function usePermissionGrid(role: string) {
     setTouched(false);
   }, [roleDefaults]);
 
-  const items = React.useMemo(
-    () => (cat?.permissions ?? []).map((p) => ({ ...p, role_default: roleDefaults.includes(p.permission_code) })),
-    [cat, roleDefaults],
+  // Codes no grid cell can reach. The grid is a lossy view of the 30 codes, so
+  // anything outside it is preserved verbatim on save rather than dropped.
+  const unmapped = React.useMemo(
+    () => unmappedCodes(PERMISSION_MODULES, roleDefaults),
+    [roleDefaults],
   );
 
   return {
-    cat, items, roleDefaults, open, setOpen,
+    cat, roleDefaults, open, setOpen, unmapped,
     selected,
     setSelected: (v: string[]) => { setSelected(v); setTouched(true); },
     /** What to send: undefined when untouched, so no deltas are stored. */
@@ -430,11 +433,12 @@ function PermissionSection({
       {grid.open && (
         <div className="border-t border-fx-border p-3">
           {grid.cat ? (
-            <PermissionMatrix
-              items={grid.items}
+            <PermissionGrid
               value={grid.selected}
               onChange={grid.setSelected}
               roleDefaults={grid.roleDefaults}
+              roleLabel={roleLabel}
+              unmapped={grid.unmapped}
             />
           ) : (
             <p className="text-[12px] text-fx-text3">Loading permissions…</p>
@@ -727,25 +731,25 @@ function PermissionsModal({
       .catch((e: any) => setErr(e?.message || "Could not load permissions."));
   }, [user.id]);
 
-  const items = React.useMemo(
-    () => (rows?.permissions ?? []).map((p) => ({
-      permission_code: p.permission_code,
-      category: p.category,
-      description: p.description,
-      is_dangerous: p.is_dangerous,
-      role_default: p.role_default,
-    })),
-    [rows],
-  );
   const roleDefaults = React.useMemo(
     () => (rows?.permissions ?? []).filter((p) => p.role_default).map((p) => p.permission_code),
     [rows],
+  );
+
+  // Rights this user holds that no grid cell can express. Saving the grid must
+  // not silently strip them, so they are re-appended to the payload and the
+  // count is surfaced under the grid.
+  const unmapped = React.useMemo(
+    () => unmappedCodes(PERMISSION_MODULES, selected),
+    [selected],
   );
 
   async function save() {
     setBusy(true);
     setErr(null);
     try {
+      // `selected` already contains the unmapped codes (they were loaded into it
+      // and the grid never removes what it cannot see), so it is sent as-is.
       await setUserPermissions(user.id, selected, reason || undefined);
       onDone();
     } catch (e: any) {
@@ -766,11 +770,12 @@ function PermissionsModal({
         {err && <p className="mb-3 text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
         {rows ? (
           <>
-            <PermissionMatrix
-              items={items}
+            <PermissionGrid
               value={selected}
               onChange={setSelected}
               roleDefaults={roleDefaults}
+              roleLabel={ROLE_LABEL[user.role] ?? user.role}
+              unmapped={unmapped}
             />
             <div className="mt-4">
               <Field label="Reason" note="Recorded in the activity log alongside the change.">

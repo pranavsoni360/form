@@ -34,6 +34,7 @@ export {
   type PermissionItem,
   type PermissionSource,
 } from "./PermissionMatrix";
+export { PermissionGrid } from "./PermissionGrid";
 export { Dropzone } from "./Dropzone";
 export { Progress, IndeterminateBar, Utilization, LiveDot, type LiveState } from "./Progress";
 export {

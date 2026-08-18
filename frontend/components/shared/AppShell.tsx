@@ -20,23 +20,23 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar title={subtitle} />
-        <main className="bg-dotgrid relative flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-          {/* Page heading — VirtualVaani always shows page title + small
-              registered/count subtitle just above the action button row. */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              {title}
-            </h1>
-            {subtitle && (
-              <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
-            )}
-          </div>
-          {children}
-        </main>
+    <div className="dark">
+      <div className="flex min-h-screen bg-background text-foreground">
+        <Sidebar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar title={subtitle} />
+          <main className="bg-dotgrid relative flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                {title}
+              </h1>
+              {subtitle && (
+                <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+              )}
+            </div>
+            {children}
+          </main>
+        </div>
       </div>
     </div>
   );

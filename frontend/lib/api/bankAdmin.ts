@@ -338,3 +338,18 @@ export async function setUserPermissions(
     "bank",
   );
 }
+
+// ── change requests ──────────────────────────────────────────────────────────
+// Settings that Virtual Galaxy controls under the bank's contract (seat cap,
+// minute quota, retention) cannot be self-served. This files a request against
+// one; it never auto-applies.
+export async function createChangeRequest(
+  item: string,
+  message?: string,
+): Promise<{ request: { id: string; item: string; message: string | null; created_at: string } }> {
+  return authFetch(
+    `/api/bank/admin/change-requests`,
+    { method: "POST", body: JSON.stringify({ item, message }) },
+    "bank",
+  );
+}

@@ -18,6 +18,7 @@ import {
   PhoneCall,
   Radio,
   Star,
+  Sun,
   TrendingUp,
   Upload,
   Users,
@@ -101,6 +102,7 @@ export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
   const [dateStr, setDateStr] = React.useState("");
   const [name, setName] = React.useState("Admin");
+  const [isDark, setIsDark] = React.useState(true);
 
   React.useEffect(() => {
     const d = new Date();
@@ -120,7 +122,22 @@ export function Sidebar({ className }: { className?: string }) {
         setName(display.charAt(0).toUpperCase() + display.slice(1));
       }
     } catch {}
+    setIsDark(document.documentElement.classList.contains("dark"));
   }, []);
+
+  const toggleTheme = () => {
+    const next = !isDark;
+    setIsDark(next);
+    try {
+      if (next) {
+        document.documentElement.classList.add("dark");
+        localStorage.setItem("los-theme", "dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+        localStorage.setItem("los-theme", "light");
+      }
+    } catch {}
+  };
 
   const initials = name.slice(0, 2).toUpperCase();
 
@@ -158,9 +175,14 @@ export function Sidebar({ className }: { className?: string }) {
             {initials}
           </span>
           <div className="flex items-center gap-0.5">
-            <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "rgba(255,255,255,0.35)" }}>
-              <Moon className="w-3.5 h-3.5" />
-            </span>
+            <button
+              onClick={toggleTheme}
+              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-white/10"
+              style={{ color: "rgba(255,255,255,0.4)" }}
+            >
+              {isDark ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+            </button>
             <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "rgba(255,255,255,0.35)" }}>
               <Star className="w-3.5 h-3.5" />
             </span>

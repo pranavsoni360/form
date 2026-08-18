@@ -26,6 +26,17 @@ export default function OpsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [status, setStatus] = React.useState<"checking" | "authed" | "redirecting">("checking");
 
+  // Default ops pages to dark mode on first visit (if user hasn't chosen light)
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem("los-theme");
+      if (saved !== "light") {
+        document.documentElement.classList.add("dark");
+        if (!saved) localStorage.setItem("los-theme", "dark");
+      }
+    } catch {}
+  }, []);
+
   React.useEffect(() => {
     let cancelled = false;
     (async () => {

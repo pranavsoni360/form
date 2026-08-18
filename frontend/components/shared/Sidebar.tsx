@@ -79,21 +79,21 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   },
 ];
 
-/* ─── Flat nav list for the sidebar visual ──────────────────────────────── */
+/* ─── Flat nav for sidebar visual ────────────────────────────────────────── */
 
 const FLAT_NAV = [
-  { href: "/ops",           label: "Dashboard",    icon: BarChart3,    exact: true },
-  { href: "/ops/live",      label: "Live calls",   icon: Radio },
-  { href: "/ops/calls",     label: "All calls",    icon: ListChecks },
-  { href: "/ops/batch",     label: "Batch calling",icon: Upload },
-  { href: "/ops/phones",    label: "Phone pool",   icon: PhoneCall },
-  { href: "/ops/callbacks", label: "Callbacks",    icon: CalendarClock },
-  { href: "/ops/funnel",    label: "Funnel",       icon: Activity },
-  { href: "/ops/exports",   label: "Exports",      icon: Download },
-  { href: "/ops/recordings",label: "Recordings",   icon: Mic },
-  { href: "/ops/workers",   label: "Workers",      icon: Users },
-  { href: "/ops/errors",    label: "Errors",       icon: AlertOctagon },
-  { href: "/ops/analytics", label: "Analytics",    icon: TrendingUp },
+  { href: "/ops",            label: "Dashboard",    icon: BarChart3,    exact: true },
+  { href: "/ops/live",       label: "Live calls",   icon: Radio },
+  { href: "/ops/calls",      label: "All calls",    icon: ListChecks },
+  { href: "/ops/batch",      label: "Batch calling",icon: Upload },
+  { href: "/ops/phones",     label: "Phone pool",   icon: PhoneCall },
+  { href: "/ops/callbacks",  label: "Callbacks",    icon: CalendarClock },
+  { href: "/ops/funnel",     label: "Funnel",       icon: Activity },
+  { href: "/ops/exports",    label: "Exports",      icon: Download },
+  { href: "/ops/recordings", label: "Recordings",   icon: Mic },
+  { href: "/ops/workers",    label: "Workers",      icon: Users },
+  { href: "/ops/errors",     label: "Errors",       icon: AlertOctagon },
+  { href: "/ops/analytics",  label: "Analytics",    icon: TrendingUp },
 ];
 
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
@@ -143,8 +143,10 @@ export function Sidebar({ className }: { className?: string }) {
 
   return (
     <aside
-      className={cn("hidden h-screen w-64 shrink-0 sticky top-0 flex-col lg:flex", className)}
-      style={{ background: "#0D1117", borderRight: "1px solid rgba(255,255,255,0.06)" }}
+      className={cn(
+        "hidden h-screen w-64 shrink-0 sticky top-0 flex-col lg:flex bg-card border-r border-border",
+        className
+      )}
     >
       {/* Logo */}
       <Link href="/ops" className="flex items-center gap-2.5 px-5 pt-5 pb-4" aria-label="Finix Ops">
@@ -155,7 +157,7 @@ export function Sidebar({ className }: { className?: string }) {
           F
         </span>
         <span
-          className="font-bold text-white text-base"
+          className="font-bold text-foreground text-base"
           style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.02em" }}
         >
           Finix
@@ -163,10 +165,7 @@ export function Sidebar({ className }: { className?: string }) {
       </Link>
 
       {/* User card */}
-      <div
-        className="mx-3 mb-4 rounded-xl p-3"
-        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}
-      >
+      <div className="mx-3 mb-4 rounded-xl p-3 bg-muted border border-border">
         <div className="flex items-center justify-between mb-2.5">
           <span
             className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
@@ -178,23 +177,22 @@ export function Sidebar({ className }: { className?: string }) {
             <button
               onClick={toggleTheme}
               aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-white/10"
-              style={{ color: "rgba(255,255,255,0.4)" }}
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
             >
               {isDark ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
             </button>
-            <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "rgba(255,255,255,0.35)" }}>
+            <span className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground">
               <Star className="w-3.5 h-3.5" />
             </span>
           </div>
         </div>
         {dateStr && (
-          <div className="text-[10px] mb-1 leading-tight" style={{ color: "rgba(255,255,255,0.3)" }}>
+          <div className="text-[10px] mb-1 leading-tight text-muted-foreground">
             {dateStr}
           </div>
         )}
-        <div className="text-sm font-semibold text-white leading-tight">{name}</div>
-        <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>
+        <div className="text-sm font-semibold text-foreground leading-tight">{name}</div>
+        <div className="text-[11px] mt-0.5 text-muted-foreground">
           Virtual Galaxy · calling ops
         </div>
       </div>
@@ -213,17 +211,16 @@ export function Sidebar({ className }: { className?: string }) {
                 href={item.href}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
-                  isActive ? "text-white" : "hover:text-white/80"
-                )}
-                style={
                   isActive
-                    ? { background: "rgba(255,255,255,0.09)", color: "#fff" }
-                    : { color: "rgba(255,255,255,0.48)" }
-                }
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
               >
                 <Icon
-                  className="h-4 w-4 shrink-0"
-                  style={{ color: isActive ? "#fff" : "rgba(255,255,255,0.32)" }}
+                  className={cn(
+                    "h-4 w-4 shrink-0",
+                    isActive ? "text-foreground" : "text-muted-foreground"
+                  )}
                 />
                 {item.label}
               </Link>
@@ -247,10 +244,7 @@ export function Sidebar({ className }: { className?: string }) {
 
       {/* Collapse */}
       <div className="px-3 pb-4">
-        <div
-          className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none"
-          style={{ color: "rgba(255,255,255,0.25)" }}
-        >
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none text-muted-foreground">
           <ChevronLeft className="w-3.5 h-3.5" />
           Collapse
         </div>

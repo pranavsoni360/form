@@ -458,20 +458,14 @@ export function TopBar({ title }: { title?: string }) {
   const todayLabel = useTodayLabel();
 
   return (
-    <header
-      className="sticky top-0 z-30 flex h-14 items-center gap-3 px-4 backdrop-blur-md sm:gap-4 lg:px-6"
-      style={{ background: "rgba(13,17,23,0.95)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-    >
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card/80 px-4 backdrop-blur-md sm:gap-4 lg:px-6">
       {/* Mobile hamburger */}
       <MobileNav />
 
       {/* Date pill */}
       {todayLabel && (
-        <div
-          className="hidden lg:flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs flex-shrink-0"
-          style={{ border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)" }}
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0" style={{ color: "rgba(255,255,255,0.4)" }}>
+        <div className="hidden lg:flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground flex-shrink-0">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0 text-muted-foreground">
             <rect x="1" y="2" width="14" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
             <path d="M1 6h14" stroke="currentColor" strokeWidth="1.5" />
             <path d="M5 1v2M11 1v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -485,12 +479,9 @@ export function TopBar({ title }: { title?: string }) {
         {crumbs.map((c, i) => (
           <React.Fragment key={c.href + i}>
             {i > 0 && (
-              <span className="text-xs select-none" style={{ color: "rgba(255,255,255,0.2)" }}>/</span>
+              <span className="text-xs select-none text-muted-foreground/40">/</span>
             )}
-            <span
-              className={cn("text-sm", i === crumbs.length - 1 ? "font-semibold" : "")}
-              style={{ color: i === crumbs.length - 1 ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.35)" }}
-            >
+            <span className={cn("text-sm", i === crumbs.length - 1 ? "font-semibold text-foreground" : "text-muted-foreground")}>
               {c.label}
             </span>
           </React.Fragment>

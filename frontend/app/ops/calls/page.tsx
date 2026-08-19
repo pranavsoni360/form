@@ -22,6 +22,7 @@ import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   Eye,
   PhoneCall,
@@ -138,9 +139,13 @@ export default function OpsCallsPage() {
     setPage(1);
   }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter]);
 
-  // "Export view" sidebar CTA — download current filtered calls as XLSX
-  React.useEffect(() => {
-    const handler = async () => {
+  // Export current filtered calls as XLSX — used by both the inline button
+  // and the sidebar "Export view" CTA (which dispatches "finix:export-view").
+  const [exporting, setExporting] = React.useState(false);
+  const handleExport = React.useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (categoryFilter !== "all") params.set("category", categoryFilter);
@@ -160,10 +165,16 @@ export default function OpsCallsPage() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    };
+    } finally {
+      setExporting(false);
+    }
+  }, [statusFilter, categoryFilter, dateFilter, exporting]);
+
+  React.useEffect(() => {
+    const handler = () => handleExport();
     window.addEventListener("finix:export-view", handler);
     return () => window.removeEventListener("finix:export-view", handler);
-  }, [statusFilter, categoryFilter, dateFilter]);
+  }, [handleExport]);
 
   const query = useQuery<CallsResponse>({
     queryKey: [
@@ -424,7 +435,7 @@ export default function OpsCallsPage() {
             <FilterPills options={formOptions} value={formFilter} onChange={setFormFilter} />
           </div>
 
-          {/* Row 2: status + category + date + search */}
+          {/* Row 2: status + category + date + search + export */}
           <div className="flex flex-wrap items-center gap-3">
             <Select
               label="Status"
@@ -463,6 +474,16 @@ export default function OpsCallsPage() {
                 Clear
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              disabled={exporting}
+              className="ml-auto gap-1.5"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {exporting ? "Exporting…" : "Export view"}
+            </Button>
           </div>
         </div>
 

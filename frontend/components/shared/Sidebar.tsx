@@ -143,14 +143,7 @@ export function Sidebar({ className }: { className?: string }) {
 
   const initials = name.slice(0, 2).toUpperCase();
 
-  const EXPORT_PAGES = ["/ops/calls", "/ops/recordings", "/ops/callbacks", "/ops/live"];
-  const handleExport = () => {
-    if (EXPORT_PAGES.some((p) => pathname?.startsWith(p))) {
-      window.dispatchEvent(new CustomEvent("finix:export-view"));
-    } else {
-      router.push("/ops/exports");
-    }
-  };
+  const handleExport = () => router.push("/ops/exports");
 
   return (
     <aside

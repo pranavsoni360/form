@@ -258,8 +258,10 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
         if elapsed >= 15 and elapsed % 9 == 0:
             try:
                 lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-                rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
-                await lk.aclose()
+                try:
+                    rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
+                finally:
+                    await lk.aclose()  # always close, even if list_rooms raised (no aiohttp session leak)
                 if not rooms.rooms:
                     # Room gone — wait up to 60s for a late transcript, then classify
                     # by whether the agent was ever in the room.

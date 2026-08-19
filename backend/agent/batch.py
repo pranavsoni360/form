@@ -154,7 +154,8 @@ async def agent_startup():
     )
     _scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     _scheduler.start()
-    logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, error_cleanup daily 03:00 IST, max_retries={MAX_RETRIES})")
+    _retention_mode = "LIVE" if os.getenv("RETENTION_PURGE_LIVE", "false").lower() == "true" else "dry-run"
+    logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, error_cleanup daily 03:00 IST, retention_purge daily 03:30 IST [{_retention_mode}], max_retries={MAX_RETRIES})")
 
 
 async def agent_shutdown():

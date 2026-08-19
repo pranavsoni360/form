@@ -5,6 +5,39 @@ const nextConfig = {
   images: {
     domains: ['supabase.co'],
   },
+  // ── Security headers (plan §16) ───────────────────────────────────────────
+  // Applied to every response. HSTS/X-Frame-Options/nosniff/Referrer-Policy are
+  // safe and unconditional. The CSP allows what the app actually uses: same-origin
+  // API+SSE, Next.js inline hydration scripts/styles, the pincode lookup and Sentry.
+  async headers() {
+    const csp = [
+      "default-src 'self'",
+      // Next.js injects inline hydration scripts; keep 'unsafe-eval' so no Next/
+      // library runtime feature is blocked (tightened later with nonces if adopted).
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "connect-src 'self' https://api.postalpincode.in https://sentry.io https://*.sentry.io https://*.ingest.sentry.io",
+      "frame-ancestors 'self'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join("; ");
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          { key: "Content-Security-Policy", value: csp },
+        ],
+      },
+    ];
+  },
   // Production source maps stay on the server so Sentry can symbolicate
   // stack traces, but `hideSourceMaps: true` below strips the public .map.js
   // references from client bundles (avoids leaking source to end users).

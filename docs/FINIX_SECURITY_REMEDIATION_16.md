@@ -119,6 +119,27 @@ Worked the user-selected V2 items one by one. **All QA; prod held pending sign-o
   unconfigured bank stayed untouched (**tenant isolation verified**). `bank_retention_config`
   has 0 configured rows today, so the live job is a no-op until a bank opts in.
 
+- **Audit trail + geolocation — ✅ SHIPPED QA (browser-verified end-to-end).** The
+  compliance audit stores shipped with the multi-bank schema but were unpopulated
+  (activity_log = 0 rows; login_audit captured IP/UA only, no geo). Now fully wired:
+  - `backend/services/audit.py`: real-client-IP (X-Real-IP / last XFF hop, behind
+    nginx), OFFLINE IP→geo via `maxminddb` (DB-IP City Lite `.mmdb` at
+    `GEOIP_DB_PATH=/root/geoip/dbip-city-lite.mmdb`; graceful no-op if unset — no
+    client IP leaves the box, DPDP-safe), device fingerprint, JWT actor decode.
+  - `activity_audit_middleware`: writes every mutating request (POST/PUT/PATCH/
+    DELETE) to activity_log — actor, action, endpoint, status, IP+geo, duration.
+    Auth/webhook/health/SSE-token paths excluded. Best-effort (never breaks a request).
+  - login_audit now captures geo + device fingerprint and logs login_failure
+    (bad creds / locked / deactivated) + logout, not just login_success.
+  - `GET /api/admin/audit/{activity,logins}` (platform-admin only, 401 anon) +
+    the `/ops/audit` dashboard (Logins/Activity tabs, filters, geo, pagination).
+  - Both audit tables are append-only (tamper-proof triggers). Verified live on QA:
+    a failed login rendered with **Borī, Maharashtra, India** + device fp; activity
+    rows showed admin (IN) vs anonymous (Ashburn, US, 401/denied) with geo.
+  - ⚠️ Historical rows predate geo → location shows "unknown" (cannot backfill).
+    New events geo-resolve. Prod needs: `pip install maxminddb`, the `.mmdb`
+    provisioned at `GEOIP_DB_PATH` (or geo silently disables), nginx `X-Real-IP`.
+
 **🔴 Prod promotion of this V2 pass (and all held audit fixes) awaits explicit sign-off.**
 
 ---

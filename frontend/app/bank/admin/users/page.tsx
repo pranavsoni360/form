@@ -21,6 +21,7 @@ import {
   Table,
   TwoLine,
   RowMenu,
+  PermissionGrid,
   SplitBar,
   Modal,
   SidePanel,
@@ -45,7 +46,12 @@ import {
   type BankUser,
   type PendingInvite,
   type CreatedUser,
+  getPermissionCatalogue,
+  getUserPermissions,
+  setUserPermissions,
+  type PermissionCatalogue,
 } from "@/lib/api/bankAdmin";
+import { PERMISSION_MODULES, unmappedCodes } from "@/lib/utils/permissionModules";
 
 type FilterKey = "all" | "active" | "invited" | "suspended";
 
@@ -81,6 +87,7 @@ export default function UsersPage() {
   const [invite, setInvite] = React.useState(false);
   const [create, setCreate] = React.useState(false);
   const [suspendTarget, setSuspendTarget] = React.useState<BankUser | null>(null);
+  const [permTarget, setPermTarget] = React.useState<BankUser | null>(null);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -125,6 +132,7 @@ export default function UsersPage() {
     return [
       { label: "Change role", onClick: () => {} },
       { label: "Change branch", onClick: () => {} },
+      { label: "Edit permissions", onClick: () => setPermTarget(u) },
       { label: "View activity", onClick: () => {} },
       { label: "Suspend user", onClick: () => setSuspendTarget(u), warn: true },
       { label: "Delete user", onClick: () => act(deleteUser(u.id)), destructive: true },
@@ -322,6 +330,13 @@ export default function UsersPage() {
           onCreated={() => load()}
         />
       )}
+      {permTarget && (
+        <PermissionsModal
+          user={permTarget}
+          onClose={() => setPermTarget(null)}
+          onDone={() => { setPermTarget(null); load(); }}
+        />
+      )}
       {suspendTarget && (
         <SuspendModal
           user={suspendTarget}
@@ -345,6 +360,95 @@ const ROLE_OPTIONS: { value: any; label: string; custom?: boolean }[] = [
   { value: "custom", label: "Auditor, read only", custom: true },
 ];
 
+
+// ── permission grid state ────────────────────────────────────────────────────
+// Loads the catalogue once and keeps a selection that RE-BASES when the role
+// changes: picking a different role replaces the ticks with that role's default,
+// because the admin's prior ticks were relative to the old default and silently
+// carrying them over would grant rights they never chose for this role.
+//
+// `touched` records whether the admin has edited the grid at all. If they never
+// open or change it we send `undefined` rather than an explicit list, so the
+// backend stores no per-user deltas and the user simply inherits their role —
+// which keeps the common case free of pointless override rows.
+function usePermissionGrid(role: string) {
+  const [cat, setCat] = React.useState<PermissionCatalogue | null>(null);
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const [touched, setTouched] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    getPermissionCatalogue().then(setCat).catch(() => setCat(null));
+  }, []);
+
+  const roleDefaults = React.useMemo(
+    () => cat?.role_defaults?.[role] ?? [],
+    [cat, role],
+  );
+
+  // Re-base on role change (and on first catalogue load).
+  React.useEffect(() => {
+    setSelected(roleDefaults);
+    setTouched(false);
+  }, [roleDefaults]);
+
+  // Codes no grid cell can reach. The grid is a lossy view of the 30 codes, so
+  // anything outside it is preserved verbatim on save rather than dropped.
+  const unmapped = React.useMemo(
+    () => unmappedCodes(PERMISSION_MODULES, roleDefaults),
+    [roleDefaults],
+  );
+
+  return {
+    cat, roleDefaults, open, setOpen, unmapped,
+    selected,
+    setSelected: (v: string[]) => { setSelected(v); setTouched(true); },
+    /** What to send: undefined when untouched, so no deltas are stored. */
+    payload: touched ? selected : undefined,
+  };
+}
+
+
+/** Collapsible permissions block shared by the invite, create and edit forms. */
+function PermissionSection({
+  grid,
+  roleLabel,
+}: {
+  grid: ReturnType<typeof usePermissionGrid>;
+  roleLabel: string;
+}) {
+  return (
+    <div className="rounded-[10px]" style={{ background: "var(--fx-surface2)" }}>
+      <button
+        type="button"
+        onClick={() => grid.setOpen(!grid.open)}
+        className="fx-tap flex w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        <span className="text-[13px] text-fx-text">Permissions</span>
+        <span className="text-[11px] text-fx-text3">
+          {grid.payload ? `${grid.selected.length} rights · customised` : `${roleLabel} default`}
+        </span>
+        <span className="fx-mono ml-auto text-[10px] text-fx-text3">{grid.open ? "▲" : "▼"}</span>
+      </button>
+      {grid.open && (
+        <div className="border-t border-fx-border p-3">
+          {grid.cat ? (
+            <PermissionGrid
+              value={grid.selected}
+              onChange={grid.setSelected}
+              roleDefaults={grid.roleDefaults}
+              roleLabel={roleLabel}
+              unmapped={grid.unmapped}
+            />
+          ) : (
+            <p className="text-[12px] text-fx-text3">Loading permissions…</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClose: () => void; onDone: () => void }) {
   const [email, setEmail] = React.useState("");
   const [fullName, setFullName] = React.useState("");
@@ -354,6 +458,7 @@ function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClos
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<{ url: string; sent: boolean } | null>(null);
+  const grid = usePermissionGrid(ROLE_OPTIONS[roleIdx].value);
 
   async function submit() {
     setBusy(true);
@@ -367,6 +472,7 @@ function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClos
         custom_role_label: opt.custom ? opt.label : undefined,
         branch: branch || undefined,
         employee_id: employeeId || undefined,
+        permissions: grid.payload,
       });
       setResult({ url: r.invite_url, sent: r.email_sent });
     } catch (e: any) {
@@ -441,6 +547,12 @@ function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClos
           <Field label="Branch">
             <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Camp road" />
           </Field>
+
+          {/* Permissions — collapsed by default so the common "just use the role
+              default" path stays a short form, but one click away when a specific
+              right needs granting to this person. */}
+          <PermissionSection grid={grid} roleLabel={ROLE_OPTIONS[roleIdx].label} />
+
           {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
           <div className="mt-1 flex justify-end gap-2">
             <Button variant="quiet" onClick={onClose}>Cancel</Button>
@@ -459,6 +571,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [role, setRole] = React.useState<"bank_officer" | "bank_supervisor">("bank_officer");
+  const grid = usePermissionGrid(role);
   const [fullName, setFullName] = React.useState("");
   const [username, setUsername] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -482,7 +595,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setBusy(true);
     setServerErr(null);
     try {
-      const { user } = await createUser({ full_name: fullName.trim(), username: username.trim(), email: email.trim() || undefined, role, branch: branch || undefined });
+      const { user } = await createUser({ full_name: fullName.trim(), username: username.trim(), email: email.trim() || undefined, role, branch: branch || undefined, permissions: grid.payload });
       setCreated(user);
       onCreated();
     } catch (e: any) {
@@ -576,6 +689,8 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
             <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="sneha@azsb.co.in" />
           </Field>
           {serverErr && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{serverErr}</p>}
+          <PermissionSection grid={grid} roleLabel={ROLE_LABEL[role]} />
+
           <div className="mt-1 flex justify-end gap-2">
             <Button variant="quiet" onClick={onClose}>Cancel</Button>
             <Button variant="primary" onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create user"}</Button>
@@ -587,6 +702,106 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
 }
 
 // ── Suspend confirmation ─────────────────────────────────────────────────────
+
+// ── Edit permissions for an existing user ────────────────────────────────────
+// Loads this person's CURRENT effective set (role default plus any prior
+// exceptions) rather than the plain role default, so opening the dialog shows
+// what they actually have today and an edit is relative to reality.
+function PermissionsModal({
+  user,
+  onClose,
+  onDone,
+}: {
+  user: BankUser;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [rows, setRows] = React.useState<Awaited<ReturnType<typeof getUserPermissions>> | null>(null);
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const [reason, setReason] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    getUserPermissions(user.id)
+      .then((r) => {
+        setRows(r);
+        setSelected(r.permissions.filter((p) => p.allowed).map((p) => p.permission_code));
+      })
+      .catch((e: any) => setErr(e?.message || "Could not load permissions."));
+  }, [user.id]);
+
+  const roleDefaults = React.useMemo(
+    () => (rows?.permissions ?? []).filter((p) => p.role_default).map((p) => p.permission_code),
+    [rows],
+  );
+
+  // Rights this user holds that no grid cell can express. Saving the grid must
+  // not silently strip them, so they are re-appended to the payload and the
+  // count is surfaced under the grid.
+  const unmapped = React.useMemo(
+    () => unmappedCodes(PERMISSION_MODULES, selected),
+    [selected],
+  );
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      // `selected` already contains the unmapped codes (they were loaded into it
+      // and the grid never removes what it cannot see), so it is sent as-is.
+      await setUserPermissions(user.id, selected, reason || undefined);
+      onDone();
+    } catch (e: any) {
+      setErr(e?.message || "Could not save permissions.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} width={620}>
+      <OverlayHeader
+        title="Edit permissions"
+        subtitle={`${user.full_name} · ${ROLE_LABEL[user.role] ?? user.role}. Changes apply immediately.`}
+        onClose={onClose}
+      />
+      <div className="max-h-[62vh] overflow-y-auto p-5">
+        {err && <p className="mb-3 text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+        {rows ? (
+          <>
+            <PermissionGrid
+              value={selected}
+              onChange={setSelected}
+              roleDefaults={roleDefaults}
+              roleLabel={ROLE_LABEL[user.role] ?? user.role}
+              unmapped={unmapped}
+            />
+            <div className="mt-4">
+              <Field label="Reason" note="Recorded in the activity log alongside the change.">
+                <input
+                  className={inputCls}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g. Handling recovery calls for Q3"
+                />
+              </Field>
+            </div>
+          </>
+        ) : (
+          <p className="text-[12px] text-fx-text3">Loading permissions…</p>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 border-t border-fx-border p-4">
+        <Button variant="quiet" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={save} disabled={busy || !rows}>
+          {busy ? "Saving…" : "Save permissions"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 function SuspendModal({ user, onClose, onDone }: { user: BankUser; onClose: () => void; onDone: () => void }) {
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);

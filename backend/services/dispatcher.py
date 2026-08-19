@@ -595,6 +595,19 @@ class Dispatcher:
                 await self._bump("completed")
                 return
 
+            # We may have parked in _wait_for_cooldown_and_retry for up to
+            # TRUNK_WAIT_DEADLINE_S waiting for a channel. Re-validate the exit
+            # gates before dialing so a parked call never dials past the calling
+            # window or after an emergency stop. Release the trunk and leave the
+            # call Pending so it dials in the next window.
+            if self._stopped or not self.is_within_calling_hours() or await self.is_emergency_stop_active():
+                logger.info(
+                    "Aborting call %s after trunk wait: window closed / stopped / emergency-stop",
+                    call_uuid,
+                )
+                await _release_trunk_to_db(self.db_pool, trunk, success=False)
+                return
+
             outcome_success = False
             try:
                 if self.demo_mode:

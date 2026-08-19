@@ -66,6 +66,8 @@ export async function createUser(body: {
   role: "bank_officer" | "bank_supervisor";
   branch?: string;
   employee_id?: string;
+  /** Full desired permission set. Omit to take the role default untouched. */
+  permissions?: string[];
 }): Promise<{ user: CreatedUser }> {
   return authFetch(`/api/bank/admin/users`, { method: "POST", body: JSON.stringify(body) }, "bank");
 }
@@ -97,6 +99,8 @@ export async function inviteUser(body: {
   custom_role_label?: string;
   branch?: string;
   employee_id?: string;
+  /** Full desired permission set; stored on the invite and applied on acceptance. */
+  permissions?: string[];
 }): Promise<{ invite: PendingInvite; invite_url: string; email_sent: boolean }> {
   return authFetch(`/api/bank/admin/invites`, { method: "POST", body: JSON.stringify(body) }, "bank");
 }
@@ -286,4 +290,51 @@ export async function saveSettings(patch: SettingsPatch): Promise<SettingsRespon
 
 export async function requestChange(item: string, message?: string): Promise<unknown> {
   return authFetch(`/api/bank/admin/change-requests`, { method: "POST", body: JSON.stringify({ item, message }) }, "bank");
+}
+
+
+// ── permissions ──────────────────────────────────────────────────────────────
+// The console shows a matrix per user: every permission, whether the role grants
+// it by default, and whether this person has an explicit exception. `source` is
+// what lets the UI distinguish "inherited" from "deliberately changed".
+
+export type PermissionSource = "role" | "granted" | "revoked" | "none";
+
+export interface PermissionRow {
+  permission_code: string;
+  category: string;
+  description: string;
+  is_dangerous: boolean;
+  role_default: boolean;
+  allowed: boolean;
+  source: PermissionSource;
+  reason?: string | null;
+}
+
+export interface PermissionCatalogue {
+  permissions: Omit<PermissionRow, "role_default" | "allowed" | "source" | "reason">[];
+  /** role -> default permission codes. Prefills the grid before a user exists. */
+  role_defaults: Record<string, string[]>;
+}
+
+export async function getPermissionCatalogue(): Promise<PermissionCatalogue> {
+  return authFetch(`/api/bank/admin/permissions/catalogue`, {}, "bank");
+}
+
+export async function getUserPermissions(
+  userId: string,
+): Promise<{ user_id: string; role: string; permissions: PermissionRow[] }> {
+  return authFetch(`/api/bank/admin/users/${userId}/permissions`, {}, "bank");
+}
+
+export async function setUserPermissions(
+  userId: string,
+  permissions: string[],
+  reason?: string,
+): Promise<{ user_id: string; role: string; permissions: PermissionRow[]; granted: string[]; revoked: string[] }> {
+  return authFetch(
+    `/api/bank/admin/users/${userId}/permissions`,
+    { method: "PUT", body: JSON.stringify({ permissions, reason }) },
+    "bank",
+  );
 }

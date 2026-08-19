@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { FinixLogoMark } from '@/components/shared/FinixLogo';
 import { API_URL, withdrawApplication } from '@/lib/api/index'
 import { SESSION_KEYS } from '@/lib/utils/constants';
 import { Loader2, X, ChevronRight, FileText, Edit3, CheckCircle, Clock, AlertCircle, TrendingUp, Phone, Trash2 } from 'lucide-react';
@@ -235,8 +236,7 @@ export default function CustomerDashboard() {
           {/* Nav */}
           <div className="flex items-center justify-between mb-8 relative z-10">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
-                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#0D2650' }}>F</div>
+              <FinixLogoMark size={26} shieldColor="white" />
               <span className="text-sm font-semibold" style={{ color: '#fff', fontFamily: 'var(--font-heading)' }}>Finix</span>
             </div>
             <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-full transition hover:opacity-80"

@@ -14,6 +14,7 @@ import {
 
 import { clearAuth, getCurrentUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { FinixLogoMark } from "@/components/shared/FinixLogo";
 
 /**
  * Vendor portal shell — same layout shape as /ops AppShell, but with vendor-
@@ -67,9 +68,7 @@ export function VendorShell({
 
   const Brand = (
     <Link href="/vendor/dashboard" className="flex items-center gap-3 px-5 py-5">
-      <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-600 text-white shadow-sm">
-        <Banknote className="h-5 w-5" />
-      </span>
+      <FinixLogoMark size={30} shieldColor="#1B2A4A" className="shrink-0" />
       <div className="leading-tight">
         <div className="text-[11px] font-bold uppercase tracking-wider">Finix</div>
         <div className="text-sm font-semibold">Vendor Portal</div>

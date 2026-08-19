@@ -14,6 +14,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useFinixTheme } from "./theme";
 import { formatDate } from "./format";
+import { FinixLogoMark } from "@/components/shared/FinixLogo";
 
 export type FinixNavItem = {
   href: string;
@@ -102,12 +103,7 @@ export function Sidebar({
     >
       {/* Logo row */}
       <div className="flex items-center gap-2.5 px-1">
-        <span
-          className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[10px] text-[15px] font-medium text-white"
-          style={{ background: "var(--fx-accent-grad)", boxShadow: "var(--fx-accent-glow)" }}
-        >
-          F
-        </span>
+        <FinixLogoMark size={30} shieldColor="#1B2A4A" className="shrink-0" />
         {!collapsed && <span className="text-[15px] font-medium text-fx-text">Finix</span>}
       </div>
 

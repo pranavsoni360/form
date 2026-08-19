@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/api';
+import { FinixLogoMark } from '@/components/shared/FinixLogo';
 import { Loader2, X, ChevronRight, FileText, Edit3, CheckCircle, Clock, AlertCircle, TrendingUp, Phone } from 'lucide-react';
 
 // ── Status configuration ────────────────────────────────────────────────────
@@ -52,8 +53,7 @@ export default function CustomerDashboard() {
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: '#EEF2F9' }}>
       <div className="flex flex-col items-center gap-3">
-        <div className="w-12 h-12 rounded flex items-center justify-center font-bold text-lg"
-          style={{ background: '#071A38', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
+        <FinixLogoMark size={48} shieldColor="white" />
         <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#2563EB' }} />
       </div>
     </div>
@@ -170,8 +170,7 @@ export default function CustomerDashboard() {
           {/* Nav */}
           <div className="flex items-center justify-between mb-8 relative z-10">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
-                style={{ background: '#fff', fontFamily: 'var(--font-heading)', color: '#071A38' }}>F</div>
+              <FinixLogoMark size={26} shieldColor="white" />
               <span className="text-sm font-semibold" style={{ color: '#fff', fontFamily: 'var(--font-heading)' }}>Finix</span>
             </div>
             <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-full transition hover:opacity-80"

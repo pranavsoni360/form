@@ -168,13 +168,34 @@ export function Sidebar({ className }: { className?: string }) {
           >
             {initials}
           </span>
-          <button
-            onClick={toggleTheme}
-            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
-          >
-            {isDark ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
-          </button>
+          <div className="flex items-center rounded-lg overflow-hidden border border-border">
+            <button
+              onClick={() => { if (isDark) toggleTheme(); }}
+              aria-label="Switch to light mode"
+              aria-pressed={!isDark}
+              className={cn(
+                "w-7 h-7 flex items-center justify-center transition-colors",
+                !isDark
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted/50"
+              )}
+            >
+              <Sun className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => { if (!isDark) toggleTheme(); }}
+              aria-label="Switch to dark mode"
+              aria-pressed={isDark}
+              className={cn(
+                "w-7 h-7 flex items-center justify-center transition-colors",
+                isDark
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted/50"
+              )}
+            >
+              <Moon className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
         {dateStr && (
           <div className="text-[10px] mb-1 leading-tight text-muted-foreground">

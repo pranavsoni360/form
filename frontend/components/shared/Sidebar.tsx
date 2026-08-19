@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   Activity,
   AlertOctagon,
@@ -101,7 +101,6 @@ const FLAT_NAV = [
 
 export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [dateStr, setDateStr] = React.useState("");
   const [name, setName] = React.useState("Admin");
   const [isDark, setIsDark] = React.useState(true);
@@ -142,8 +141,6 @@ export function Sidebar({ className }: { className?: string }) {
   };
 
   const initials = name.slice(0, 2).toUpperCase();
-
-  const handleExport = () => router.push("/ops/exports");
 
   return (
     <aside
@@ -228,19 +225,6 @@ export function Sidebar({ className }: { className?: string }) {
         </nav>
       </div>
 
-      {/* Bottom CTA */}
-      <div className="px-3 pb-2 pt-2">
-        <button
-          onClick={handleExport}
-          className="w-full rounded-xl p-3 mb-2 text-left transition-opacity hover:opacity-90 active:opacity-75"
-          style={{ background: "linear-gradient(135deg, #1D4ED8, #0EA5E9)" }}
-        >
-          <div className="text-sm font-semibold text-white leading-tight">Export view</div>
-          <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>
-            All calls in the current filter
-          </div>
-        </button>
-      </div>
 
       {/* Collapse */}
       <div className="px-3 pb-2">

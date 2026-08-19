@@ -138,6 +138,33 @@ export default function OpsCallsPage() {
     setPage(1);
   }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter]);
 
+  // "Export view" sidebar CTA — download current filtered calls as XLSX
+  React.useEffect(() => {
+    const handler = async () => {
+      const params = new URLSearchParams();
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (categoryFilter !== "all") params.set("category", categoryFilter);
+      if (dateFilter) {
+        params.set("date_from", dateFilter);
+        params.set("date_to", dateFilter);
+      }
+      const qs = params.toString();
+      const res = await opsFetch(`/api/agent/export/all-calls${qs ? `?${qs}` : ""}`);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `calls_${dateFilter || new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    };
+    window.addEventListener("finix:export-view", handler);
+    return () => window.removeEventListener("finix:export-view", handler);
+  }, [statusFilter, categoryFilter, dateFilter]);
+
   const query = useQuery<CallsResponse>({
     queryKey: [
       "calls",

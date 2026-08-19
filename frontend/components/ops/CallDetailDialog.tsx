@@ -35,8 +35,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { API_URL } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { opsFetch } from "@/lib/ops-fetch";
 
 /* ───────────────────────── Backend response shape ────────────────────── */
 
@@ -125,11 +125,7 @@ export function CallDetailDialog({
     queryKey: ["call-detail", callId],
     queryFn: async () => {
       if (!callId) throw new Error("no callId");
-      // /call/{id} (alias) is unauthenticated; same endpoint the old /agent
-      // hits. /calls/{id} works too but goes through the auth dependency.
-      const res = await fetch(`${API_URL}/api/agent/call/${callId}`, {
-        credentials: "include",
-      });
+      const res = await opsFetch(`/api/agent/call/${callId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },

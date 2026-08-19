@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, User, Lock, Banknote, CheckCircle2, TrendingUp, Eye, EyeOff } from "lucide-react";
 import { vendorLogin } from "@/lib/api/vendor";
 import { setAccessToken, setCurrentUser } from "@/lib/auth";
+import { FinixLogoMark } from "@/components/shared/FinixLogo";
 
 export default function VendorLoginPage() {
   return (
@@ -61,10 +62,7 @@ function VendorLoginForm() {
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
-            style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.15)', fontFamily: 'var(--font-heading)' }}>
-            vv
-          </div>
+          <FinixLogoMark size={32} shieldColor="white" className="flex-shrink-0" />
           <div>
             <div className="text-[11px] font-bold uppercase tracking-widest text-white opacity-90" style={{ fontFamily: 'var(--font-heading)' }}>Finix</div>
             <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Vendor & NBFC Portal</div>
@@ -98,7 +96,7 @@ function VendorLoginForm() {
         </div>
 
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
-          © 2026 Finix · Authorized NBFC partners only
+          © 2026 Finix · Virtual Galaxy Infotech Limited · Authorized NBFC partners only
         </p>
       </div>
 

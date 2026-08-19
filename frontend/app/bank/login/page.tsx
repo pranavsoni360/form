@@ -37,6 +37,7 @@ import {
   Modal,
   OverlayHeader,
 } from '@/components/finix';
+import { FinixLogoMark } from '@/components/shared/FinixLogo';
 
 function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
   return (
@@ -167,12 +168,7 @@ export default function BankLoginPage() {
           />
 
           <div className="relative z-10 flex items-center gap-3">
-            <div
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[13px] font-medium text-white"
-              style={{ background: 'var(--fx-accent-grad)', boxShadow: 'var(--fx-accent-glow)' }}
-            >
-              F
-            </div>
+            <FinixLogoMark size={32} shieldColor="#1B2A4A" className="shrink-0" />
             <div className="leading-tight">
               <div className="text-[13px] font-medium text-fx-text">Finix</div>
               <div className="text-[11px] text-fx-text3">Bank officer portal</div>
@@ -212,7 +208,7 @@ export default function BankLoginPage() {
           </div>
 
           <p className="relative z-10 text-[11px] text-fx-text3">
-            © 2026 Finix · Authorized bank personnel only
+            © 2026 Finix · Virtual Galaxy Infotech Limited · Authorized bank personnel only
           </p>
         </div>
 

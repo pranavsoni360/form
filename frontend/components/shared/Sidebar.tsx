@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
   AlertOctagon,
@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { FinixLogoMark } from "@/components/shared/FinixLogo";
 
 /* ─── Types (kept for MobileNav compatibility) ───────────────────────────── */
 
@@ -100,6 +101,7 @@ const FLAT_NAV = [
 
 export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [dateStr, setDateStr] = React.useState("");
   const [name, setName] = React.useState("Admin");
   const [isDark, setIsDark] = React.useState(true);
@@ -141,6 +143,8 @@ export function Sidebar({ className }: { className?: string }) {
 
   const initials = name.slice(0, 2).toUpperCase();
 
+  const handleExport = () => router.push("/ops/exports");
+
   return (
     <aside
       className={cn(
@@ -150,12 +154,7 @@ export function Sidebar({ className }: { className?: string }) {
     >
       {/* Logo */}
       <Link href="/ops" className="flex items-center gap-2.5 px-5 pt-5 pb-4" aria-label="Finix Ops">
-        <span
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-          style={{ background: "linear-gradient(135deg, #1D4ED8, #0EA5E9)", fontFamily: "var(--font-heading)" }}
-        >
-          F
-        </span>
+        <FinixLogoMark size={30} className="text-foreground flex-shrink-0" />
         <span
           className="font-bold text-foreground text-base"
           style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.02em" }}
@@ -231,24 +230,30 @@ export function Sidebar({ className }: { className?: string }) {
 
       {/* Bottom CTA */}
       <div className="px-3 pb-2 pt-2">
-        <div
-          className="rounded-xl p-3 mb-2"
+        <button
+          onClick={handleExport}
+          className="w-full rounded-xl p-3 mb-2 text-left transition-opacity hover:opacity-90 active:opacity-75"
           style={{ background: "linear-gradient(135deg, #1D4ED8, #0EA5E9)" }}
         >
           <div className="text-sm font-semibold text-white leading-tight">Export view</div>
           <div className="text-[11px] mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>
             All calls in the current filter
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Collapse */}
-      <div className="px-3 pb-4">
+      <div className="px-3 pb-2">
         <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none text-muted-foreground">
           <ChevronLeft className="w-3.5 h-3.5" />
           Collapse
         </div>
       </div>
+
+      {/* Copyright */}
+      <p className="px-6 pb-4 text-[10px] leading-tight text-muted-foreground select-none">
+        © 2026 Finix · Virtual Galaxy Infotech Limited
+      </p>
     </aside>
   );
 }

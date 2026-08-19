@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
 import { Loader2, AlertTriangle, User, Lock, Shield, BarChart3, Settings, Eye, EyeOff, Radio } from 'lucide-react';
+import { FinixLogoMark } from '@/components/shared/FinixLogo';
 
 export default function AdminLoginPage() {
   return <Suspense><AdminLoginInner /></Suspense>;
@@ -61,11 +62,7 @@ function AdminLoginInner() {
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <svg width="30" height="34" viewBox="0 0 60 68" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M30 2L4 14v20c0 16 11 30 26 34 15-4 26-18 26-34V14L30 2z"
-              stroke="white" strokeWidth="3.5" strokeLinejoin="round" fill="none" opacity="0.9" />
-            <path d="M20 34l7 7 13-14" stroke="#38BDF8" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <FinixLogoMark size={34} shieldColor="white" />
           <div>
             <div className="text-base font-bold text-white" style={{ fontFamily: 'var(--font-heading)', letterSpacing: '-0.02em' }}>Finix</div>
             <div className="text-[10px] text-white opacity-35 uppercase tracking-widest" style={{ fontFamily: 'var(--font-body)' }}>Operations Console</div>
@@ -103,7 +100,7 @@ function AdminLoginInner() {
         </div>
 
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.15)', fontFamily: 'var(--font-body)' }}>
-          © 2026 Finix · Virtual Galaxy Infotech Pvt. Ltd.
+          © 2026 Finix · Virtual Galaxy Infotech Limited
         </p>
       </div>
 
@@ -123,11 +120,7 @@ function AdminLoginInner() {
 
           {/* Mobile logo */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <svg width="24" height="27" viewBox="0 0 60 68" fill="none">
-              <path d="M30 2L4 14v20c0 16 11 30 26 34 15-4 26-18 26-34V14L30 2z"
-                stroke="white" strokeWidth="3.5" strokeLinejoin="round" fill="none" opacity="0.9" />
-              <path d="M20 34l7 7 13-14" stroke="#38BDF8" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <FinixLogoMark size={26} shieldColor="white" />
             <span className="font-bold text-white" style={{ fontFamily: 'var(--font-heading)' }}>Finix</span>
           </div>
 
@@ -220,7 +213,7 @@ function AdminLoginInner() {
           </div>
 
           <p className="text-xs text-center mt-5" style={{ color: 'rgba(255,255,255,0.15)', fontFamily: 'var(--font-body)' }}>
-            Authorized personnel only · Virtual Galaxy Infotech
+            Authorized personnel only · Virtual Galaxy Infotech Limited
           </p>
         </div>
       </div>

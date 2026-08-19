@@ -86,6 +86,20 @@ async def agent_startup():
     await _init_system_state()
     await release_batch_lock()
     await cleanup_stuck_calls()
+    # Reconcile the phone-pool concurrency counter. phone_numbers.active_calls is
+    # +1 on dial and -1 in the dispatcher's finally; a crash/restart mid-call leaks
+    # it permanently and can wedge the pool (active_calls stays >= capacity → the
+    # number is never selected again). cleanup_stuck_calls() just reset any stale
+    # 'Calling' rows, so on this fresh process nothing is truly dialing — clear any
+    # leaked counter back to 0.
+    try:
+        reset = await _state.db_pool.execute(
+            "UPDATE phone_numbers SET active_calls = 0, updated_at = NOW() WHERE active_calls <> 0"
+        )
+        if reset and not str(reset).endswith(" 0"):
+            logger.warning("Startup reconcile: cleared leaked phone_numbers.active_calls (%s)", reset)
+    except Exception as _e:
+        logger.warning("Startup active_calls reconcile failed: %s", _e)
 
     _scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
@@ -244,8 +258,10 @@ async def wait_for_call_completion(call_id: str, room_name: str, timeout: int = 
         if elapsed >= 15 and elapsed % 9 == 0:
             try:
                 lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-                rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
-                await lk.aclose()
+                try:
+                    rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
+                finally:
+                    await lk.aclose()  # always close, even if list_rooms raised (no aiohttp session leak)
                 if not rooms.rooms:
                     # Room gone — wait up to 60s for a late transcript, then classify
                     # by whether the agent was ever in the room.

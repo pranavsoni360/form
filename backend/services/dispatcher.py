@@ -105,7 +105,9 @@ def _to_e164(phone: str) -> str:
         return f"+91{d[-10:]}"
     if len(d) == 12 and d.startswith("91"):
         return f"+{d}"
-    return f"+{d}"
+    # Un-normalizable (e.g. a 13-15 digit blob from a corrupted Excel cell). Do NOT
+    # dial a "+<garbage>" number — return None so the caller marks it Invalid Phone.
+    return None
 
 
 # ============================================================================
@@ -523,10 +525,10 @@ class Dispatcher:
             # the dialer's own normalisation (_to_e164) and count digits, so the
             # "Invalid Phone" verdict matches what would actually be dialed.
             phone_digits = "".join(ch for ch in (phone or "") if ch.isdigit())
-            if len(phone_digits) < 10:
+            if len(phone_digits) < 10 or _to_e164(phone) is None:
                 logger.warning(
-                    "Call %s marked Invalid Phone: customer=%r phone=%r (digits=%d)",
-                    call_uuid, name, phone, len(phone_digits),
+                    "Call %s marked Invalid Phone: customer=%r phone=%r (digits=%d, e164=%r)",
+                    call_uuid, name, phone, len(phone_digits), _to_e164(phone),
                 )
                 await self.db_pool.execute(
                     """UPDATE agent_calls
@@ -535,7 +537,7 @@ class Dispatcher:
                               retry_count = $1, updated_at = $2
                         WHERE id = $3""",
                     self.max_retries + 1, self.now_ist(), call_uuid,
-                    f"Phone had {len(phone_digits)} digits (need ≥10): {phone!r}",
+                    f"Un-dialable phone (digits={len(phone_digits)}): {phone!r}",
                 )
                 await self._bump("failed")
                 await self._bump("completed")
@@ -593,6 +595,19 @@ class Dispatcher:
                 )
                 await self._bump("failed")
                 await self._bump("completed")
+                return
+
+            # We may have parked in _wait_for_cooldown_and_retry for up to
+            # TRUNK_WAIT_DEADLINE_S waiting for a channel. Re-validate the exit
+            # gates before dialing so a parked call never dials past the calling
+            # window or after an emergency stop. Release the trunk and leave the
+            # call Pending so it dials in the next window.
+            if self._stopped or not self.is_within_calling_hours() or await self.is_emergency_stop_active():
+                logger.info(
+                    "Aborting call %s after trunk wait: window closed / stopped / emergency-stop",
+                    call_uuid,
+                )
+                await _release_trunk_to_db(self.db_pool, trunk, success=False)
                 return
 
             outcome_success = False

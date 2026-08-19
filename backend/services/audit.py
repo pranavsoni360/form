@@ -29,10 +29,11 @@ _JWT_SECRET = os.getenv("JWT_SECRET", "")
 # loopback webhooks, health probes, and the log-prune mutation. Everything else
 # that mutates (POST/PUT/PATCH/DELETE) is recorded.
 _ACTIVITY_DENY_PREFIXES = (
-    "/api/auth",
-    "/api/agent/transcript",
-    "/api/guarantor/",
-    "/api/send-campaign",
+    "/api/auth",              # covered by login_audit
+    "/api/realtime",          # high-frequency SSE token mints — noise
+    "/api/agent/transcript",  # loopback webhook
+    "/api/guarantor/",        # loopback webhook
+    "/api/send-campaign",     # loopback-gated campaign trigger
     "/api/ops/errors/cleanup",
     "/healthz",
     "/readyz",

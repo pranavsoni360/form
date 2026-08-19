@@ -35,6 +35,10 @@ pytz
 # Utilities
 phonenumbers
 
+# Audit geolocation — offline IP->geo reader (GeoLite2 / DB-IP .mmdb).
+# Pure reader, no network; geo is a no-op if GEOIP_DB_PATH is unset.
+maxminddb
+
 # Agent module (voice calling, batch processing, post-call analysis)
 # Without these the /api/agent/* routes are disabled at startup
 aiohttp

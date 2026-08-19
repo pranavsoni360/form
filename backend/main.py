@@ -175,6 +175,38 @@ async def restrict_internal_paths(request: Request, call_next):
     return await call_next(request)
 
 
+# ── Activity audit trail ────────────────────────────────────────────────────
+# Records every mutating request (POST/PUT/PATCH/DELETE) to activity_log with
+# actor (from JWT), action, endpoint, status, client IP + geolocation, and
+# duration. Auth/webhook/health paths are excluded (auth is in login_audit).
+# Best-effort: a logging failure never affects the response.
+from services import audit as _audit  # noqa: E402
+
+
+@app.middleware("http")
+async def activity_audit_middleware(request: Request, call_next):
+    if not _audit.should_log_activity(request.method, request.url.path):
+        return await call_next(request)
+    import time as _t
+    start = _t.monotonic()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        try:
+            await _audit.record_activity(
+                db_pool, request,
+                actor=_audit.decode_actor(request),
+                http_status=status,
+                duration_ms=int((_t.monotonic() - start) * 1000),
+                request_id=correlation_id_var.get(None),
+            )
+        except Exception:
+            pass
+
+
 # M5: ops router — /healthz, /readyz, /version (no auth).
 # Mounted BEFORE the global exception handler is defined so the router's
 # explicit JSON responses always reach the client.
@@ -1531,23 +1563,15 @@ async def root():
 # ============================================
 
 async def _record_login_audit(*, actor_type, actor_id, username, role, success,
-                              jti=None, bank_id=None, request=None, failure_reason=None):
-    """Best-effort login_audit write — never blocks or fails a login."""
-    try:
-        await db_pool.execute(
-            """INSERT INTO login_audit
-                   (event, actor_type, actor_id, username_tried, actor_username,
-                    actor_role, bank_id, success, jti, failure_reason,
-                    ip_address, user_agent)
-               VALUES ('login_success',$1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10)""",
-            actor_type, actor_id, username, role,
-            uuid.UUID(bank_id) if bank_id else None,
-            success, jti, failure_reason,
-            (request.client.host if request and request.client else None),
-            (request.headers.get("user-agent") if request else None),
-        )
-    except Exception as e:
-        logger.warning("login_audit write failed for %s: %s", username, e)
+                              jti=None, bank_id=None, request=None, failure_reason=None,
+                              event="login_success"):
+    """Best-effort login_audit write (IP + geolocation + device fingerprint) —
+    never blocks or fails a login. `event` ∈ {login_success, login_failure, logout}."""
+    await _audit.record_login_event(
+        db_pool, event=event, actor_type=actor_type, actor_id=actor_id,
+        username=username, role=role, success=success, request=request,
+        jti=jti, bank_id=bank_id, failure_reason=failure_reason,
+    )
 
 
 @app.post("/api/auth/admin-login")
@@ -1557,6 +1581,11 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
         attempts, locked = await _record_failed_login(payload.email)
+        await _record_login_audit(actor_type="platform_admin", actor_id=(row["id"] if row else None),
+                                  username=payload.email, role=(row["role"] if row else None),
+                                  success=False, event="login_failure",
+                                  failure_reason=("account_locked" if locked else "invalid_credentials"),
+                                  request=request)
         if locked:
             raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
@@ -1564,6 +1593,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
             raise HTTPException(401, f"Invalid username or password. {remaining} attempt{'s' if remaining != 1 else ''} remaining.")
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
+        await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                                  role=row["role"], success=False, event="login_failure",
+                                  failure_reason="account_deactivated", request=request)
         raise HTTPException(status_code=403, detail="Account deactivated")
     await _clear_failed_logins(payload.email)
     user_id = str(row["id"])
@@ -1590,6 +1622,12 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     row = await db_pool.fetchrow("SELECT * FROM bank_users WHERE username = $1", payload.username)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
         attempts, locked = await _record_failed_login(payload.username)
+        await _record_login_audit(actor_type="bank_user", actor_id=(row["id"] if row else None),
+                                  username=payload.username, role=(row["role"] if row else None),
+                                  bank_id=(str(row["bank_id"]) if row and row["bank_id"] else None),
+                                  success=False, event="login_failure",
+                                  failure_reason=("account_locked" if locked else "invalid_credentials"),
+                                  request=request)
         if locked:
             raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
@@ -1597,6 +1635,10 @@ async def auth_bank_login(payload: BankLogin, request: Request):
             raise HTTPException(401, f"Invalid username or password. {remaining} attempt{'s' if remaining != 1 else ''} remaining.")
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
+        await _record_login_audit(actor_type="bank_user", actor_id=row["id"], username=payload.username,
+                                  role=row["role"], bank_id=str(row["bank_id"]) if row["bank_id"] else None,
+                                  success=False, event="login_failure",
+                                  failure_reason="account_deactivated", request=request)
         raise HTTPException(status_code=403, detail="Account deactivated")
     bank = await db_pool.fetchrow("SELECT * FROM banks WHERE id = $1 AND status = 'active'", row["bank_id"])
     if not bank:
@@ -1689,6 +1731,12 @@ async def auth_logout(request: Request):
         try:
             payload = jwt.decode(refresh_jwt, JWT_SECRET, algorithms=["HS256"])
             await db_pool.execute("DELETE FROM refresh_tokens WHERE jti = $1", payload.get("jti"))
+            await _record_login_audit(
+                actor_type=("platform_admin" if payload.get("user_type") == "admin" else "bank_user"),
+                actor_id=payload.get("user_id") or payload.get("sub"),
+                username=payload.get("email") or payload.get("username") or "",
+                role=payload.get("role"), bank_id=payload.get("bank_id"),
+                success=True, event="logout", jti=payload.get("jti"), request=request)
         except Exception:
             pass
     resp = JSONResponse({"status": "logged_out"})
@@ -1748,6 +1796,97 @@ async def auth_me(credentials: HTTPAuthorizationCredentials = Depends(security))
             "user_type": "admin",
             "is_active": row["is_active"]
         }
+
+
+# ── Audit trail read API (platform admin) ───────────────────────────────────
+def _parse_geo(v):
+    if not v:
+        return None
+    if isinstance(v, (dict, list)):
+        return v
+    try:
+        return json.loads(v)
+    except (ValueError, TypeError):
+        return None
+
+
+@app.get("/api/admin/audit/activity")
+async def admin_audit_activity(
+    _admin=Depends(get_current_admin),
+    bank_id: Optional[str] = None,
+    actor_type: Optional[str] = None,
+    result: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 50, offset: int = 0,
+):
+    """Activity-log feed: every mutating action with actor, endpoint, status,
+    client IP + geolocation, and duration. Newest first. Platform-admin only."""
+    limit = max(1, min(limit, 200)); offset = max(0, offset)
+    conds, params = [], []
+    if bank_id:
+        params.append(uuid.UUID(bank_id)); conds.append(f"bank_id = ${len(params)}")
+    if actor_type:
+        params.append(actor_type); conds.append(f"actor_type = ${len(params)}")
+    if result:
+        params.append(result); conds.append(f"result = ${len(params)}")
+    if q:
+        params.append(f"%{q}%")
+        conds.append(f"(endpoint ILIKE ${len(params)} OR actor_username ILIKE ${len(params)})")
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    total = await db_pool.fetchval(f"SELECT count(*) FROM activity_log {where}", *params)
+    rows = await db_pool.fetch(
+        f"""SELECT id, created_at, actor_type, actor_username, actor_role,
+                   bank_id, action, module, endpoint, http_method, http_status,
+                   result, ip_address::text AS ip_address, location, duration_ms
+              FROM activity_log {where}
+             ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}""", *params)
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["id"] = str(d["id"]); d["bank_id"] = str(d["bank_id"]) if d["bank_id"] else None
+        d["location"] = _parse_geo(d["location"])
+        items.append(d)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/api/admin/audit/logins")
+async def admin_audit_logins(
+    _admin=Depends(get_current_admin),
+    bank_id: Optional[str] = None,
+    event: Optional[str] = None,
+    success: Optional[bool] = None,
+    q: Optional[str] = None,
+    limit: int = 50, offset: int = 0,
+):
+    """Login-audit feed: login success/failure/logout with actor, IP,
+    geolocation, and device fingerprint. Newest first. Platform-admin only."""
+    limit = max(1, min(limit, 200)); offset = max(0, offset)
+    conds, params = [], []
+    if bank_id:
+        params.append(uuid.UUID(bank_id)); conds.append(f"bank_id = ${len(params)}")
+    if event:
+        params.append(event); conds.append(f"event = ${len(params)}")
+    if success is not None:
+        params.append(success); conds.append(f"success = ${len(params)}")
+    if q:
+        params.append(f"%{q}%")
+        conds.append(f"(username_tried ILIKE ${len(params)} OR actor_username ILIKE ${len(params)})")
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    total = await db_pool.fetchval(f"SELECT count(*) FROM login_audit {where}", *params)
+    rows = await db_pool.fetch(
+        f"""SELECT id, created_at, event, actor_type, actor_username, username_tried,
+                   actor_role, bank_id, success, failure_reason,
+                   ip_address::text AS ip_address, location, device_fingerprint
+              FROM login_audit {where}
+             ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}""", *params)
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["id"] = str(d["id"]); d["bank_id"] = str(d["bank_id"]) if d["bank_id"] else None
+        d["location"] = _parse_geo(d["location"])
+        items.append(d)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
 
 # Keep old admin login for backward compatibility
 @app.post("/api/admin/login")

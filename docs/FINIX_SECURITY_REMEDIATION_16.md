@@ -81,6 +81,48 @@ merge, so this promotion was #16 code only. **#16 is COMPLETE on QA + PROD.**
 
 ---
 
+## V2 production-hardening pass (2026-08-19, from FINIX_V2 master plan) — QA only
+
+Worked the user-selected V2 items one by one. **All QA; prod held pending sign-off.**
+
+- **§16 Frontend security headers — ✅ SHIPPED QA (commit da1c1e2, browser-verified).**
+  `frontend/next.config.js` `async headers()`: HSTS (2y, includeSubDomains),
+  X-Frame-Options SAMEORIGIN, X-Content-Type-Options nosniff, Referrer-Policy
+  strict-origin-when-cross-origin, Permissions-Policy (camera/mic/geo off), and a
+  tested CSP (`'unsafe-inline'`+`'unsafe-eval'` retained for Next hydration;
+  connect-src allows self + postalpincode + sentry). Verified: all headers present,
+  **zero CSP violations** on login + admin dashboard, all API/SSE 200.
+- **§11 DB least-privilege — ✅ SHIPPED QA (commit d28bda6, connection-tested).**
+  App connects as a scoped DML role instead of `los_admin` superuser; migrations
+  use a separate admin DSN (`MIGRATION_DATABASE_URL`). `db_migrations.py` bootstrap
+  now skips `CREATE _migrations` when the tracker already exists (so the scoped role
+  never hits "permission denied for schema public" at startup). Verified: app runs
+  as `los_app_qa`, **0 permission errors**; migrations still apply as admin.
+- **§50 Migration safety — ✅ SHIPPED QA (verified).** Replaced the silent
+  `psql < file || true` deploy loops (deploy.sh + deploy-qa.sh) with the tracked
+  `db_migrations.py` runner: records to `_migrations`, skips applied, **fails the
+  deploy loudly** on a bad migration (services keep old build). Added a `__main__`
+  CLI to the runner. Verified: admin exit 0 (42 applied/skipped), scoped role exit 0.
+- **§26 Webhook HMAC/replay — ⏸️ DEFERRED (assessed premature).** The only webhooks
+  are internal loopback ingest (transcript/error), already gated by
+  `restrict_internal_paths` + loopback bind; no external provider posts to us today.
+  HMAC+timestamp+nonce replay hardening is call-critical/risky to retrofit now →
+  folded into §37 when an external provider integration actually lands. No code.
+- **§42 Retention purge — ✅ SHIPPED QA (commit ca74bc4, dry-run + live tested).**
+  New `backend/services/retention.py` + daily scheduler job (03:30 IST, in
+  los-backend). Per bank with `auto_purge_enabled`: redacts `agent_calls`
+  recording_url/transcript past `call_recording_retention_days`, deletes
+  `application_documents` past `document_retention_days`. **DRY-RUN by default** —
+  reports what would purge and deletes nothing unless `RETENTION_PURGE_LIVE=true`.
+  Tested on QA: dry-run detected 135 eligible recordings, deleted nothing (139→139);
+  live redacted an isolated throwaway row (recording_url+transcript→NULL) while an
+  unconfigured bank stayed untouched (**tenant isolation verified**). `bank_retention_config`
+  has 0 configured rows today, so the live job is a no-op until a bank opts in.
+
+**🔴 Prod promotion of this V2 pass (and all held audit fixes) awaits explicit sign-off.**
+
+---
+
 ## The core vulnerability
 
 `get_current_bank_user` (`backend/agent/state.py:375`) uses

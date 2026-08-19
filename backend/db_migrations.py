@@ -275,3 +275,44 @@ async def run_migrations(
             # Lock auto-releases when the conn is returned to the pool, but
             # being explicit makes ordering clear if someone refactors.
             await conn.execute("SELECT pg_advisory_unlock($1)", ADVISORY_LOCK_KEY)
+
+
+# ── Standalone CLI ──────────────────────────────────────────────────────────
+# Run as an explicit deploy step BEFORE restarting services:
+#   DATABASE_URL=... python db_migrations.py
+# Exits 0 on success, non-zero if any migration fails — so the deploy aborts and
+# services keep running the old code instead of restarting onto a broken schema.
+# This replaces the old `psql < file 2>/dev/null || true` loop, which hid failures.
+if __name__ == "__main__":
+    import asyncio
+    import os
+    import sys
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+    async def _cli() -> None:
+        dsn = os.getenv("DATABASE_URL")
+        if not dsn:
+            raise SystemExit("db_migrations: DATABASE_URL not set")
+        pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        try:
+            summary = await run_migrations(pool)
+        finally:
+            await pool.close()
+        if summary.get("skipped_lock"):
+            print("db_migrations: another process holds the lock; nothing applied here.")
+        applied = summary.get("applied", [])
+        print(
+            f"db_migrations: applied={len(applied)} "
+            f"already_applied={len(summary.get('skipped_already_applied', []))}"
+        )
+        for f in applied:
+            print(f"  + {f}")
+
+    try:
+        asyncio.run(_cli())
+    except SystemExit:
+        raise
+    except Exception as exc:  # a migration failed → non-zero exit → deploy aborts
+        print(f"db_migrations: FAILED — {type(exc).__name__}: {exc}", file=sys.stderr)
+        sys.exit(1)

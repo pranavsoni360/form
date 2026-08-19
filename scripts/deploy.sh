@@ -87,11 +87,10 @@ done
 
 do_migrate() {
     log "═══ Running DB migrations only ═══"
-    for f in "${INSTALL_DIR}"/database/migration*.sql; do
-        [[ -f "$f" ]] || continue
-        log "Applying $(basename "$f")..."
-        docker exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" < "$f" 2>/dev/null || true
-    done
+    # Tracked runner (records to _migrations, skips applied, fails loudly). set -e
+    # aborts on a non-zero exit, so a broken migration stops here (plan §50).
+    export DATABASE_URL="$(grep -E '^DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
+    ( cd "${INSTALL_DIR}/backend" && "${INSTALL_DIR}/backend/venv/bin/python" db_migrations.py )
     log "═══ Migrations complete ═══"
     exit 0
 }
@@ -132,12 +131,16 @@ do_update() {
     log "Installing Python dependencies..."
     "${INSTALL_DIR}/backend/venv/bin/pip" install -q -r "${INSTALL_DIR}/backend/requirements.txt"
 
-    # 4. Run DB migrations
-    for f in "${INSTALL_DIR}"/database/migration*.sql; do
-        [[ -f "$f" ]] || continue
-        log "Applying $(basename "$f")..."
-        docker exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" < "$f" 2>/dev/null || true
-    done
+    # 4. Run DB migrations via the tracked runner (db_migrations.py): records to
+    #    _migrations, skips already-applied, and FAILS LOUDLY (non-zero exit) so a
+    #    broken migration aborts the deploy instead of being silently swallowed by
+    #    the old `psql < file || true` loop (plan §50).
+    log "Running DB migrations..."
+    export DATABASE_URL="$(grep -E '^DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
+    if ! ( cd "${INSTALL_DIR}/backend" && "${INSTALL_DIR}/backend/venv/bin/python" db_migrations.py ); then
+        log "❌ DB migrations FAILED — aborting deploy (services not restarted)"
+        exit 1
+    fi
 
     # 5. Frontend rebuild
     if have_cmd npm; then
@@ -291,12 +294,11 @@ log "── Phase 4: Database Schema ──"
 # Run base schema
 docker exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" < "${INSTALL_DIR}/database/schema.sql" 2>/dev/null || true
 
-# Run all migrations
-for f in "${INSTALL_DIR}"/database/migration*.sql; do
-    [[ -f "$f" ]] || continue
-    log "Applying $(basename "$f")..."
-    docker exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" < "$f" 2>/dev/null || true
-done
+# Run all migrations via the tracked runner (records to _migrations, fails loudly
+# so a broken migration aborts the fresh setup; plan §50).
+log "Running DB migrations..."
+export DATABASE_URL="$(grep -E '^DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
+( cd "${INSTALL_DIR}/backend" && "${INSTALL_DIR}/backend/venv/bin/python" db_migrations.py )
 
 # Seed admin user
 docker exec "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" -c \

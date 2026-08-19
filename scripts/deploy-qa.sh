@@ -27,11 +27,16 @@ echo "deployed commit: $(git rev-parse --short HEAD)"
 echo "── 2. python deps (shared venv; installs only new) ──"
 "$PROD/backend/venv/bin/pip" install -q -r "$QA/backend/requirements.txt" || true
 
-echo "── 3. migrate QA database ($QADB) ──"
-for f in "$QA"/database/migration*.sql; do
-  [ -f "$f" ] || continue
-  docker exec -i "$PG" psql -U "$PGUSER" -d "$QADB" < "$f" >/dev/null 2>&1 || true
-done
+echo "── 3. migrate QA database ($QADB) via tracked runner ──"
+# db_migrations.py records to _migrations, skips already-applied, and FAILS LOUDLY
+# (non-zero exit) — replacing the old `psql < file || true` loop that silently
+# swallowed migration errors (plan §50). A failed migration aborts the deploy so
+# services keep running the old code instead of restarting onto a broken schema.
+export DATABASE_URL="$(grep -E '^DATABASE_URL=' "$QA/backend/.env.qa" | head -1 | cut -d= -f2-)"
+if ! ( cd "$QA/backend" && "$PROD/backend/venv/bin/python" db_migrations.py ); then
+  echo "❌ QA migrations FAILED — aborting deploy, services NOT restarted (old build still serving)"
+  exit 1
+fi
 
 echo "── 4. rebuild QA frontend ──"
 # Build BEFORE restarting anything. If it fails, abort the deploy — the old

@@ -35,6 +35,9 @@ import {
 } from "@/components/finix";
 import {
   listUsers,
+  updateUser,
+  listActivity,
+  type ActivityEntry,
   createUser,
   suspendUser,
   restoreUser,
@@ -88,6 +91,9 @@ export default function UsersPage() {
   const [create, setCreate] = React.useState(false);
   const [suspendTarget, setSuspendTarget] = React.useState<BankUser | null>(null);
   const [permTarget, setPermTarget] = React.useState<BankUser | null>(null);
+  const [roleTarget, setRoleTarget] = React.useState<BankUser | null>(null);
+  const [branchTarget, setBranchTarget] = React.useState<BankUser | null>(null);
+  const [activityTarget, setActivityTarget] = React.useState<BankUser | null>(null);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -130,10 +136,10 @@ export default function UsersPage() {
       ];
     }
     return [
-      { label: "Change role", onClick: () => {} },
-      { label: "Change branch", onClick: () => {} },
+      { label: "Change role", onClick: () => setRoleTarget(u) },
+      { label: "Change branch", onClick: () => setBranchTarget(u) },
       { label: "Edit permissions", onClick: () => setPermTarget(u) },
-      { label: "View activity", onClick: () => {} },
+      { label: "View activity", onClick: () => setActivityTarget(u) },
       { label: "Suspend user", onClick: () => setSuspendTarget(u), warn: true },
       { label: "Delete user", onClick: () => act(deleteUser(u.id)), destructive: true },
     ];
@@ -328,6 +334,26 @@ export default function UsersPage() {
         <CreateUserModal
           onClose={() => setCreate(false)}
           onCreated={() => load()}
+        />
+      )}
+      {roleTarget && (
+        <ChangeRoleModal
+          user={roleTarget}
+          onClose={() => setRoleTarget(null)}
+          onDone={() => { setRoleTarget(null); load(); }}
+        />
+      )}
+      {branchTarget && (
+        <ChangeBranchModal
+          user={branchTarget}
+          onClose={() => setBranchTarget(null)}
+          onDone={() => { setBranchTarget(null); load(); }}
+        />
+      )}
+      {activityTarget && (
+        <UserActivityModal
+          user={activityTarget}
+          onClose={() => setActivityTarget(null)}
         />
       )}
       {permTarget && (
@@ -797,6 +823,184 @@ function PermissionsModal({
         <Button variant="primary" onClick={save} disabled={busy || !rows}>
           {busy ? "Saving…" : "Save permissions"}
         </Button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Change role ──────────────────────────────────────────────────────────────
+// Changing role RE-BASES permissions: the backend stores per-user deltas against
+// the role default, so a user moved from Officer to Supervisor picks up the
+// supervisor defaults automatically. Deliberate per-person exceptions survive
+// (they are deltas, not a snapshot), which is why this warns rather than
+// silently reshaping someone's access.
+function ChangeRoleModal({ user, onClose, onDone }: { user: BankUser; onClose: () => void; onDone: () => void }) {
+  const [role, setRole] = React.useState<string>(user.role);
+  const [customLabel, setCustomLabel] = React.useState(user.custom_role_label ?? "");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const changed = role !== user.role || (role === "custom" && customLabel !== (user.custom_role_label ?? ""));
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await updateUser(user.id, {
+        role: role as any,
+        ...(role === "custom" ? { custom_role_label: customLabel.trim() } : {}),
+      });
+      onDone();
+    } catch (e: any) {
+      setErr(e?.message || "Could not change the role.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} width={460}>
+      <OverlayHeader
+        title="Change role"
+        subtitle={`${user.full_name} is currently ${ROLE_LABEL[user.role] ?? user.role}.`}
+        onClose={onClose}
+      />
+      <div className="flex flex-col gap-3 p-5">
+        <div className="flex flex-col gap-1.5">
+          {ROLE_OPTIONS.map((o, i) => {
+            const active = role === o.value && (!o.custom || customLabel === o.label);
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => { setRole(o.value); if (o.custom) setCustomLabel(o.label); }}
+                className="flex items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[13px]"
+                style={
+                  active
+                    ? { background: "var(--fx-accent-tint)", boxShadow: "inset 0 0 0 1px var(--fx-accent)", color: "var(--fx-text)" }
+                    : { background: "var(--fx-surface2)", color: "var(--fx-text2)" }
+                }
+              >
+                {o.label}
+                {o.custom && <Pill tone="neutral" dot={false}>custom</Pill>}
+              </button>
+            );
+          })}
+        </div>
+        {changed && (
+          <p className="rounded-[10px] px-3 py-2 text-[11px]" style={{ background: "var(--fx-amber-tint)", color: "var(--fx-amber)" }}>
+            Permissions re-base to the new role default. Rights granted or removed for this person
+            specifically are kept — review them under Edit permissions afterwards.
+          </p>
+        )}
+        {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+        <div className="mt-1 flex justify-end gap-2">
+          <Button variant="quiet" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || !changed}>
+            {busy ? "Saving…" : "Change role"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Change branch ────────────────────────────────────────────────────────────
+function ChangeBranchModal({ user, onClose, onDone }: { user: BankUser; onClose: () => void; onDone: () => void }) {
+  const [branch, setBranch] = React.useState(user.branch ?? "");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const changed = branch.trim() !== (user.branch ?? "");
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await updateUser(user.id, { branch: branch.trim() });
+      onDone();
+    } catch (e: any) {
+      setErr(e?.message || "Could not change the branch.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} width={420}>
+      <OverlayHeader
+        title="Change branch"
+        subtitle={`${user.full_name} · currently ${user.branch || "no branch set"}.`}
+        onClose={onClose}
+      />
+      <div className="flex flex-col gap-3 p-5">
+        <Field label="Branch" note="Branch scopes which applications and statistics this user sees.">
+          <input
+            className={inputCls}
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            placeholder="Camp road"
+          />
+        </Field>
+        {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+        <div className="mt-1 flex justify-end gap-2">
+          <Button variant="quiet" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || !changed}>
+            {busy ? "Saving…" : "Change branch"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Per-user activity ────────────────────────────────────────────────────────
+// Uses the /activity endpoint's target_user_id filter, so this is that one
+// user's audit trail rather than the whole bank's.
+function UserActivityModal({ user, onClose }: { user: BankUser; onClose: () => void }) {
+  const [entries, setEntries] = React.useState<ActivityEntry[] | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    listActivity(user.id, 100)
+      .then((r) => setEntries(r.entries))
+      .catch((e: any) => setErr(e?.message || "Could not load activity."));
+  }, [user.id]);
+
+  return (
+    <Modal open onClose={onClose} width={560}>
+      <OverlayHeader
+        title="Activity"
+        subtitle={`Everything recorded against ${user.full_name}.`}
+        onClose={onClose}
+      />
+      <div className="max-h-[60vh] overflow-y-auto p-5">
+        {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+        {!entries && !err && <p className="text-[12px] text-fx-text3">Loading activity…</p>}
+        {entries && entries.length === 0 && (
+          <p className="text-[12px] text-fx-text3">Nothing recorded for this user yet.</p>
+        )}
+        {entries && entries.length > 0 && (
+          <div className="space-y-0">
+            {entries.map((e) => (
+              <div key={e.id} className="border-b border-fx-border py-2.5 last:border-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[13px] text-fx-text">{e.action.replace(/_/g, " ")}</span>
+                  <span className="fx-mono text-[10px] text-fx-text3">
+                    {new Date(e.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                  </span>
+                </div>
+                {e.actor_name && <div className="text-[11px] text-fx-text3">by {e.actor_name}</div>}
+                {e.detail && Object.keys(e.detail).length > 0 && (
+                  <div className="fx-mono mt-1 break-all text-[10px] text-fx-text3">
+                    {JSON.stringify(e.detail)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex justify-end border-t border-fx-border p-4">
+        <Button variant="primary" onClick={onClose}>Close</Button>
       </div>
     </Modal>
   );

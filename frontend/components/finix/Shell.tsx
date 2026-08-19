@@ -13,11 +13,14 @@ import { Sidebar, type FinixNavItem, type SidebarIdentity, type SidebarAction } 
 export function FinixShell({
   nav,
   identity,
+  identityFooter,
   action,
   children,
 }: {
   nav: FinixNavItem[];
   identity: SidebarIdentity;
+  /** Rendered in the identity card — the shells pass the idle session timer. */
+  identityFooter?: React.ReactNode;
   action?: SidebarAction;
   children: React.ReactNode;
 }) {
@@ -29,6 +32,7 @@ export function FinixShell({
           <Sidebar
             nav={nav}
             identity={identity}
+            identityFooter={identityFooter}
             action={action}
             collapsed={collapsed}
             onToggleCollapse={() => setCollapsed((v) => !v)}

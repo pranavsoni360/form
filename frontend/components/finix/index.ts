@@ -57,4 +57,9 @@ export {
   type SidebarAction,
 } from "./Sidebar";
 export { FinixShell } from "./Shell";
+export {
+  SessionTimer,
+  STAFF_IDLE_LOGOUT_MS,
+  STAFF_IDLE_WARNING_MS,
+} from "./SessionTimer";
 export { Toolbar, PeriodChip, Breadcrumb, PageTitle, FilterPills } from "./Toolbar";

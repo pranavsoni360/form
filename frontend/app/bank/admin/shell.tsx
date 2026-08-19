@@ -8,7 +8,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { getAccessToken, logout } from "@/lib/auth";
 import { getMe } from "@/lib/api/bank";
-import { FinixShell, type FinixNavItem, type SidebarAction } from "@/components/finix";
+import { FinixShell, SessionTimer, type FinixNavItem, type SidebarAction } from "@/components/finix";
 
 const NAV: FinixNavItem[] = [
   { href: "/bank/admin/users", label: "Users", glyph: "◎" },
@@ -77,6 +77,14 @@ export function BankAdminShell({
         tenant: me?.bank_code || me?.bank_name || "—",
         role: "Bank admin",
       }}
+      identityFooter={
+        <SessionTimer
+          onLogout={() => {
+            logout("bank");
+            router.replace("/bank/login");
+          }}
+        />
+      }
       action={action}
     >
       {children}

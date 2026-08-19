@@ -27,6 +27,9 @@ import {
   FormSentMark,
   callStatusMeta,
   Button,
+  Modal,
+  OverlayHeader,
+  Field,
   EmptyState,
   LoadingState,
   ErrorState,
@@ -48,6 +51,7 @@ import {
   type UsageSummary,
   type BranchStat,
   type UsageCall,
+  createChangeRequest,
 } from "@/lib/api/bankAdmin";
 
 const OUTCOME_TONE: Record<string, Segment["tone"] | "neutral"> = {
@@ -60,6 +64,7 @@ const OUTCOME_TONE: Record<string, Segment["tone"] | "neutral"> = {
 };
 
 export default function UsagePage() {
+  const [quotaOpen, setQuotaOpen] = React.useState(false);
   const [quota, setQuota] = React.useState<QuotaInfo | null>(null);
   const [summary, setSummary] = React.useState<UsageSummary | null>(null);
   const [branches, setBranches] = React.useState<BranchStat[]>([]);
@@ -115,7 +120,7 @@ export default function UsagePage() {
 
   // Sidebar action flips to a red "Request quota increase" when exceeded.
   const action: SidebarAction = exceeded
-    ? { title: "Request quota increase", subtitle: "Calling is halted", tone: "red", onClick: () => {} }
+    ? { title: "Request quota increase", subtitle: "Calling is halted", tone: "red", onClick: () => setQuotaOpen(true) }
     : { title: "Export CSV", subtitle: "This period's calls", onClick: doExport };
 
   const outcomeSegments: Segment[] = (summary?.outcomes || []).map((o) => {
@@ -243,6 +248,13 @@ export default function UsagePage() {
           </Card>
         </>
       )}
+      {quotaOpen && (
+        <QuotaRequestModal
+          consumed={quota?.consumed ?? 0}
+          quotaMinutes={quota?.quota ?? 0}
+          onClose={() => setQuotaOpen(false)}
+        />
+      )}
     </BankAdminShell>
   );
 }
@@ -326,5 +338,96 @@ function QuotaExceededBanner({ quota }: { quota: QuotaInfo }) {
         <Button variant="danger">Request quota increase</Button>
       </div>
     </div>
+  );
+}
+
+// ── Request a quota increase ─────────────────────────────────────────────────
+// Seat cap, minute quota and retention are set by Virtual Galaxy under the
+// bank's contract, so this cannot be self-served. It files a change request
+// against the named item; VG applies it. The dialog says so plainly rather than
+// implying the change takes effect on save.
+function QuotaRequestModal({
+  consumed,
+  quotaMinutes,
+  onClose,
+}: {
+  consumed: number;
+  quotaMinutes: number;
+  onClose: () => void;
+}) {
+  const [message, setMessage] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await createChangeRequest(
+        "minute_quota",
+        message.trim() ||
+          `Quota exhausted: ${consumed} of ${quotaMinutes} minutes consumed. Requesting an increase.`,
+      );
+      setSent(true);
+    } catch (e: any) {
+      setErr(e?.message || "Could not file the request.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} width={460}>
+      <OverlayHeader
+        title="Request quota increase"
+        subtitle="Virtual Galaxy sets the minute quota under your contract, so this is a request — not an immediate change."
+        onClose={onClose}
+      />
+      {sent ? (
+        <div className="p-5">
+          <div
+            className="rounded-[14px] p-4"
+            style={{ background: "var(--fx-green-tint)", boxShadow: "inset 0 0 0 1px var(--fx-green)" }}
+          >
+            <div className="text-[13px] font-medium" style={{ color: "var(--fx-green)" }}>
+              ✓ Request filed
+            </div>
+            <p className="mt-1 text-[12px] text-fx-text2">
+              Virtual Galaxy has been notified. Calling stays halted until the quota is raised.
+            </p>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button variant="primary" onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 p-5">
+          <div className="rounded-[10px] px-3 py-2.5 text-[12px]" style={{ background: "var(--fx-surface2)" }}>
+            <span className="text-fx-text2">Consumed</span>{" "}
+            <span className="fx-mono text-fx-text">{consumed.toLocaleString("en-IN")}</span>{" "}
+            <span className="text-fx-text3">of</span>{" "}
+            <span className="fx-mono text-fx-text">{quotaMinutes.toLocaleString("en-IN")}</span>{" "}
+            <span className="text-fx-text3">minutes</span>
+          </div>
+          <Field label="Message" hint="Optional. Include how many extra minutes you need and by when.">
+            <textarea
+              rows={4}
+              className="w-full rounded-[10px] bg-fx-surface2 px-3 py-2 text-[13px] text-fx-text outline-none placeholder:text-fx-text3 focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="We need another 50,000 minutes for the festive campaign starting 1 Sep."
+            />
+          </Field>
+          {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
+          <div className="mt-1 flex justify-end gap-2">
+            <Button variant="quiet" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" onClick={submit} disabled={busy}>
+              {busy ? "Filing…" : "File request"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }

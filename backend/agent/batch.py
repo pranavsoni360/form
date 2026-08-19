@@ -144,6 +144,14 @@ async def agent_startup():
         id="error_cleanup",
         replace_existing=True,
     )
+    # Data-retention purge (plan §42) — daily 03:30 IST. DRY-RUN (reports only)
+    # unless RETENTION_PURGE_LIVE=true, so real deletion is an explicit opt-in.
+    _scheduler.add_job(
+        _scheduled_retention_purge,
+        CronTrigger(hour=3, minute=30, timezone="Asia/Kolkata"),
+        id="retention_purge",
+        replace_existing=True,
+    )
     _scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     _scheduler.start()
     logger.info(f"Agent scheduler started (calls {CALL_START_HOUR}:00-{CALL_END_HOUR}:00 IST cron='{_hour_expr}', analytics every 2m, error_cleanup daily 03:00 IST, max_retries={MAX_RETRIES})")
@@ -177,6 +185,17 @@ async def _scheduled_batch_run():
 
 async def _scheduled_analytics():
     await process_analytics_batch()
+
+
+async def _scheduled_retention_purge():
+    """Daily per-bank data-retention purge (plan §42). DRY-RUN (reports only)
+    unless RETENTION_PURGE_LIVE=true — real deletion is an explicit env opt-in."""
+    try:
+        from services.retention import run_retention_purge
+        live = os.getenv("RETENTION_PURGE_LIVE", "false").lower() == "true"
+        await run_retention_purge(_state.db_pool, dry_run=not live)
+    except Exception as e:
+        logger.warning("Retention purge failed: %s", e)
 
 
 async def _scheduled_error_cleanup():

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { API_URL } from '@/lib/api';
 import { Loader2, AlertTriangle, Lock, Shield, CheckCircle2, Clock, Phone } from 'lucide-react';
+import { FinixLogoMark } from '@/components/shared/FinixLogo';
 
 export default function Home() {
   return <Suspense><OTPPage /></Suspense>;
@@ -115,10 +116,7 @@ function OTPPage() {
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded flex items-center justify-center font-bold text-sm flex-shrink-0"
-            style={{ background: '#fff', color: '#071A38', fontFamily: 'var(--font-heading)' }}>
-            F
-          </div>
+          <FinixLogoMark size={32} shieldColor="white" className="flex-shrink-0" />
           <div>
             <div className="text-sm font-bold text-white" style={{ fontFamily: 'var(--font-heading)' }}>Finix</div>
             <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Loan Application Portal</div>
@@ -148,7 +146,7 @@ function OTPPage() {
         </div>
 
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
-          © 2026 Finix · Powered by Virtual Galaxy Infotech
+          © 2026 Finix · Virtual Galaxy Infotech Limited
         </p>
       </div>
 
@@ -159,8 +157,7 @@ function OTPPage() {
 
           {/* Mobile logo */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-8 h-8 rounded flex items-center justify-center font-bold text-xs"
-              style={{ background: '#071A38', color: '#fff', fontFamily: 'var(--font-heading)' }}>F</div>
+            <FinixLogoMark size={26} shieldColor="#071A38" />
             <span className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Finix</span>
           </div>
 

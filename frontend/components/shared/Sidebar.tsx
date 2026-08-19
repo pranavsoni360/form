@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { FinixLogoMark } from "@/components/shared/FinixLogo";
 
 /* ─── Types (kept for MobileNav compatibility) ───────────────────────────── */
 
@@ -150,12 +151,7 @@ export function Sidebar({ className }: { className?: string }) {
     >
       {/* Logo */}
       <Link href="/ops" className="flex items-center gap-2.5 px-5 pt-5 pb-4" aria-label="Finix Ops">
-        <span
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-          style={{ background: "linear-gradient(135deg, #1D4ED8, #0EA5E9)", fontFamily: "var(--font-heading)" }}
-        >
-          F
-        </span>
+        <FinixLogoMark size={30} className="text-foreground flex-shrink-0" />
         <span
           className="font-bold text-foreground text-base"
           style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.02em" }}
@@ -243,12 +239,17 @@ export function Sidebar({ className }: { className?: string }) {
       </div>
 
       {/* Collapse */}
-      <div className="px-3 pb-4">
+      <div className="px-3 pb-2">
         <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none text-muted-foreground">
           <ChevronLeft className="w-3.5 h-3.5" />
           Collapse
         </div>
       </div>
+
+      {/* Copyright */}
+      <p className="px-6 pb-4 text-[10px] leading-tight text-muted-foreground select-none">
+        © 2026 Finix · Virtual Galaxy Infotech Limited
+      </p>
     </aside>
   );
 }

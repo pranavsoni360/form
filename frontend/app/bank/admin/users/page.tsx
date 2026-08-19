@@ -60,7 +60,7 @@ import {
   type CustomRole,
 } from "@/lib/api/bankAdmin";
 import { PERMISSION_MODULES, unmappedCodes } from "@/lib/utils/permissionModules";
-import { CustomRolesPanel } from "./CustomRolesPanel";
+import { UserSettingsPanel } from "./UserSettingsPanel";
 
 type FilterKey = "all" | "active" | "invited" | "suspended";
 
@@ -97,7 +97,7 @@ export default function UsersPage() {
   const [create, setCreate] = React.useState(false);
   const [suspendTarget, setSuspendTarget] = React.useState<BankUser | null>(null);
   const [permTarget, setPermTarget] = React.useState<BankUser | null>(null);
-  const [manageRoles, setManageRoles] = React.useState(false);
+  const [settings, setSettings] = React.useState(false);
   // Bumping this remounts the invite/create panels so their role pickers refetch
   // after a profile is added or edited — otherwise a freshly created role would
   // not appear until a full page reload.
@@ -253,6 +253,8 @@ export default function UsersPage() {
   return (
     <BankAdminShell
       action={{
+        // Kept as the sidebar CTA: inviting is the frequent action, and it now
+        // opens Create user already switched to invite mode.
         title: "Invite user",
         subtitle: seats ? `${seats.free} free seats` : undefined,
         onClick: () => setInvite(true),
@@ -267,7 +269,10 @@ export default function UsersPage() {
         }
         right={
           <>
-            <Button variant="quiet" onClick={() => setInvite(true)}>Invite user</Button>
+            {/* Settings replaces the old Invite button. Inviting is not lost —
+                it is a mode inside Create user, so both flows survive and the
+                role-management surface is no longer buried in a form. */}
+            <Button variant="quiet" onClick={() => setSettings(true)}>Settings</Button>
             <Button variant="primary" onClick={() => setCreate(true)}>Create user</Button>
           </>
         }
@@ -322,9 +327,9 @@ export default function UsersPage() {
         ) : rows.length === 0 ? (
           <EmptyState
             title="No users yet"
-            description="Invite your first officer or supervisor, or create an account directly."
+            description="Create your first officer or supervisor. You can send an invite email or set a temporary password."
             action={<Button variant="primary" onClick={() => setCreate(true)}>Create user</Button>}
-            secondary={<Button variant="quiet" onClick={() => setInvite(true)}>Invite user</Button>}
+            secondary={<Button variant="quiet" onClick={() => setSettings(true)}>Settings</Button>}
           />
         ) : (
           <Table columns={cols} rows={rows} rowKey={(r) => (r.kind === "user" ? r.u.id : `inv-${r.i.id}`)} />
@@ -340,7 +345,6 @@ export default function UsersPage() {
             setInvite(false);
             load();
           }}
-          onManageRoles={() => setManageRoles(true)}
         />
       )}
       {create && (
@@ -348,6 +352,7 @@ export default function UsersPage() {
           key={rolesVersion}
           onClose={() => setCreate(false)}
           onCreated={() => load()}
+          onSwitchToInvite={() => { setCreate(false); setInvite(true); }}
         />
       )}
       {roleTarget && (
@@ -370,10 +375,11 @@ export default function UsersPage() {
           onClose={() => setActivityTarget(null)}
         />
       )}
-      {manageRoles && (
-        <CustomRolesPanel
-          onClose={() => setManageRoles(false)}
+      {settings && (
+        <UserSettingsPanel
+          onClose={() => setSettings(false)}
           onChanged={() => setRolesVersion((v) => v + 1)}
+          seatCap={seats?.cap}
         />
       )}
       {permTarget && (
@@ -536,7 +542,7 @@ function PermissionSection({
   );
 }
 
-function InvitePanel({ freeSeats, onClose, onDone, onManageRoles }: { freeSeats: number; onClose: () => void; onDone: () => void; onManageRoles: () => void }) {
+function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClose: () => void; onDone: () => void }) {
   const [email, setEmail] = React.useState("");
   const [fullName, setFullName] = React.useState("");
   const [employeeId, setEmployeeId] = React.useState("");
@@ -641,17 +647,6 @@ function InvitePanel({ freeSeats, onClose, onDone, onManageRoles }: { freeSeats:
             <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Camp road" />
           </Field>
 
-          {/* Jump straight to defining a profile when none of the listed roles
-              fits — the mockup puts this immediately under the role list. */}
-          <button
-            type="button"
-            onClick={onManageRoles}
-            className="self-start text-[11px] transition-colors hover:underline"
-            style={{ color: "var(--fx-accent)" }}
-          >
-            Manage custom roles
-          </button>
-
           {/* Permissions — collapsed by default so the common "just use the role
               default" path stays a short form, but one click away when a specific
               right needs granting to this person. */}
@@ -673,7 +668,21 @@ const NAME_RE = /^[A-Za-z ]+$/;
 const USERNAME_RE = /^[a-z0-9_]{3,50}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateUserModal({
+  onClose,
+  onCreated,
+  onSwitchToInvite,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  /**
+   * Hands off to the invite flow. The two paths differ enough — invite collects
+   * an email and holds a seat for 7 days, direct creation mints a temp password
+   * shown once — that merging their forms would mean a field set where half is
+   * always irrelevant. A mode switch at the top keeps each form honest.
+   */
+  onSwitchToInvite: () => void;
+}) {
   const [role, setRole] = React.useState<"bank_officer" | "bank_supervisor">("bank_officer");
   const grid = usePermissionGrid(role);
   const [fullName, setFullName] = React.useState("");
@@ -716,7 +725,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <Modal open onClose={onClose} width={520}>
-      <OverlayHeader title="Create user" subtitle="Creates the account directly, no invite email." onClose={onClose} />
+      <OverlayHeader title="Create user" subtitle="Set a temporary password now, or send an invite email instead." onClose={onClose} />
       {created ? (
         <div className="p-5">
           <div className="rounded-[14px] p-4" style={{ background: "var(--fx-green-tint)", boxShadow: "inset 0 0 0 1px var(--fx-green)" }}>
@@ -755,6 +764,25 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
         </div>
       ) : (
         <div className="flex flex-col gap-3 p-5">
+          {/* How the account is handed over. Direct creation is the default
+              because it is this modal's own path; choosing invite swaps to the
+              panel that owns that flow rather than duplicating its fields. */}
+          <div className="flex items-center gap-1.5 rounded-[10px] p-1" style={{ background: "var(--fx-surface2)" }}>
+            <span
+              className="flex-1 rounded-[8px] px-3 py-1.5 text-center text-[12px]"
+              style={{ background: "var(--fx-surface)", color: "var(--fx-text)" }}
+            >
+              Temporary password
+            </span>
+            <button
+              type="button"
+              onClick={onSwitchToInvite}
+              className="fx-tap flex-1 rounded-[8px] px-3 py-1.5 text-center text-[12px] text-fx-text3 hover:text-fx-text2"
+            >
+              Send invite email
+            </button>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             {(["bank_officer", "bank_supervisor"] as const).map((r) => (
               <button

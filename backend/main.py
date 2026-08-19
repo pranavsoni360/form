@@ -2116,6 +2116,14 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
         app_dict["bank_code"] = bank["code"]
     return {"application": app_dict}
 
+def _rows_affected(result: str) -> int:
+    """Parse the row count from an asyncpg command tag like 'UPDATE 1'."""
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError, AttributeError):
+        return 0
+
+
 async def _record_approval(app_id, bank_id, approver_type, approver, decision, notes):
     """Best-effort write to application_approvals (v38 maker-checker audit trail) —
     a first-class approver/decision record parallel to status_transitions. Never
@@ -2149,12 +2157,14 @@ async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict
     current_status = app_row["status"]
     if current_status not in ("submitted", "system_reviewed"):
         raise HTTPException(status_code=400, detail=f"Cannot approve application with status '{current_status}'. Must be 'submitted' or 'system_reviewed'.")
-    await db_pool.execute(
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'officer_approved', officer_id = $1, officer_reviewed_at = $2, officer_notes = $3
-           WHERE id = $4""",
-        officer_id, now_utc(), body.notes, uuid.UUID(app_id)
+           WHERE id = $4 AND bank_id = $5 AND status = ANY($6::text[])""",
+        officer_id, now_utc(), body.notes, uuid.UUID(app_id), bank_id, ["submitted", "system_reviewed"]
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "officer_approved", "bank_officer", officer_id, body.notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "approved", body.notes)
     return {"status": "success", "message": "Application approved by officer", "new_status": "officer_approved"}
@@ -2177,12 +2187,14 @@ async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict 
     rejection_notes = body.notes or ""
     if body.rejection_reason:
         rejection_notes = f"[Reason: {body.rejection_reason}] {rejection_notes}".strip()
-    await db_pool.execute(
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'officer_rejected', officer_id = $1, officer_reviewed_at = $2, officer_notes = $3, rejection_reason = $4
-           WHERE id = $5""",
-        officer_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id)
+           WHERE id = $5 AND bank_id = $6 AND status = ANY($7::text[])""",
+        officer_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id), bank_id, ["submitted", "system_reviewed"]
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "officer_rejected", "bank_officer", officer_id, rejection_notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "rejected", rejection_notes)
     # Send WhatsApp notification
@@ -2225,12 +2237,16 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
     current_status = app_row["status"]
     if current_status != "officer_approved":
         raise HTTPException(status_code=400, detail=f"Cannot supervisor-approve application with status '{current_status}'. Must be 'officer_approved'.")
-    await db_pool.execute(
+    if app_row.get("officer_id") is not None and app_row["officer_id"] == supervisor_id:
+        raise HTTPException(status_code=403, detail="Maker-checker: you reviewed this as the officer and cannot also approve it as supervisor.")
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'approved', supervisor_id = $1, supervisor_reviewed_at = $2, supervisor_notes = $3
-           WHERE id = $4""",
-        supervisor_id, now_utc(), body.notes, uuid.UUID(app_id)
+           WHERE id = $4 AND bank_id = $5 AND status = 'officer_approved'""",
+        supervisor_id, now_utc(), body.notes, uuid.UUID(app_id), bank_id
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "approved", "bank_supervisor", supervisor_id, body.notes)
     if app_row["phone"] and AISENSY_API_KEY:
         first_name = (app_row["customer_name"] or "Customer").strip().split()[0]
@@ -2273,12 +2289,14 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
     rejection_notes = body.notes or ""
     if body.rejection_reason:
         rejection_notes = f"[Reason: {body.rejection_reason}] {rejection_notes}".strip()
-    await db_pool.execute(
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'supervisor_rejected', supervisor_id = $1, supervisor_reviewed_at = $2, supervisor_notes = $3, rejection_reason = $4
-           WHERE id = $5""",
-        supervisor_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id)
+           WHERE id = $5 AND bank_id = $6 AND status = 'officer_approved'""",
+        supervisor_id, now_utc(), body.notes, body.rejection_reason, uuid.UUID(app_id), bank_id
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "supervisor_rejected", "bank_supervisor", supervisor_id, rejection_notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "rejected", rejection_notes)
     if app_row["phone"]:
@@ -2306,12 +2324,14 @@ async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor:
     current_status = app_row["status"]
     if current_status not in ("officer_approved", "approved"):
         raise HTTPException(status_code=400, detail=f"Cannot request documents for application with status '{current_status}'. Must be 'officer_approved' or 'approved'.")
-    await db_pool.execute(
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'documents_requested', documents_requested_at = $1, supervisor_id = $2, supervisor_notes = $3
-           WHERE id = $4""",
-        now_utc(), supervisor_id, body.notes, uuid.UUID(app_id)
+           WHERE id = $4 AND bank_id = $5 AND status = ANY($6::text[])""",
+        now_utc(), supervisor_id, body.notes, uuid.UUID(app_id), bank_id, ["officer_approved", "approved"]
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "documents_requested", "bank_supervisor", supervisor_id, body.notes)
     if app_row["phone"]:
         message = (
@@ -2338,12 +2358,15 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
     current_status = app_row["status"]
     if current_status not in ("officer_approved", "approved", "documents_submitted"):
         raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'officer_approved', 'approved' or 'documents_submitted'.")
-    await db_pool.execute(
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'approved', approved_at = $1, supervisor_id = $2, supervisor_notes = $3
-           WHERE id = $4""",
-        now_utc(), supervisor_id, body.notes, uuid.UUID(app_id)
+           WHERE id = $4 AND bank_id = $5 AND status = ANY($6::text[])""",
+        now_utc(), supervisor_id, body.notes, uuid.UUID(app_id), bank_id,
+        ["officer_approved", "approved", "documents_submitted"]
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "approved", "bank_supervisor", supervisor_id, body.notes)
     if app_row["phone"] and AISENSY_API_KEY:
         first_name = (app_row["customer_name"] or "Customer").strip().split()[0]
@@ -2391,13 +2414,24 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
         raise HTTPException(status_code=400, detail="Cannot cancel a disbursed loan — funds have already been released.")
     if current_status in ("cancelled", "withdrawn"):
         raise HTTPException(status_code=400, detail=f"Application is already '{current_status}'.")
+    # An active vendor assignment can still disburse; block cancel until it's withdrawn,
+    # so money can never leave on a cancelled application (see routers/vendors.py).
+    active_assignment = await db_pool.fetchval(
+        "SELECT 1 FROM application_vendor_assignments WHERE application_id = $1 AND status = ANY($2::text[]) LIMIT 1",
+        uuid.UUID(app_id), ["pending", "accepted"]
+    )
+    if active_assignment:
+        raise HTTPException(status_code=409, detail="Cannot cancel — an active vendor assignment exists. Withdraw the vendor assignment first.")
     changed_by_type = "bank_supervisor" if user["role"] == "bank_supervisor" else "bank_officer"
-    await db_pool.execute(
+    _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'cancelled', cancelled_at = $1, cancellation_reason = $2
-           WHERE id = $3""",
-        now_utc(), body.reason, uuid.UUID(app_id)
+           WHERE id = $3 AND bank_id = $4 AND disbursed_at IS NULL
+             AND status NOT IN ('cancelled', 'withdrawn')""",
+        now_utc(), body.reason, uuid.UUID(app_id), bank_id
     )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Cannot cancel — the application was disbursed or its status changed. Refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "cancelled", changed_by_type, actor_id, body.reason)
     if app_row["phone"]:
         message = (
@@ -3105,7 +3139,13 @@ async def submit_form(token: str, request: Request):
     else:
         app_data = _row_to_dict(app_row)
     app_uuid = uuid.UUID(app_data["id"])
-    await db_pool.execute("UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 WHERE id = $2", now_utc(), app_uuid)
+    _u = await db_pool.execute(
+        "UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 "
+        "WHERE id = $2 AND (status IS NULL OR status = ANY($3::text[]))",
+        now_utc(), app_uuid, ["draft", "submitted", "system_reviewed"],
+    )
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="This application has already been reviewed and can no longer be resubmitted.")
     await db_pool.execute("UPDATE form_tokens SET is_used = true, form_status = 'submitted' WHERE id = $1", token_row["id"])
     # Record status transition
     await record_transition(app_uuid, "draft", "submitted", "customer", app_uuid, "Form submitted by customer")
@@ -4063,10 +4103,13 @@ async def submit_form_session(session_token: str, request: Request):
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 WHERE id = $2",
-                now_utc(), app_row["id"]
+            _u = await conn.execute(
+                "UPDATE loan_applications SET is_complete = true, status = 'submitted', submitted_at = $1 "
+                "WHERE id = $2 AND (status IS NULL OR status = ANY($3::text[]))",
+                now_utc(), app_row["id"], ["draft", "submitted", "system_reviewed"],
             )
+            if _rows_affected(_u) == 0:
+                raise HTTPException(status_code=409, detail="This application has already been reviewed and can no longer be resubmitted.")
             await record_transition(
                 app_row["id"], "draft", "submitted", "customer", app_row["id"],
                 "Form submitted by customer via session", conn=conn

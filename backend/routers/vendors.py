@@ -744,6 +744,16 @@ async def vendor_disburse(ava_id: str, payload: VendorDisburse, vendor: dict = D
             if row["status"] != "accepted":
                 raise HTTPException(400, f"only 'accepted' assignments can be disbursed (current: {row['status']})")
 
+            # Money must never leave a voided application. Lock the loan row and
+            # re-check its status inside this transaction (a concurrent bank-side
+            # cancel/withdraw will serialise against this lock).
+            loan_status = await conn.fetchval(
+                "SELECT status FROM loan_applications WHERE id = $1 FOR UPDATE",
+                row["application_id"],
+            )
+            if loan_status in ("cancelled", "withdrawn"):
+                raise HTTPException(409, f"Cannot disburse — the loan application is '{loan_status}'.")
+
             # Snapshot commission from current partnership
             commission_pct = await conn.fetchval(
                 "SELECT commission_pct FROM bank_vendor_partnerships "

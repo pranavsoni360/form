@@ -242,8 +242,14 @@ async def run_migrations(
             return summary
 
         try:
-            # Bootstrap: ensure _migrations exists before we query it
-            await conn.execute(BOOTSTRAP_SQL)
+            # Bootstrap: ensure _migrations exists before we query it. Only run the
+            # CREATE when it's actually missing — a least-privilege runtime role
+            # (plan §11) has no CREATE on the schema, but _migrations always exists
+            # by the time the app starts (the admin deploy step created it), so the
+            # check-first path needs only SELECT and never trips the privilege.
+            has_tracker = await conn.fetchval("SELECT to_regclass('public._migrations') IS NOT NULL")
+            if not has_tracker:
+                await conn.execute(BOOTSTRAP_SQL)
 
             files = _find_migrations(migrations_dir)
             if not files:
@@ -291,9 +297,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     async def _cli() -> None:
-        dsn = os.getenv("DATABASE_URL")
+        # Migrations need DDL (CREATE/ALTER), so prefer the privileged migration
+        # DSN. The runtime app (plan §11) connects with a scoped role that cannot
+        # do DDL, so MIGRATION_DATABASE_URL points at the admin role for deploys.
+        dsn = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
         if not dsn:
-            raise SystemExit("db_migrations: DATABASE_URL not set")
+            raise SystemExit("db_migrations: neither MIGRATION_DATABASE_URL nor DATABASE_URL set")
         pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
         try:
             summary = await run_migrations(pool)

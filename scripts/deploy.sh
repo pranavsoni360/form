@@ -89,6 +89,7 @@ do_migrate() {
     log "═══ Running DB migrations only ═══"
     # Tracked runner (records to _migrations, skips applied, fails loudly). set -e
     # aborts on a non-zero exit, so a broken migration stops here (plan §50).
+    export MIGRATION_DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
     export DATABASE_URL="$(grep -E '^DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
     ( cd "${INSTALL_DIR}/backend" && "${INSTALL_DIR}/backend/venv/bin/python" db_migrations.py )
     log "═══ Migrations complete ═══"
@@ -136,6 +137,7 @@ do_update() {
     #    broken migration aborts the deploy instead of being silently swallowed by
     #    the old `psql < file || true` loop (plan §50).
     log "Running DB migrations..."
+    export MIGRATION_DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
     export DATABASE_URL="$(grep -E '^DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
     if ! ( cd "${INSTALL_DIR}/backend" && "${INSTALL_DIR}/backend/venv/bin/python" db_migrations.py ); then
         log "❌ DB migrations FAILED — aborting deploy (services not restarted)"
@@ -297,6 +299,7 @@ docker exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" < "${INSTALL
 # Run all migrations via the tracked runner (records to _migrations, fails loudly
 # so a broken migration aborts the fresh setup; plan §50).
 log "Running DB migrations..."
+export MIGRATION_DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
 export DATABASE_URL="$(grep -E '^DATABASE_URL=' "${INSTALL_DIR}/backend/.env" | head -1 | cut -d= -f2-)"
 ( cd "${INSTALL_DIR}/backend" && "${INSTALL_DIR}/backend/venv/bin/python" db_migrations.py )
 

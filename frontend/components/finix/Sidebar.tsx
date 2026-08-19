@@ -78,12 +78,15 @@ function ThemePill() {
 export function Sidebar({
   nav,
   identity,
+  identityFooter,
   action,
   collapsed,
   onToggleCollapse,
 }: {
   nav: FinixNavItem[];
   identity: SidebarIdentity;
+  /** Rendered inside the identity card, below the tenant/role line. */
+  identityFooter?: React.ReactNode;
   action?: SidebarAction;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -124,6 +127,9 @@ export function Sidebar({
           <div className="text-[12px] text-fx-text3">
             {identity.tenant} · {identity.role}
           </div>
+          {/* Slot under the identity lines — used by the shells for the idle
+              session countdown, which has to be visible on every screen. */}
+          {identityFooter && <div className="mt-2">{identityFooter}</div>}
         </div>
       )}
 

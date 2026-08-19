@@ -13,7 +13,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { getAccessToken, getCurrentUser, logout } from "@/lib/auth";
 import { getMe } from "@/lib/api/bank";
-import { FinixShell, type FinixNavItem, type SidebarAction } from "@/components/finix";
+import { FinixShell, SessionTimer, type FinixNavItem, type SidebarAction } from "@/components/finix";
 
 const NAV: FinixNavItem[] = [
   { href: "/bank/dashboard", label: "My queue", glyph: "▤" },
@@ -101,6 +101,14 @@ export function BankUserShell({
         tenant: me?.bank_code || me?.bank_name || "—",
         role: roleLabel,
       }}
+      identityFooter={
+        <SessionTimer
+          onLogout={() => {
+            logout("bank");
+            router.replace("/bank/login");
+          }}
+        />
+      }
       action={action ?? logoutAction}
     >
       {children}

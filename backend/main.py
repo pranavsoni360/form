@@ -2545,6 +2545,16 @@ async def send_otp(token: str, request: Request):
         raise HTTPException(status_code=404, detail="Invalid token")
     if row["otp_verified"]:
         raise HTTPException(status_code=400, detail="OTP already verified")
+    # Rate limit (anti OTP/SMS bombing + cost): 30s between sends, max 5 / 10 min.
+    recent_sends = await db_pool.fetch(
+        "SELECT created_at FROM otp_verifications WHERE token_id = $1 AND created_at > $2 ORDER BY created_at DESC",
+        row["id"], now_utc() - timedelta(minutes=10),
+    )
+    if recent_sends:
+        if (now_utc() - recent_sends[0]["created_at"]).total_seconds() < 30:
+            raise HTTPException(status_code=429, detail="Please wait 30 seconds before requesting another OTP.")
+        if len(recent_sends) >= 5:
+            raise HTTPException(status_code=429, detail="Too many OTP requests. Please try again in a few minutes.")
     otp = generate_otp()
     otp_hash_val = hash_otp(otp)
     expires_at = now_utc() + timedelta(minutes=10)
@@ -2639,6 +2649,8 @@ async def verify_pan(token: str, pan_number: str, request: Request):
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
+    if not token_row.get("otp_verified"):
+        raise HTTPException(status_code=403, detail="Please verify OTP before submitting KYC details.")
     if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_number):
         raise HTTPException(status_code=400, detail="Invalid PAN format")
     # Create application row if it doesn't exist yet
@@ -2682,6 +2694,8 @@ async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
+    if not token_row.get("otp_verified"):
+        raise HTTPException(status_code=403, detail="Please verify OTP before submitting KYC details.")
     if not re.match(r'^\d{12}$', aadhaar_number):
         raise HTTPException(status_code=400, detail="Invalid Aadhaar format")
     last4 = aadhaar_number[-4:]
@@ -3023,6 +3037,8 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
+    if not token_row.get("otp_verified"):
+        raise HTTPException(status_code=403, detail="Please verify OTP before uploading documents.")
     allowed_types = ['image/jpeg', 'image/png', 'application/pdf']
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Invalid file type")
@@ -3178,7 +3194,13 @@ async def review_application(payload: ReviewAction, request: Request, admin: dic
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
     current_status = app_row["status"]
-    new_status = payload.action + "d"
+    # Map the action to a status the CHECK constraint accepts. The old
+    # `action + "d"` produced "rejectd" (invalid) → 500. Admin is the final
+    # authority, so a reject lands on 'supervisor_rejected'.
+    _review_status = {"approve": "approved", "reject": "supervisor_rejected"}
+    new_status = _review_status.get(payload.action)
+    if new_status is None:
+        raise HTTPException(status_code=400, detail=f"Invalid action '{payload.action}'. Must be 'approve' or 'reject'.")
     if payload.action == "reject":
         await db_pool.execute(
             "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 WHERE id=$6",

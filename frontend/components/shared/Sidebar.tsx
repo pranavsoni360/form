@@ -17,7 +17,6 @@ import {
   Moon,
   PhoneCall,
   Radio,
-  Star,
   Sun,
   TrendingUp,
   Upload,
@@ -169,18 +168,13 @@ export function Sidebar({ className }: { className?: string }) {
           >
             {initials}
           </span>
-          <div className="flex items-center gap-0.5">
-            <button
-              onClick={toggleTheme}
-              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
-            >
-              {isDark ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
-            </button>
-            <span className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground">
-              <Star className="w-3.5 h-3.5" />
-            </span>
-          </div>
+          <button
+            onClick={toggleTheme}
+            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
+          >
+            {isDark ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+          </button>
         </div>
         {dateStr && (
           <div className="text-[10px] mb-1 leading-tight text-muted-foreground">

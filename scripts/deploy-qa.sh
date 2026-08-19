@@ -32,6 +32,7 @@ echo "── 3. migrate QA database ($QADB) via tracked runner ──"
 # (non-zero exit) — replacing the old `psql < file || true` loop that silently
 # swallowed migration errors (plan §50). A failed migration aborts the deploy so
 # services keep running the old code instead of restarting onto a broken schema.
+export MIGRATION_DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' "$QA/backend/.env.qa" | head -1 | cut -d= -f2-)"
 export DATABASE_URL="$(grep -E '^DATABASE_URL=' "$QA/backend/.env.qa" | head -1 | cut -d= -f2-)"
 if ! ( cd "$QA/backend" && "$PROD/backend/venv/bin/python" db_migrations.py ); then
   echo "❌ QA migrations FAILED — aborting deploy, services NOT restarted (old build still serving)"

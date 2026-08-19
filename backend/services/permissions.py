@@ -28,6 +28,7 @@ than none on a system that disburses money.
 
 from __future__ import annotations
 
+import uuid
 from typing import Iterable, Optional
 
 from fastapi import HTTPException
@@ -42,15 +43,31 @@ async def effective_permissions(db, user_id: str, role: str) -> set[str]:
     One round trip: role defaults and per-user deltas are combined in SQL so a
     permission check never costs two queries. `role` is passed in rather than
     re-read because every caller already holds the authenticated row.
+
+    The "role default" half has two sources, unioned:
+      - bank_role_default_permissions, for the built-in roles
+      - bank_custom_role_permissions, for a user on a bank-defined profile
+        (v41). `custom` deliberately has no row in the former, so a custom-role
+        user's baseline comes entirely from their profile.
+    A revoke suppresses either source, so a one-person exception to a profile
+    works exactly as it does for a built-in role.
     """
     rows = await db.fetch(
         """
-        SELECT permission_code FROM bank_role_default_permissions
-         WHERE role = $2
-           AND permission_code NOT IN (
-               SELECT permission_code FROM bank_user_permissions
-                WHERE user_id = $1 AND effect = 'revoke'
-           )
+        WITH revoked AS (
+            SELECT permission_code FROM bank_user_permissions
+             WHERE user_id = $1 AND effect = 'revoke'
+        ),
+        role_default AS (
+            SELECT permission_code FROM bank_role_default_permissions WHERE role = $2
+            UNION
+            SELECT crp.permission_code
+              FROM bank_custom_role_permissions crp
+              JOIN bank_users bu ON bu.custom_role_id = crp.custom_role_id
+             WHERE bu.id = $1
+        )
+        SELECT permission_code FROM role_default
+         WHERE permission_code NOT IN (SELECT permission_code FROM revoked)
         UNION
         SELECT permission_code FROM bank_user_permissions
          WHERE user_id = $1 AND effect = 'grant'
@@ -61,7 +78,9 @@ async def effective_permissions(db, user_id: str, role: str) -> set[str]:
     return {r["permission_code"] for r in rows}
 
 
-async def user_permission_detail(db, user_id: str, role: str) -> list[dict]:
+async def user_permission_detail(
+    db, user_id: str, role: str, custom_role_id: Optional[str] = None
+) -> list[dict]:
     """
     Every catalogue permission with its state for this user, for the console grid.
 
@@ -78,18 +97,26 @@ async def user_permission_detail(db, user_id: str, role: str) -> list[dict]:
                p.category,
                p.description,
                p.is_dangerous,
-               (rd.permission_code IS NOT NULL) AS role_default,
+               (rd.permission_code IS NOT NULL OR crd.permission_code IS NOT NULL) AS role_default,
                up.effect,
                up.reason
           FROM permissions p
+          -- role_default is TRUE if either the built-in role grants it, or the
+          -- user's custom profile does. Without the second half, every profile
+          -- permission would render as an "added" exception rather than an
+          -- inherited default, and saving would freeze the profile into per-user
+          -- grants that stop tracking it.
           LEFT JOIN bank_role_default_permissions rd
                  ON rd.permission_code = p.permission_code AND rd.role = $2
+          LEFT JOIN bank_custom_role_permissions crd
+                 ON crd.permission_code = p.permission_code AND crd.custom_role_id = $3
           LEFT JOIN bank_user_permissions up
                  ON up.permission_code = p.permission_code AND up.user_id = $1
          ORDER BY p.category, p.permission_code
         """,
         user_id,
         role,
+        uuid.UUID(custom_role_id) if custom_role_id else None,
     )
 
     out: list[dict] = []
@@ -115,8 +142,24 @@ async def user_permission_detail(db, user_id: str, role: str) -> list[dict]:
     return out
 
 
-async def role_default_permissions(db, role: str) -> set[str]:
-    """The unmodified default set for a role — used to prefill the console grid."""
+async def role_default_permissions(
+    db, role: str, custom_role_id: Optional[str] = None
+) -> set[str]:
+    """
+    The unmodified default set for a role — used to prefill the console grid and
+    to diff a desired set down to deltas.
+
+    Pass `custom_role_id` for a user on a bank-defined profile: their baseline is
+    the profile's set, not the (empty) 'custom' row. Getting this wrong would make
+    set_user_permissions store the ENTIRE profile as per-user grants, which then
+    stops tracking the profile when it is edited.
+    """
+    if custom_role_id:
+        rows = await db.fetch(
+            "SELECT permission_code FROM bank_custom_role_permissions WHERE custom_role_id = $1",
+            custom_role_id,
+        )
+        return {r["permission_code"] for r in rows}
     rows = await db.fetch(
         "SELECT permission_code FROM bank_role_default_permissions WHERE role = $1",
         role,
@@ -133,6 +176,7 @@ async def set_user_permissions(
     desired: Iterable[str],
     actor_id: Optional[str] = None,
     reason: Optional[str] = None,
+    custom_role_id: Optional[str] = None,
 ) -> dict:
     """
     Persist a desired permission set as the minimum set of deltas.
@@ -157,7 +201,7 @@ async def set_user_permissions(
         # the admin they granted something they did not.
         raise HTTPException(400, f"Unknown permission code(s): {', '.join(sorted(unknown))}")
 
-    defaults = await role_default_permissions(db, role)
+    defaults = await role_default_permissions(db, role, custom_role_id)
     grants = desired_set - defaults
     revokes = defaults - desired_set
 

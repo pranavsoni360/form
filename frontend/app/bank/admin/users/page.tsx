@@ -53,8 +53,14 @@ import {
   getUserPermissions,
   setUserPermissions,
   type PermissionCatalogue,
+  listCustomRoles,
+  createCustomRole,
+  updateCustomRole,
+  deleteCustomRole,
+  type CustomRole,
 } from "@/lib/api/bankAdmin";
 import { PERMISSION_MODULES, unmappedCodes } from "@/lib/utils/permissionModules";
+import { CustomRolesPanel } from "./CustomRolesPanel";
 
 type FilterKey = "all" | "active" | "invited" | "suspended";
 
@@ -91,6 +97,11 @@ export default function UsersPage() {
   const [create, setCreate] = React.useState(false);
   const [suspendTarget, setSuspendTarget] = React.useState<BankUser | null>(null);
   const [permTarget, setPermTarget] = React.useState<BankUser | null>(null);
+  const [manageRoles, setManageRoles] = React.useState(false);
+  // Bumping this remounts the invite/create panels so their role pickers refetch
+  // after a profile is added or edited — otherwise a freshly created role would
+  // not appear until a full page reload.
+  const [rolesVersion, setRolesVersion] = React.useState(0);
   const [roleTarget, setRoleTarget] = React.useState<BankUser | null>(null);
   const [branchTarget, setBranchTarget] = React.useState<BankUser | null>(null);
   const [activityTarget, setActivityTarget] = React.useState<BankUser | null>(null);
@@ -322,16 +333,19 @@ export default function UsersPage() {
 
       {invite && (
         <InvitePanel
+          key={rolesVersion}
           freeSeats={seats?.free ?? 0}
           onClose={() => setInvite(false)}
           onDone={() => {
             setInvite(false);
             load();
           }}
+          onManageRoles={() => setManageRoles(true)}
         />
       )}
       {create && (
         <CreateUserModal
+          key={rolesVersion}
           onClose={() => setCreate(false)}
           onCreated={() => load()}
         />
@@ -356,6 +370,12 @@ export default function UsersPage() {
           onClose={() => setActivityTarget(null)}
         />
       )}
+      {manageRoles && (
+        <CustomRolesPanel
+          onClose={() => setManageRoles(false)}
+          onChanged={() => setRolesVersion((v) => v + 1)}
+        />
+      )}
       {permTarget && (
         <PermissionsModal
           user={permTarget}
@@ -378,13 +398,50 @@ export default function UsersPage() {
 }
 
 // ── Invite side panel ────────────────────────────────────────────────────────
-const ROLE_OPTIONS: { value: any; label: string; custom?: boolean }[] = [
-  { value: "bank_officer", label: "Officer" },
-  { value: "bank_supervisor", label: "Supervisor" },
-  { value: "bank_admin", label: "Bank admin" },
-  { value: "custom", label: "Recovery caller", custom: true },
-  { value: "custom", label: "Auditor, read only", custom: true },
+// The three BUILT-IN roles. The custom profiles that follow them in the picker
+// come from the server (bank_custom_roles), so an admin can define their own.
+// "Recovery caller" and "Auditor, read only" used to be hard-coded here and
+// granted nothing; migration_v41 seeds them as real profiles with permission
+// sets, and this list no longer pretends to know what a bank's roles are.
+type RoleOption = {
+  value: string;
+  label: string;
+  custom?: boolean;
+  customRoleId?: string;
+  description?: string | null;
+};
+
+const BUILTIN_ROLE_OPTIONS: RoleOption[] = [
+  { value: "bank_officer", label: "Officer", description: "Own queue, approve and reject" },
+  { value: "bank_supervisor", label: "Supervisor", description: "Branch approvals and disbursal" },
+  { value: "bank_admin", label: "Bank admin", description: "Seats, settings and permissions" },
 ];
+
+/** Built-ins plus this bank's profiles, refetchable after an edit. */
+function useRoleOptions() {
+  const [custom, setCustom] = React.useState<CustomRole[]>([]);
+  const reload = React.useCallback(() => {
+    listCustomRoles()
+      .then((r) => setCustom(r.roles ?? []))
+      .catch(() => setCustom([]));
+  }, []);
+  React.useEffect(() => { reload(); }, [reload]);
+
+  const options = React.useMemo<RoleOption[]>(
+    () => [
+      ...BUILTIN_ROLE_OPTIONS,
+      ...custom.map((c) => ({
+        value: "custom",
+        label: c.name,
+        custom: true,
+        customRoleId: c.id,
+        description: c.description,
+      })),
+    ],
+    [custom],
+  );
+  return { options, customRoles: custom, reload };
+}
 
 
 // ── permission grid state ────────────────────────────────────────────────────
@@ -397,7 +454,11 @@ const ROLE_OPTIONS: { value: any; label: string; custom?: boolean }[] = [
 // open or change it we send `undefined` rather than an explicit list, so the
 // backend stores no per-user deltas and the user simply inherits their role —
 // which keeps the common case free of pointless override rows.
-function usePermissionGrid(role: string) {
+// `customRole` supplies the baseline when role='custom': the profile's own
+// permission set. Without it the grid would prefill EMPTY for every custom
+// role (bank_role_default_permissions has no 'custom' row by design), making
+// each profile look like it granted nothing.
+function usePermissionGrid(role: string, customRole?: CustomRole | null) {
   const [cat, setCat] = React.useState<PermissionCatalogue | null>(null);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [touched, setTouched] = React.useState(false);
@@ -408,8 +469,8 @@ function usePermissionGrid(role: string) {
   }, []);
 
   const roleDefaults = React.useMemo(
-    () => cat?.role_defaults?.[role] ?? [],
-    [cat, role],
+    () => (customRole ? customRole.permissions : cat?.role_defaults?.[role] ?? []),
+    [cat, role, customRole],
   );
 
   // Re-base on role change (and on first catalogue load).
@@ -475,7 +536,7 @@ function PermissionSection({
   );
 }
 
-function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClose: () => void; onDone: () => void }) {
+function InvitePanel({ freeSeats, onClose, onDone, onManageRoles }: { freeSeats: number; onClose: () => void; onDone: () => void; onManageRoles: () => void }) {
   const [email, setEmail] = React.useState("");
   const [fullName, setFullName] = React.useState("");
   const [employeeId, setEmployeeId] = React.useState("");
@@ -484,18 +545,24 @@ function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClos
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<{ url: string; sent: boolean } | null>(null);
-  const grid = usePermissionGrid(ROLE_OPTIONS[roleIdx].value);
+  const { options: roleOptions, customRoles } = useRoleOptions();
+  const opt = roleOptions[roleIdx] ?? roleOptions[0];
+  // Pass the chosen profile so the grid prefills with ITS permission set.
+  const selectedCustom = opt?.customRoleId
+    ? customRoles.find((c) => c.id === opt.customRoleId) ?? null
+    : null;
+  const grid = usePermissionGrid(opt?.value ?? "bank_officer", selectedCustom);
 
   async function submit() {
     setBusy(true);
     setErr(null);
-    const opt = ROLE_OPTIONS[roleIdx];
     try {
       const r = await inviteUser({
         email,
         full_name: fullName,
-        role: opt.value,
+        role: opt.value as any,
         custom_role_label: opt.custom ? opt.label : undefined,
+        custom_role_id: opt.customRoleId,
         branch: branch || undefined,
         employee_id: employeeId || undefined,
         permissions: grid.payload,
@@ -552,7 +619,7 @@ function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClos
           </div>
           <Field label="Role">
             <div className="flex flex-col gap-1.5">
-              {ROLE_OPTIONS.map((o, i) => (
+              {roleOptions.map((o, i) => (
                 <button
                   key={i}
                   type="button"
@@ -574,10 +641,21 @@ function InvitePanel({ freeSeats, onClose, onDone }: { freeSeats: number; onClos
             <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Camp road" />
           </Field>
 
+          {/* Jump straight to defining a profile when none of the listed roles
+              fits — the mockup puts this immediately under the role list. */}
+          <button
+            type="button"
+            onClick={onManageRoles}
+            className="self-start text-[11px] transition-colors hover:underline"
+            style={{ color: "var(--fx-accent)" }}
+          >
+            Manage custom roles
+          </button>
+
           {/* Permissions — collapsed by default so the common "just use the role
               default" path stays a short form, but one click away when a specific
               right needs granting to this person. */}
-          <PermissionSection grid={grid} roleLabel={ROLE_OPTIONS[roleIdx].label} />
+          <PermissionSection grid={grid} roleLabel={opt?.label ?? "Role"} />
 
           {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
           <div className="mt-1 flex justify-end gap-2">
@@ -835,8 +913,15 @@ function PermissionsModal({
 // (they are deltas, not a snapshot), which is why this warns rather than
 // silently reshaping someone's access.
 function ChangeRoleModal({ user, onClose, onDone }: { user: BankUser; onClose: () => void; onDone: () => void }) {
+  const { options: roleOptions } = useRoleOptions();
   const [role, setRole] = React.useState<string>(user.role);
   const [customLabel, setCustomLabel] = React.useState(user.custom_role_label ?? "");
+  // Which profile is selected, when the chosen role is 'custom'. Tracked by id
+  // rather than label so two profiles could share a display name without the
+  // wrong one being assigned.
+  const [customRoleId, setCustomRoleId] = React.useState<string | undefined>(
+    (user as any).custom_role_id ?? undefined,
+  );
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const changed = role !== user.role || (role === "custom" && customLabel !== (user.custom_role_label ?? ""));
@@ -847,6 +932,7 @@ function ChangeRoleModal({ user, onClose, onDone }: { user: BankUser; onClose: (
     try {
       await updateUser(user.id, {
         role: role as any,
+        custom_role_id: role === "custom" ? customRoleId : undefined,
         ...(role === "custom" ? { custom_role_label: customLabel.trim() } : {}),
       });
       onDone();
@@ -866,8 +952,10 @@ function ChangeRoleModal({ user, onClose, onDone }: { user: BankUser; onClose: (
       />
       <div className="flex flex-col gap-3 p-5">
         <div className="flex flex-col gap-1.5">
-          {ROLE_OPTIONS.map((o, i) => {
-            const active = role === o.value && (!o.custom || customLabel === o.label);
+          {roleOptions.map((o, i) => {
+            const active =
+              role === o.value &&
+              (!o.custom || (o.customRoleId ? customRoleId === o.customRoleId : customLabel === o.label));
             return (
               <button
                 key={i}

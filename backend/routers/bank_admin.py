@@ -126,6 +126,47 @@ async def get_bank_admin(
     return u
 
 
+async def _resolve_custom_role(bank_id: str, role: str, custom_role_id):
+    """
+    Validate a profile id for role='custom' and return (uuid, name).
+
+    Bank-scoped by the WHERE clause, never trusted from the caller: without this
+    an admin could assign another bank's profile and inherit its rights. Returns
+    (None, None) for the built-in roles so callers can pass through unchanged.
+    """
+    if role != "custom":
+        return None, None
+    if not custom_role_id:
+        raise HTTPException(400, "Pick which custom role to assign.")
+    row = await _db().fetchrow(
+        "SELECT id, name FROM bank_custom_roles WHERE id = $1 AND bank_id = $2 AND is_active",
+        uuid.UUID(custom_role_id), uuid.UUID(bank_id),
+    )
+    if not row:
+        raise HTTPException(400, "That custom role does not exist in this bank.")
+    return row["id"], row["name"]
+
+
+async def _validate_permission_codes(codes: list[str]) -> list[str]:
+    """
+    Keep only real permission codes, rejecting unknown ones loudly.
+
+    Silently dropping a typo would tell an admin they granted a right they did
+    not, which on this screen is the dangerous direction.
+    """
+    wanted = sorted(set(codes or []))
+    if not wanted:
+        return []
+    valid = {
+        r["permission_code"]
+        for r in await _db().fetch("SELECT permission_code FROM permissions")
+    }
+    unknown = [c for c in wanted if c not in valid]
+    if unknown:
+        raise HTTPException(400, f"Unknown permission code(s): {', '.join(unknown)}")
+    return wanted
+
+
 # ── activity log helper ──────────────────────────────────────────────────────
 async def log_activity(
     conn, bank_id: str, actor: dict, action: str,
@@ -176,6 +217,8 @@ class CreateUser(BaseModel):
     role: str  # bank_officer | bank_supervisor
     branch: Optional[str] = None
     employee_id: Optional[str] = None
+    # When role='custom', which bank_custom_roles profile to assign (v41).
+    custom_role_id: Optional[str] = None
     # Full desired permission set from the console grid. None => take the role
     # default untouched. An explicit [] means "no rights at all", which is a
     # legitimate choice for a not-yet-active account, so None and [] must stay
@@ -188,6 +231,7 @@ class UpdateUser(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     custom_role_label: Optional[str] = None
+    custom_role_id: Optional[str] = None
     branch: Optional[str] = None
 
 
@@ -196,11 +240,19 @@ class InviteUser(BaseModel):
     full_name: str
     role: str
     custom_role_label: Optional[str] = None
+    custom_role_id: Optional[str] = None
     branch: Optional[str] = None
     employee_id: Optional[str] = None
     # Same semantics as CreateUser.permissions. Stored on the invite row and
     # applied when it is accepted, so choices made now survive until then.
     permissions: Optional[list[str]] = None
+
+
+class CustomRoleBody(BaseModel):
+    """A bank-defined role profile: a name, a blurb, and its default rights."""
+    name: str
+    description: Optional[str] = None
+    permissions: list[str] = []
 
 
 class SetPermissions(BaseModel):
@@ -236,7 +288,7 @@ async def list_users(
         where += " AND status = $2"
         params.append(status)
     users = await _db().fetch(
-        f"SELECT id, username, email, full_name, role, custom_role_label, branch, "
+        f"SELECT id, username, email, full_name, role, custom_role_label, custom_role_id, branch, "
         f"employee_id, status, is_active, created_at, last_login_at "
         f"FROM bank_users {where} ORDER BY "
         f"CASE status WHEN 'active' THEN 0 WHEN 'invited' THEN 1 ELSE 2 END, created_at DESC",
@@ -270,8 +322,11 @@ async def create_user(body: CreateUser, admin: dict = Depends(get_bank_admin)):
     """Create an account directly (no invite email). Returns the temp password once."""
     generate_random_password = _main_mod().generate_random_password
     bank_id = admin["bank_id"]
-    if body.role not in STANDARD_ROLES:
-        raise HTTPException(400, "Direct creation supports officer or supervisor only.")
+    # Direct creation now also accepts a custom profile; the invite path always
+    # could, and there is no reason the two should differ.
+    if body.role not in STANDARD_ROLES and body.role != "custom":
+        raise HTTPException(400, "Direct creation supports officer, supervisor or a custom role.")
+    custom_id, custom_name = await _resolve_custom_role(bank_id, body.role, body.custom_role_id)
     full_name, username, email = _validate_new_user(body.full_name, body.username, body.email, body.role)
 
     seats = await _seat_usage(bank_id)
@@ -290,10 +345,11 @@ async def create_user(body: CreateUser, admin: dict = Depends(get_bank_admin)):
     async with _db().acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
-                "INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role, branch, employee_id, status) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active') "
-                "RETURNING id, username, email, full_name, role, branch, employee_id, status, created_at",
+                "INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role, branch, employee_id, status, custom_role_id, custom_role_label) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10) "
+                "RETURNING id, username, email, full_name, role, branch, employee_id, status, created_at, custom_role_id, custom_role_label",
                 uuid.UUID(bank_id), username, email, pw_hash, full_name, body.role, body.branch, body.employee_id,
+                custom_id, custom_name,
             )
             await log_activity(conn, bank_id, admin, "create_user",
                                {"username": username, "role": body.role}, str(row["id"]))
@@ -305,6 +361,7 @@ async def create_user(body: CreateUser, admin: dict = Depends(get_bank_admin)):
         await perms.set_user_permissions(
             _db(), str(row["id"]), body.role, body.permissions,
             actor_id=str(admin["id"]), reason="set at creation",
+            custom_role_id=str(custom_id) if custom_id else None,
         )
     out = _row(row)
     out["generated_password"] = password  # shown once
@@ -341,6 +398,13 @@ async def update_user(user_id: str, body: UpdateUser, admin: dict = Depends(get_
                 raise HTTPException(409, "This is the only bank admin. Assign another admin first.")
         updates["role"] = body.role
         updates["custom_role_label"] = body.custom_role_label if body.role == "custom" else None
+        # Moving to a built-in role clears the profile link; moving to custom
+        # requires a valid one. Leaving a stale id behind would keep granting the
+        # old profile's rights after the role changed.
+        _cid, _cname = await _resolve_custom_role(bank_id, body.role, body.custom_role_id)
+        updates["custom_role_id"] = _cid
+        if _cname:
+            updates["custom_role_label"] = _cname
     if body.branch is not None:
         updates["branch"] = body.branch
     if not updates:
@@ -453,6 +517,7 @@ async def invite_user(body: InviteUser, admin: dict = Depends(get_bank_admin)):
         raise HTTPException(400, "Letters and spaces only, no digits or symbols.")
     if body.role not in ASSIGNABLE_ROLES:
         raise HTTPException(400, "Unknown role.")
+    custom_id, custom_name = await _resolve_custom_role(bank_id, body.role, body.custom_role_id)
     if await _db().fetchrow(
         "SELECT 1 FROM bank_users WHERE email = $1 AND bank_id = $2 AND is_active = true", email, uuid.UUID(bank_id)
     ):
@@ -476,7 +541,9 @@ async def invite_user(body: InviteUser, admin: dict = Depends(get_bank_admin)):
                 # relative to today's default, and storing the absolute set would
                 # silently re-interpret their intent if the default shifts before
                 # the invite is accepted.
-                defaults = await perms.role_default_permissions(conn, body.role)
+                defaults = await perms.role_default_permissions(
+                    conn, body.role, str(custom_id) if custom_id else None
+                )
                 desired = set(body.permissions)
                 overrides_json = json.dumps(
                     [{"permission_code": c, "effect": "grant"} for c in sorted(desired - defaults)]
@@ -484,12 +551,15 @@ async def invite_user(body: InviteUser, admin: dict = Depends(get_bank_admin)):
                 )
             row = await conn.fetchrow(
                 "INSERT INTO bank_invites (bank_id, email, full_name, employee_id, role, custom_role_label, "
-                "branch, token, invited_by, invited_by_name, expires_at, permission_overrides) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *",
+                "branch, token, invited_by, invited_by_name, expires_at, permission_overrides, custom_role_id) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *",
                 uuid.UUID(bank_id), email, full_name, body.employee_id, body.role,
-                body.custom_role_label if body.role == "custom" else None, body.branch, token,
+                # Prefer the profile's own name over a free-typed label, so the two
+                # can never disagree about what the role is called.
+                custom_name or (body.custom_role_label if body.role == "custom" else None),
+                body.branch, token,
                 uuid.UUID(admin["id"]), admin.get("full_name") or admin.get("name"), expires,
-                overrides_json,
+                overrides_json, custom_id,
             )
             await log_activity(conn, bank_id, admin, "invite_user", {"email": email, "role": body.role})
 
@@ -536,6 +606,156 @@ async def revoke_invite(invite_id: str, admin: dict = Depends(get_bank_admin)):
 
 
 # ── activity ─────────────────────────────────────────────────────────────────
+# ── custom roles ("profiles") ───────────────────────────────────
+# An admin defines a named profile once — "Recovery caller" — with its own
+# default permission set, then assigns it to people. Until v41 those names were
+# hard-coded in the frontend and carried no rights at all.
+#
+# Users on a profile keep bank_users.role = 'custom' (already allowed by the v28
+# CHECK) plus custom_role_id, so every existing role-string comparison in the
+# routers keeps working unchanged.
+
+@router.get("/custom-roles")
+async def list_custom_roles(admin: dict = Depends(get_bank_admin)):
+    """This bank's profiles with their permission sets and how many users hold each."""
+    await perms.require_permission(_db(), admin, "user.view")
+    bank_id = admin["bank_id"]
+    rows = await _db().fetch(
+        "SELECT r.*, "
+        "  (SELECT COUNT(*) FROM bank_users u WHERE u.custom_role_id = r.id AND u.is_active) AS user_count, "
+        "  COALESCE(ARRAY(SELECT permission_code FROM bank_custom_role_permissions "
+        "                  WHERE custom_role_id = r.id ORDER BY permission_code), '{}') AS permissions "
+        "FROM bank_custom_roles r WHERE r.bank_id = $1 AND r.is_active ORDER BY r.name",
+        uuid.UUID(bank_id),
+    )
+    return {"roles": _rows(rows)}
+
+
+@router.post("/custom-roles")
+async def create_custom_role(body: CustomRoleBody, admin: dict = Depends(get_bank_admin)):
+    await perms.require_permission(_db(), admin, "user.manage_permissions")
+    bank_id = admin["bank_id"]
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Give the role a name.")
+    if len(name) > 60:
+        raise HTTPException(400, "Role name is too long (60 characters max).")
+    # Reject a name that collides with a built-in role: two different things
+    # called "Supervisor" in one picker is a permissions accident waiting to
+    # happen. Compared case-insensitively, like the unique index.
+    if name.lower() in {"officer", "supervisor", "bank admin", "branch manager", "auditor"}:
+        raise HTTPException(400, f"'{name}' clashes with a built-in role. Pick another name.")
+    if await _db().fetchrow(
+        "SELECT 1 FROM bank_custom_roles WHERE bank_id = $1 AND LOWER(name) = LOWER($2) AND is_active",
+        uuid.UUID(bank_id), name,
+    ):
+        raise HTTPException(400, f"A role called '{name}' already exists.")
+
+    codes = await _validate_permission_codes(body.permissions)
+    async with _db().acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "INSERT INTO bank_custom_roles (bank_id, name, description, created_by) "
+                "VALUES ($1,$2,$3,$4) RETURNING *",
+                uuid.UUID(bank_id), name, (body.description or "").strip() or None,
+                uuid.UUID(admin["id"]),
+            )
+            for c in codes:
+                await conn.execute(
+                    "INSERT INTO bank_custom_role_permissions (custom_role_id, permission_code) VALUES ($1,$2)",
+                    row["id"], c,
+                )
+            await log_activity(conn, bank_id, admin, "create_custom_role",
+                               {"name": name, "permissions": len(codes)})
+    out = _row(row)
+    out["permissions"] = codes
+    out["user_count"] = 0
+    return {"role": out}
+
+
+@router.put("/custom-roles/{role_id}")
+async def update_custom_role(role_id: str, body: CustomRoleBody, admin: dict = Depends(get_bank_admin)):
+    """
+    Rename a profile and/or replace its permission set.
+
+    Editing the set changes what every holder inherits IMMEDIATELY — that is the
+    point of a profile. Their individual grant/revoke exceptions survive, because
+    those are stored as deltas rather than a copy of the profile.
+    """
+    await perms.require_permission(_db(), admin, "user.manage_permissions")
+    bank_id = admin["bank_id"]
+    row = await _db().fetchrow(
+        "SELECT * FROM bank_custom_roles WHERE id = $1 AND bank_id = $2 AND is_active",
+        uuid.UUID(role_id), uuid.UUID(bank_id),
+    )
+    if not row:
+        raise HTTPException(404, "Role not found in this bank.")
+    name = (body.name or "").strip() or row["name"]
+    if await _db().fetchrow(
+        "SELECT 1 FROM bank_custom_roles WHERE bank_id = $1 AND LOWER(name) = LOWER($2) "
+        "AND id <> $3 AND is_active",
+        uuid.UUID(bank_id), name, uuid.UUID(role_id),
+    ):
+        raise HTTPException(400, f"A role called '{name}' already exists.")
+
+    codes = await _validate_permission_codes(body.permissions)
+    async with _db().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE bank_custom_roles SET name = $1, description = $2, updated_at = NOW(), "
+                "updated_by = $3 WHERE id = $4",
+                name, (body.description or "").strip() or None, uuid.UUID(admin["id"]),
+                uuid.UUID(role_id),
+            )
+            await conn.execute(
+                "DELETE FROM bank_custom_role_permissions WHERE custom_role_id = $1", uuid.UUID(role_id)
+            )
+            for c in codes:
+                await conn.execute(
+                    "INSERT INTO bank_custom_role_permissions (custom_role_id, permission_code) VALUES ($1,$2)",
+                    uuid.UUID(role_id), c,
+                )
+            await log_activity(conn, bank_id, admin, "update_custom_role",
+                               {"name": name, "permissions": len(codes)})
+    return await list_custom_roles(admin)
+
+
+@router.delete("/custom-roles/{role_id}")
+async def delete_custom_role(role_id: str, admin: dict = Depends(get_bank_admin)):
+    """
+    Retire a profile. Refuses while anyone still holds it.
+
+    Deleting out from under its holders would strip their inherited rights
+    silently (custom has no built-in default to fall back on), so the admin is
+    told to move those people first rather than discovering it later.
+    """
+    await perms.require_permission(_db(), admin, "user.manage_permissions")
+    bank_id = admin["bank_id"]
+    row = await _db().fetchrow(
+        "SELECT * FROM bank_custom_roles WHERE id = $1 AND bank_id = $2 AND is_active",
+        uuid.UUID(role_id), uuid.UUID(bank_id),
+    )
+    if not row:
+        raise HTTPException(404, "Role not found in this bank.")
+    holders = await _db().fetchval(
+        "SELECT COUNT(*) FROM bank_users WHERE custom_role_id = $1 AND is_active", uuid.UUID(role_id)
+    )
+    if holders:
+        raise HTTPException(
+            409,
+            f"{holders} user{'s' if holders != 1 else ''} still hold this role. "
+            "Move them to another role first.",
+        )
+    async with _db().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE bank_custom_roles SET is_active = false, updated_at = NOW(), updated_by = $1 "
+                "WHERE id = $2",
+                uuid.UUID(admin["id"]), uuid.UUID(role_id),
+            )
+            await log_activity(conn, bank_id, admin, "delete_custom_role", {"name": row["name"]})
+    return {"deleted": role_id}
+
 # ── permissions ──────────────────────────────────────────────────────────────
 # The console renders a permission matrix per user: every catalogue permission,
 # its role default, and whether this person has an explicit exception. These
@@ -564,12 +784,13 @@ async def get_user_permissions(user_id: str, admin: dict = Depends(get_bank_admi
     """This user's matrix: allowed state + whether it came from the role or an override."""
     await perms.require_permission(_db(), admin, "user.view")
     row = await _db().fetchrow(
-        "SELECT id, role FROM bank_users WHERE id = $1 AND bank_id = $2",
+        "SELECT id, role, custom_role_id FROM bank_users WHERE id = $1 AND bank_id = $2",
         uuid.UUID(user_id), uuid.UUID(admin["bank_id"]),
     )
     if not row:
         raise HTTPException(404, "User not found in this bank.")
-    detail = await perms.user_permission_detail(_db(), user_id, row["role"])
+    cid = str(row["custom_role_id"]) if row["custom_role_id"] else None
+    detail = await perms.user_permission_detail(_db(), user_id, row["role"], cid)
     return {"user_id": user_id, "role": row["role"], "permissions": detail}
 
 
@@ -584,7 +805,7 @@ async def put_user_permissions(user_id: str, body: SetPermissions, admin: dict =
     await perms.require_permission(_db(), admin, "user.manage_permissions")
     bank_id = admin["bank_id"]
     row = await _db().fetchrow(
-        "SELECT id, role, username FROM bank_users WHERE id = $1 AND bank_id = $2",
+        "SELECT id, role, username, custom_role_id FROM bank_users WHERE id = $1 AND bank_id = $2",
         uuid.UUID(user_id), uuid.UUID(bank_id),
     )
     if not row:
@@ -595,14 +816,15 @@ async def put_user_permissions(user_id: str, body: SetPermissions, admin: dict =
     if str(row["id"]) == str(admin["id"]) and "user.manage_permissions" not in set(body.permissions):
         raise HTTPException(400, "You cannot remove your own permission-management right.")
 
+    cid = str(row["custom_role_id"]) if row["custom_role_id"] else None
     result = await perms.set_user_permissions(
         _db(), user_id, row["role"], body.permissions,
-        actor_id=str(admin["id"]), reason=body.reason,
+        actor_id=str(admin["id"]), reason=body.reason, custom_role_id=cid,
     )
     async with _db().acquire() as conn:
         await log_activity(conn, bank_id, admin, "set_permissions",
                            {"username": row["username"], **result}, user_id)
-    detail = await perms.user_permission_detail(_db(), user_id, row["role"])
+    detail = await perms.user_permission_detail(_db(), user_id, row["role"], cid)
     return {"user_id": user_id, "role": row["role"], "permissions": detail, **result}
 
 

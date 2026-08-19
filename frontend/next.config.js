@@ -10,6 +10,23 @@ const nextConfig = {
   // safe and unconditional. The CSP allows what the app actually uses: same-origin
   // API+SSE, Next.js inline hydration scripts/styles, the pincode lookup and Sentry.
   async headers() {
+    // In production the frontend and API are same-origin (nginx routes /api), so
+    // `connect-src 'self'` is correct there. LOCAL DEV IS NOT: the backend runs on
+    // its own port (NEXT_PUBLIC_API_URL, http://localhost:8200), which 'self' does
+    // not cover — so an unconditional CSP silently blocks every API call and the
+    // whole app renders empty with only a console warning to explain it.
+    //
+    // Allow the configured dev API origin in development only; production keeps
+    // the strict list untouched.
+    const devApi =
+      process.env.NODE_ENV !== "production"
+        ? [
+            process.env.NEXT_PUBLIC_API_URL || "http://localhost:8200",
+            // SSE/websocket upgrades for the realtime stream.
+            (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8200").replace(/^http/, "ws"),
+          ]
+        : [];
+
     const csp = [
       "default-src 'self'",
       // Next.js injects inline hydration scripts; keep 'unsafe-eval' so no Next/
@@ -18,7 +35,14 @@ const nextConfig = {
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' https://api.postalpincode.in https://sentry.io https://*.sentry.io https://*.ingest.sentry.io",
+      [
+        "connect-src 'self'",
+        "https://api.postalpincode.in",
+        "https://sentry.io",
+        "https://*.sentry.io",
+        "https://*.ingest.sentry.io",
+        ...devApi,
+      ].join(" "),
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",

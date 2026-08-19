@@ -63,9 +63,11 @@ export async function createUser(body: {
   full_name: string;
   username: string;
   email?: string;
-  role: "bank_officer" | "bank_supervisor";
+  role: "bank_officer" | "bank_supervisor" | "custom";
   branch?: string;
   employee_id?: string;
+  /** Which bank_custom_roles profile, when role === "custom". */
+  custom_role_id?: string;
   /** Full desired permission set. Omit to take the role default untouched. */
   permissions?: string[];
 }): Promise<{ user: CreatedUser }> {
@@ -74,7 +76,15 @@ export async function createUser(body: {
 
 export async function updateUser(
   userId: string,
-  body: Partial<{ email: string; full_name: string; role: BankRole; custom_role_label: string; branch: string }>,
+  body: Partial<{
+    email: string;
+    full_name: string;
+    role: BankRole;
+    custom_role_label: string;
+    /** Which bank_custom_roles profile, when role === "custom". */
+    custom_role_id: string;
+    branch: string;
+  }>,
 ): Promise<{ user: BankUser }> {
   return authFetch(`/api/bank/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) }, "bank");
 }
@@ -99,6 +109,8 @@ export async function inviteUser(body: {
   custom_role_label?: string;
   branch?: string;
   employee_id?: string;
+  /** Which bank_custom_roles profile, when role === "custom". */
+  custom_role_id?: string;
   /** Full desired permission set; stored on the invite and applied on acceptance. */
   permissions?: string[];
 }): Promise<{ invite: PendingInvite; invite_url: string; email_sent: boolean }> {
@@ -352,4 +364,49 @@ export async function createChangeRequest(
     { method: "POST", body: JSON.stringify({ item, message }) },
     "bank",
   );
+}
+
+// ── custom roles ("profiles") ────────────────────────────────────────────────
+// A bank-defined role: a name, a description, and its own default permission
+// set. Replaces the two hard-coded ROLE_OPTIONS entries that carried no rights.
+
+export interface CustomRole {
+  id: string;
+  name: string;
+  description?: string | null;
+  permissions: string[];
+  /** How many active users hold it — delete is refused while non-zero. */
+  user_count: number;
+  created_at?: string;
+}
+
+export async function listCustomRoles(): Promise<{ roles: CustomRole[] }> {
+  return authFetch(`/api/bank/admin/custom-roles`, {}, "bank");
+}
+
+export async function createCustomRole(body: {
+  name: string;
+  description?: string;
+  permissions: string[];
+}): Promise<{ role: CustomRole }> {
+  return authFetch(
+    `/api/bank/admin/custom-roles`,
+    { method: "POST", body: JSON.stringify(body) },
+    "bank",
+  );
+}
+
+export async function updateCustomRole(
+  roleId: string,
+  body: { name: string; description?: string; permissions: string[] },
+): Promise<{ roles: CustomRole[] }> {
+  return authFetch(
+    `/api/bank/admin/custom-roles/${roleId}`,
+    { method: "PUT", body: JSON.stringify(body) },
+    "bank",
+  );
+}
+
+export async function deleteCustomRole(roleId: string): Promise<{ deleted: string }> {
+  return authFetch(`/api/bank/admin/custom-roles/${roleId}`, { method: "DELETE" }, "bank");
 }

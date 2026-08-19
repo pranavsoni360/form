@@ -17,6 +17,7 @@ import {
   Moon,
   PhoneCall,
   Radio,
+  ShieldCheck,
   Sun,
   TrendingUp,
   Upload,
@@ -66,6 +67,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
       { href: "/ops/phones", label: "Phone pool", icon: PhoneCall },
       { href: "/ops/workers", label: "Workers", icon: Users },
       { href: "/ops/errors", label: "Errors", icon: AlertOctagon },
+      { href: "/ops/audit", label: "Audit trail", icon: ShieldCheck },
       { href: "/ops/funnel", label: "Funnel", icon: Activity },
     ],
   },
@@ -93,6 +95,7 @@ const FLAT_NAV = [
   { href: "/ops/recordings", label: "Recordings",   icon: Mic },
   { href: "/ops/workers",    label: "Workers",      icon: Users },
   { href: "/ops/errors",     label: "Errors",       icon: AlertOctagon },
+  { href: "/ops/audit",      label: "Audit trail",  icon: ShieldCheck },
   { href: "/ops/analytics",  label: "Analytics",    icon: TrendingUp },
 ];
 

@@ -13,6 +13,7 @@ import { FinixShell, SessionTimer, type FinixNavItem, type SidebarAction } from 
 const NAV: FinixNavItem[] = [
   { href: "/bank/admin/users", label: "Users", glyph: "◎" },
   { href: "/bank/admin/usage", label: "Usage & call statistics", glyph: "∿" },
+  { href: "/bank/admin/audit", label: "Audit trail", glyph: "⚿" },
   { href: "/bank/admin/settings", label: "Settings", glyph: "⚙" },
   { href: "/bank/scorecard", label: "Scorecard", glyph: "▦" },
 ];

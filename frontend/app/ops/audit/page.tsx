@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
   ShieldCheck, LogIn, LogOut, XCircle, Activity as ActivityIcon, Globe,
-  Landmark, Gavel, GitBranch, Eye,
+  Landmark, Gavel, GitBranch, Eye, ShieldAlert,
 } from "lucide-react";
 
 import { AppShell } from "@/components/shared/AppShell";
@@ -90,6 +90,33 @@ function Diff({ before, after }: { before?: any; after?: any }) {
   );
 }
 
+const SEVERITY_STYLE: Record<string, string> = {
+  critical: "bg-red-600 text-white",
+  high: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
+  medium: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+  low: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
+  info: "bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300",
+};
+
+function AckButton({ eventId, acknowledged, ackBase }: { eventId: string | number; acknowledged: boolean; ackBase: string }) {
+  const [done, setDone] = React.useState(acknowledged);
+  const [busy, setBusy] = React.useState(false);
+  if (done) return <span className="text-[10px] text-emerald-600 dark:text-emerald-400">✓ ack'd</span>;
+  const onClick = async () => {
+    setBusy(true);
+    try {
+      const res = await opsFetch(`${ackBase}/${eventId}/ack`, { method: "POST" });
+      if (res.ok) setDone(true);
+    } finally { setBusy(false); }
+  };
+  return (
+    <button onClick={onClick} disabled={busy}
+      className="rounded-md border border-border bg-card px-2 py-0.5 text-[10px] font-medium hover:bg-muted disabled:opacity-50">
+      {busy ? "…" : "Acknowledge"}
+    </button>
+  );
+}
+
 function ActorCell({ name, sub }: { name?: string | null; sub?: string | null }) {
   return (
     <div className="space-y-0.5">
@@ -169,6 +196,18 @@ const TABS: TabDef[] = [
       { key: "act", header: "Action", render: (r) => <Pill text={r.action} styles="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" /> },
       { key: "ent", header: "Entity", render: (r) => <div className="space-y-0.5 text-[10px] text-muted-foreground"><div>{r.entity_type}</div>{r.phone && <div className="font-mono">{r.phone}</div>}</div> },
       { key: "loc", header: "Location", render: loc },
+    ],
+  },
+  {
+    key: "security", label: "Security", icon: ShieldAlert, endpoint: "/api/admin/audit/security",
+    filterParam: "severity", filters: [["all", "All"], ["critical", "Critical"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]],
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
+      { key: "sev", header: "Severity", render: (r) => <Pill text={r.severity} styles={SEVERITY_STYLE[r.severity] || "bg-muted"} /> },
+      { key: "ev", header: "Event", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold text-foreground">{r.title}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.event_type}</div></div> },
+      { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_username} sub={r.actor_role || r.actor_type} /> },
+      { key: "loc", header: "Location", render: loc },
+      { key: "ack", header: "", render: (r) => <AckButton eventId={r.id} acknowledged={!!r.acknowledged} ackBase="/api/admin/audit/security" /> },
     ],
   },
 ];

@@ -20,6 +20,7 @@ const NAV: FinixNavItem[] = [
   { href: "/bank/calls", label: "Call logs", glyph: "✆" },
   { href: "/bank/batch", label: "Batch calling", glyph: "◫" },
   { href: "/bank/scorecard", label: "Scorecard", glyph: "▦" },
+  { href: "/bank/audit", label: "Audit trail", glyph: "⚿" },
 ];
 
 function initialsOf(name: string): string {

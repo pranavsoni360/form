@@ -1889,6 +1889,102 @@ async def admin_audit_logins(
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
+# ── Generic reader for the semantic audit stores ────────────────────────────
+_AUDIT_JSON_COLS = {"location", "geolocation", "before_data", "after_data", "metadata", "details"}
+
+
+async def _audit_page(table, cols, filters, limit, offset, order="created_at"):
+    """filters: list of (sql_col, value); None values are skipped. Serializes
+    UUIDs to str and parses JSON columns. Returns {items, total, limit, offset}."""
+    limit = max(1, min(int(limit), 200)); offset = max(0, int(offset))
+    conds, params = [], []
+    for col, val in filters:
+        if val is not None:
+            params.append(val); conds.append(f"{col} = ${len(params)}")
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    total = await db_pool.fetchval(f"SELECT count(*) FROM {table} {where}", *params)
+    rows = await db_pool.fetch(
+        f"SELECT {cols} FROM {table} {where} ORDER BY {order} DESC LIMIT {limit} OFFSET {offset}", *params)
+    items = []
+    for r in rows:
+        d = dict(r)
+        for k, v in list(d.items()):
+            if isinstance(v, uuid.UUID):
+                d[k] = str(v)
+            elif k in _AUDIT_JSON_COLS:
+                d[k] = _parse_geo(v)
+        items.append(d)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+_PLATFORM_COLS = ("id, created_at, actor_email, actor_role, action, entity_type, entity_id, "
+                  "target_bank_id, before_data, after_data, ip_address::text AS ip_address, "
+                  "machine_ip::text AS machine_ip, machine_name, location, remark")
+_OFFICER_COLS = ("id, created_at, application_id, bank_id, branch_id, officer_username, officer_role, "
+                 "action, decision_level, from_status, to_status, decided_amount, decided_roi, "
+                 "lrs_score_at_decision, ip_address::text AS ip_address, machine_ip::text AS machine_ip, "
+                 "machine_name, location, reason_text, notes")
+_STATUS_COLS = ("id, created_at, application_id, bank_id, branch_id, from_status, to_status, actor_type, "
+                "actor_username, actor_role, source, ip_address::text AS ip_address, "
+                "machine_ip::text AS machine_ip, machine_name, location, notes")
+_SENSITIVE_COLS = ("id, timestamp, user_type, user_id, phone, action, entity_type, entity_id, details, "
+                   "ip_address::text AS ip_address, geolocation")
+
+
+@app.get("/api/admin/audit/platform")
+async def admin_audit_platform(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                               action: Optional[str] = None, limit: int = 50, offset: int = 0):
+    """Super-admin cross-bank action log (platform_audit_log)."""
+    return await _audit_page("platform_audit_log", _PLATFORM_COLS,
+                             [("target_bank_id", uuid.UUID(bank_id) if bank_id else None), ("action", action)],
+                             limit, offset)
+
+
+@app.get("/api/admin/audit/officer-actions")
+async def admin_audit_officer(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                              branch_id: Optional[str] = None, action: Optional[str] = None,
+                              limit: int = 50, offset: int = 0):
+    return await _audit_page("officer_action_log", _OFFICER_COLS,
+                             [("bank_id", uuid.UUID(bank_id) if bank_id else None),
+                              ("branch_id", uuid.UUID(branch_id) if branch_id else None), ("action", action)],
+                             limit, offset)
+
+
+@app.get("/api/admin/audit/status-changes")
+async def admin_audit_status(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                             limit: int = 50, offset: int = 0):
+    return await _audit_page("application_status_log", _STATUS_COLS,
+                             [("bank_id", uuid.UUID(bank_id) if bank_id else None)], limit, offset)
+
+
+@app.get("/api/admin/audit/sensitive")
+async def admin_audit_sensitive(_a: dict = Depends(get_current_admin), action: Optional[str] = None,
+                                limit: int = 50, offset: int = 0):
+    return await _audit_page("audit_logs", _SENSITIVE_COLS, [("action", action)], limit, offset, order="timestamp")
+
+
+# ── Bank-scoped audit (bank admin sees their bank; branch officer sees their branch) ──
+@app.get("/api/bank/audit")
+async def bank_audit(stream: str = "status-changes", user: dict = Depends(get_current_bank_user),
+                     limit: int = 50, offset: int = 0):
+    """Bank-scoped audit. Auto-filters to the caller's bank_id, and to their
+    branch_id when the caller is branch-scoped (bank admins have no branch → whole bank)."""
+    bank_id = uuid.UUID(user["bank_id"])
+    branch_id = uuid.UUID(user["branch_id"]) if user.get("branch_id") else None
+    if stream == "officer-actions":
+        return await _audit_page("officer_action_log", _OFFICER_COLS,
+                                 [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    if stream == "activity":
+        return await _audit_page(
+            "activity_log",
+            "id, created_at, actor_type, actor_username, actor_role, bank_id, branch_id, action, "
+            "module, endpoint, http_method, http_status, result, ip_address::text AS ip_address, "
+            "machine_ip::text AS machine_ip, machine_name, location, duration_ms",
+            [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    return await _audit_page("application_status_log", _STATUS_COLS,
+                             [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+
+
 # Keep old admin login for backward compatibility
 @app.post("/api/admin/login")
 async def admin_login(payload: AdminLogin):

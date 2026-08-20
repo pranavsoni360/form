@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { ShieldCheck, LogIn, LogOut, XCircle, Activity as ActivityIcon, Globe } from "lucide-react";
+import {
+  ShieldCheck, LogIn, LogOut, XCircle, Activity as ActivityIcon, Globe,
+  Landmark, Gavel, GitBranch, Eye,
+} from "lucide-react";
 
 import { AppShell } from "@/components/shared/AppShell";
 import { StatCard } from "@/components/ops/StatCard";
@@ -9,223 +12,247 @@ import { DataTable, type DataTableColumn } from "@/components/ops/DataTable";
 import { cn } from "@/lib/utils";
 import { opsFetch } from "@/lib/ops-fetch";
 
-/* ── Shared types (mirror the /api/admin/audit/* payloads) ─────────────── */
-type Geo = {
-  country?: string | null; country_code?: string | null;
-  region?: string | null; city?: string | null;
-  lat?: number | null; lon?: number | null;
-} | null;
+type Geo = { country?: string | null; country_code?: string | null;
+  region?: string | null; city?: string | null } | null;
 
-type LoginRow = {
-  id: string; created_at: string; event: string; actor_type: string;
-  actor_username: string | null; username_tried: string | null;
-  actor_role: string | null; bank_id: string | null; success: boolean;
-  failure_reason: string | null; ip_address: string | null;
-  location: Geo; device_fingerprint: string | null;
-};
-
-type ActivityRow = {
-  id: string; created_at: string; actor_type: string;
-  actor_username: string | null; actor_role: string | null; bank_id: string | null;
-  action: string; module: string; endpoint: string; http_method: string;
-  http_status: number | null; result: string; ip_address: string | null;
-  location: Geo; duration_ms: number | null;
-};
-
-type Tab = "logins" | "activity";
 const PAGE = 50;
 
+/* ── Shared cell renderers ─────────────────────────────────────────────── */
+function WhenCell({ iso }: { iso: string }) {
+  const d = new Date(iso);
+  return (
+    <div className="space-y-0.5 whitespace-nowrap">
+      <div className="text-xs tabular-nums text-foreground/80">
+        {d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+      </div>
+      <div className="text-[10px] text-muted-foreground">{fmtAgo(Date.now() - d.getTime())} ago</div>
+    </div>
+  );
+}
+
+function LocCell({ ip, machineIp, machineName, geo }: { ip?: string | null; machineIp?: string | null; machineName?: string | null; geo?: Geo }) {
+  const place = geo ? [geo.city, geo.region, geo.country].filter(Boolean).join(", ") : null;
+  return (
+    <div className="space-y-0.5">
+      <div className="text-xs text-foreground/90">
+        {place || <span className="text-muted-foreground italic">unknown</span>}
+        {geo?.country_code && <span className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[9px] text-muted-foreground">{geo.country_code}</span>}
+      </div>
+      {ip && <div className="font-mono text-[10px] text-muted-foreground">{ip.replace(/\/\d+$/, "")}</div>}
+      {(machineName || machineIp) && (
+        <div className="font-mono text-[10px] text-sky-600 dark:text-sky-400">
+          🖥 {machineName || ""}{machineIp ? ` ${machineIp.replace(/\/\d+$/, "")}` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Pill({ text, styles }: { text: string; styles: string }) {
+  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium", styles)}>{text}</span>;
+}
+
+const EVENT_STYLE: Record<string, string> = {
+  login_success: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+  login_failure: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
+  logout: "bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300",
+};
+const RESULT_STYLE: Record<string, string> = {
+  success: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+  denied: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+  failure: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
+};
+const STATUS_STYLE = "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300";
+
+function StatusFlow({ from, to }: { from?: string | null; to?: string | null }) {
+  return (
+    <div className="flex items-center gap-1 text-[10px]">
+      {from && <span className="text-muted-foreground">{from}</span>}
+      <span className="text-muted-foreground">→</span>
+      <Pill text={to || "?"} styles={STATUS_STYLE} />
+    </div>
+  );
+}
+
+function Diff({ before, after }: { before?: any; after?: any }) {
+  const keys = Array.from(new Set([...(before ? Object.keys(before) : []), ...(after ? Object.keys(after) : [])]));
+  if (!keys.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="space-y-0.5 font-mono text-[10px]">
+      {keys.map((k) => (
+        <div key={k} className="flex gap-1">
+          <span className="text-muted-foreground">{k}:</span>
+          {before?.[k] !== undefined && <span className="text-rose-500 line-through">{String(before[k])}</span>}
+          {after?.[k] !== undefined && <span className="text-emerald-600 dark:text-emerald-400">{String(after[k])}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ActorCell({ name, sub }: { name?: string | null; sub?: string | null }) {
+  return (
+    <div className="space-y-0.5">
+      <div className="text-xs font-semibold text-foreground">{name || "—"}</div>
+      {sub && <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
+/* ── Tab config: each stream declares its endpoint, columns, filters ────── */
+type TabDef = {
+  key: string; label: string; icon: any; endpoint: string;
+  filterParam?: string; filters?: [string, string][]; // [value,label]
+  columns: DataTableColumn<any>[];
+};
+
+const loc = (r: any) => <LocCell ip={r.ip_address} machineIp={r.machine_ip} machineName={r.machine_name} geo={r.location || r.geolocation} />;
+
+const TABS: TabDef[] = [
+  {
+    key: "logins", label: "Logins", icon: LogIn, endpoint: "/api/admin/audit/logins",
+    filterParam: "event", filters: [["all", "All"], ["login_success", "Success"], ["login_failure", "Failed"], ["logout", "Logout"]],
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
+      { key: "ev", header: "Event", render: (r) => <Pill text={(r.event || "").replace("login_", "")} styles={EVENT_STYLE[r.event] || "bg-muted text-muted-foreground"} /> },
+      { key: "u", header: "User", render: (r) => <ActorCell name={r.actor_username || r.username_tried} sub={`${r.actor_type}${r.actor_role ? " · " + r.actor_role : ""}`} /> },
+      { key: "loc", header: "Location", render: loc },
+      { key: "dev", header: "Device", render: (r) => r.device_fingerprint ? <span className="font-mono text-[10px] text-muted-foreground">{r.device_fingerprint.slice(0, 10)}</span> : <span className="text-muted-foreground">—</span> },
+    ],
+  },
+  {
+    key: "activity", label: "Activity", icon: ActivityIcon, endpoint: "/api/admin/audit/activity",
+    filterParam: "result", filters: [["all", "All"], ["success", "Success"], ["denied", "Denied"], ["failure", "Failure"]],
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
+      { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_username} sub={r.actor_type} /> },
+      { key: "act", header: "Action", render: (r) => <div className="space-y-0.5"><div className="font-mono text-xs font-semibold">{r.http_method} {r.endpoint}</div><div className="text-[10px] uppercase text-muted-foreground">{r.module}</div></div> },
+      { key: "res", header: "Result", render: (r) => <div className="flex items-center gap-1"><Pill text={r.result} styles={RESULT_STYLE[r.result] || "bg-muted"} /><span className="font-mono text-[10px] text-muted-foreground">{r.http_status}</span></div> },
+      { key: "loc", header: "Location", render: loc },
+    ],
+  },
+  {
+    key: "platform", label: "Super-admin", icon: Landmark, endpoint: "/api/admin/audit/platform",
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
+      { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_email} sub={r.actor_role} /> },
+      { key: "act", header: "Action", render: (r) => <div className="space-y-0.5"><Pill text={r.action} styles="bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" /><div className="text-[10px] text-muted-foreground">{r.entity_type}</div></div> },
+      { key: "diff", header: "Change", render: (r) => <Diff before={r.before_data} after={r.after_data} /> },
+      { key: "loc", header: "Location", render: loc },
+    ],
+  },
+  {
+    key: "officer-actions", label: "Officer decisions", icon: Gavel, endpoint: "/api/admin/audit/officer-actions",
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
+      { key: "off", header: "Officer", render: (r) => <ActorCell name={r.officer_username} sub={`${r.officer_role || ""}${r.decision_level ? " · " + r.decision_level : ""}`} /> },
+      { key: "act", header: "Decision", render: (r) => <div className="space-y-0.5"><Pill text={r.action} styles="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" /><StatusFlow from={r.from_status} to={r.to_status} /></div> },
+      { key: "terms", header: "Terms / LRS", render: (r) => <div className="space-y-0.5 font-mono text-[10px] text-muted-foreground">{r.decided_amount && <div>₹{Number(r.decided_amount).toLocaleString()}</div>}{r.lrs_score_at_decision != null && <div>LRS {r.lrs_score_at_decision}</div>}</div> },
+      { key: "loc", header: "Location", render: loc },
+    ],
+  },
+  {
+    key: "status-changes", label: "Status timeline", icon: GitBranch, endpoint: "/api/admin/audit/status-changes",
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
+      { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_username} sub={`${r.actor_type}${r.actor_role ? " · " + r.actor_role : ""}`} /> },
+      { key: "flow", header: "Status", render: (r) => <StatusFlow from={r.from_status} to={r.to_status} /> },
+      { key: "src", header: "Source", render: (r) => <span className="text-[10px] text-muted-foreground">{r.source}</span> },
+      { key: "loc", header: "Location", render: loc },
+    ],
+  },
+  {
+    key: "sensitive", label: "Sensitive access", icon: Eye, endpoint: "/api/admin/audit/sensitive",
+    columns: [
+      { key: "when", header: "When", render: (r) => <WhenCell iso={r.timestamp} /> },
+      { key: "u", header: "User", render: (r) => <ActorCell name={r.user_type} sub={r.user_id ? String(r.user_id).slice(0, 8) : null} /> },
+      { key: "act", header: "Action", render: (r) => <Pill text={r.action} styles="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" /> },
+      { key: "ent", header: "Entity", render: (r) => <div className="space-y-0.5 text-[10px] text-muted-foreground"><div>{r.entity_type}</div>{r.phone && <div className="font-mono">{r.phone}</div>}</div> },
+      { key: "loc", header: "Location", render: loc },
+    ],
+  },
+];
+
 export default function OpsAuditPage() {
-  const [tab, setTab] = React.useState<Tab>("logins");
-  const [filter, setFilter] = React.useState<string>("all");
-  const [q, setQ] = React.useState("");
-  const [qDebounced, setQDebounced] = React.useState("");
+  const [tabKey, setTabKey] = React.useState("logins");
+  const [filter, setFilter] = React.useState("all");
   const [rows, setRows] = React.useState<any[]>([]);
   const [total, setTotal] = React.useState(0);
   const [offset, setOffset] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
 
-  // debounce search
-  React.useEffect(() => {
-    const t = setTimeout(() => setQDebounced(q.trim()), 350);
-    return () => clearTimeout(t);
-  }, [q]);
+  const tab = TABS.find((t) => t.key === tabKey)!;
 
-  // reset paging when tab / filter / search changes
-  React.useEffect(() => { setOffset(0); }, [tab, filter, qDebounced]);
+  React.useEffect(() => { setOffset(0); }, [tabKey, filter]);
 
   const load = React.useCallback(async (append: boolean) => {
     setLoading(true); setErr(null);
     const off = append ? offset : 0;
     const params = new URLSearchParams({ limit: String(PAGE), offset: String(off) });
-    if (qDebounced) params.set("q", qDebounced);
-    if (filter !== "all") {
-      if (tab === "logins") {
-        if (filter === "success") params.set("event", "login_success");
-        else if (filter === "failure") params.set("event", "login_failure");
-        else if (filter === "logout") params.set("event", "logout");
-      } else {
-        params.set("result", filter); // success | denied | failure
-      }
-    }
+    if (filter !== "all" && tab.filterParam) params.set(tab.filterParam, filter);
     try {
-      const res = await opsFetch(`/api/admin/audit/${tab}?${params.toString()}`, { cache: "no-store" });
+      const res = await opsFetch(`${tab.endpoint}?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) { setErr(`HTTP ${res.status}`); setLoading(false); return; }
       const data = await res.json();
       setTotal(data.total ?? 0);
       setRows((prev) => (append ? [...prev, ...(data.items ?? [])] : (data.items ?? [])));
     } catch (e: any) {
       setErr(e?.message ?? "request failed");
-    } finally {
-      setLoading(false);
-    }
-  }, [tab, filter, qDebounced, offset]);
+    } finally { setLoading(false); }
+  }, [tab, filter, offset]);
 
-  // initial + on filter/tab/search change (offset back to 0)
-  React.useEffect(() => { load(false); /* eslint-disable-next-line */ }, [tab, filter, qDebounced]);
-  // load-more when offset advances
+  React.useEffect(() => { load(false); /* eslint-disable-next-line */ }, [tabKey, filter]);
   React.useEffect(() => { if (offset > 0) load(true); /* eslint-disable-next-line */ }, [offset]);
 
-  /* ── Header stats (from the loaded page — a live sample, not a full scan) ── */
-  const stats = React.useMemo(() => {
-    if (tab === "logins") {
-      const r = rows as LoginRow[];
-      return {
-        a: { label: "SHOWING", value: r.length, icon: ShieldCheck, tone: "info" as const },
-        b: { label: "SUCCESS", value: r.filter((x) => x.event === "login_success").length, icon: LogIn, tone: "success" as const },
-        c: { label: "FAILED", value: r.filter((x) => x.event === "login_failure").length, icon: XCircle, tone: "danger" as const },
-        d: { label: "LOCATIONS", value: new Set(r.map((x) => x.location?.city).filter(Boolean)).size, icon: Globe, tone: "neutral" as const },
-      };
-    }
-    const r = rows as ActivityRow[];
-    return {
-      a: { label: "SHOWING", value: r.length, icon: ActivityIcon, tone: "info" as const },
-      b: { label: "SUCCESS", value: r.filter((x) => x.result === "success").length, icon: ShieldCheck, tone: "success" as const },
-      c: { label: "DENIED/FAIL", value: r.filter((x) => x.result !== "success").length, icon: XCircle, tone: "danger" as const },
-      d: { label: "LOCATIONS", value: new Set(r.map((x) => x.location?.city).filter(Boolean)).size, icon: Globe, tone: "neutral" as const },
-    };
-  }, [rows, tab]);
-
-  const filterOptions = tab === "logins"
-    ? [["all", "All"], ["success", "Success"], ["failure", "Failed"], ["logout", "Logout"]]
-    : [["all", "All"], ["success", "Success"], ["denied", "Denied"], ["failure", "Failure"]];
-
-  const loginCols: ReadonlyArray<DataTableColumn<LoginRow>> = [
-    { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
-    { key: "event", header: "Event", render: (r) => <EventBadge event={r.event} /> },
-    {
-      key: "user", header: "User",
-      render: (r) => (
-        <div className="space-y-0.5">
-          <div className="text-xs font-semibold text-foreground">{r.actor_username || r.username_tried || "—"}</div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.actor_type}{r.actor_role ? ` · ${r.actor_role}` : ""}</div>
-          {r.failure_reason && <div className="text-[10px] text-rose-500">{r.failure_reason}</div>}
-        </div>
-      ),
-    },
-    { key: "loc", header: "Location", render: (r) => <LocCell ip={r.ip_address} geo={r.location} /> },
-    {
-      key: "device", header: "Device",
-      render: (r) => r.device_fingerprint
-        ? <span className="font-mono text-[10px] text-muted-foreground" title={r.device_fingerprint}>{r.device_fingerprint.slice(0, 10)}</span>
-        : <span className="text-muted-foreground">—</span>,
-    },
-  ];
-
-  const activityCols: ReadonlyArray<DataTableColumn<ActivityRow>> = [
-    { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
-    {
-      key: "actor", header: "Actor",
-      render: (r) => (
-        <div className="space-y-0.5">
-          <div className="text-xs font-semibold text-foreground">{r.actor_username || "—"}</div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.actor_type}</div>
-        </div>
-      ),
-    },
-    {
-      key: "action", header: "Action",
-      render: (r) => (
-        <div className="space-y-0.5">
-          <div className="font-mono text-xs font-semibold text-foreground">{r.http_method} {r.endpoint}</div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.module}</div>
-        </div>
-      ),
-    },
-    {
-      key: "result", header: "Result",
-      render: (r) => (
-        <div className="flex items-center gap-2">
-          <ResultBadge result={r.result} />
-          {r.http_status != null && <span className="font-mono text-[10px] text-muted-foreground">{r.http_status}</span>}
-          {r.duration_ms != null && <span className="font-mono text-[10px] text-muted-foreground/70">{r.duration_ms}ms</span>}
-        </div>
-      ),
-    },
-    { key: "loc", header: "Location", render: (r) => <LocCell ip={r.ip_address} geo={r.location} /> },
-  ];
-
+  const locCount = new Set(rows.map((x) => (x.location || x.geolocation)?.city).filter(Boolean)).size;
   const hasMore = rows.length < total;
 
   return (
-    <AppShell
-      title="Audit trail"
-      subtitle="Tamper-proof (append-only) record of every login and mutating action — with client IP + geolocation"
-    >
+    <AppShell title="Audit trail" subtitle="Tamper-proof (append-only) record across every tier — with client IP, machine IP, and geolocation">
       <div className="space-y-6">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard {...stats.a} />
-          <StatCard {...stats.b} />
-          <StatCard {...stats.c} />
-          <StatCard {...stats.d} hint={`${total} total`} />
+          <StatCard label="STREAM" value={tab.label.toUpperCase()} icon={tab.icon} tone="info" />
+          <StatCard label="SHOWING" value={rows.length} icon={ShieldCheck} tone="neutral" />
+          <StatCard label="TOTAL" value={total} icon={ActivityIcon} tone="neutral" />
+          <StatCard label="LOCATIONS" value={locCount} icon={Globe} tone="neutral" />
         </div>
 
-        {/* Tab switch */}
-        <div className="flex items-center gap-2">
-          <TabButton active={tab === "logins"} onClick={() => { setTab("logins"); setFilter("all"); }} icon={LogIn}>Logins</TabButton>
-          <TabButton active={tab === "activity"} onClick={() => { setTab("activity"); setFilter("all"); }} icon={ActivityIcon}>Activity</TabButton>
-          <div className="ml-auto">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={tab === "logins" ? "search user…" : "search endpoint / user…"}
-              className="w-56 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
-        </div>
-
-        {/* Filter pills */}
+        {/* Stream tabs */}
         <div className="flex flex-wrap items-center gap-2">
-          {filterOptions.map(([v, label]) => (
-            <button
-              key={v}
-              onClick={() => setFilter(v)}
-              className={cn(
-                "rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors",
-                filter === v ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:bg-muted/80",
-              )}
-            >
-              {label}
+          {TABS.map((t) => (
+            <button key={t.key} onClick={() => { setTabKey(t.key); setFilter("all"); }}
+              className={cn("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                tabKey === t.key ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80")}>
+              <t.icon className="h-3.5 w-3.5" />{t.label}
             </button>
           ))}
-          {loading && <span className="text-[11px] text-muted-foreground">loading…</span>}
-          {err && <span className="text-[11px] text-rose-500">error: {err}</span>}
         </div>
 
-        {tab === "logins" ? (
-          <DataTable columns={loginCols} rows={rows as LoginRow[]} rowKey={(r, i) => `${r.id}-${i}`} empty={<EmptyBox />} />
-        ) : (
-          <DataTable columns={activityCols} rows={rows as ActivityRow[]} rowKey={(r, i) => `${r.id}-${i}`} empty={<EmptyBox />} />
+        {/* Filter pills (only for tabs that declare filters) */}
+        {tab.filters && (
+          <div className="flex flex-wrap items-center gap-2">
+            {tab.filters.map(([v, label]) => (
+              <button key={v} onClick={() => setFilter(v)}
+                className={cn("rounded-full px-3 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors",
+                  filter === v ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:bg-muted/80")}>
+                {label}
+              </button>
+            ))}
+            {loading && <span className="text-[11px] text-muted-foreground">loading…</span>}
+            {err && <span className="text-[11px] text-rose-500">error: {err}</span>}
+          </div>
         )}
+        {!tab.filters && (loading || err) && (
+          <div className="text-[11px]">{loading && <span className="text-muted-foreground">loading…</span>}{err && <span className="text-rose-500">error: {err}</span>}</div>
+        )}
+
+        <DataTable columns={tab.columns} rows={rows} rowKey={(r, i) => `${r.id}-${i}`} empty={<EmptyBox />} />
 
         {hasMore && (
           <div className="flex justify-center">
-            <button
-              onClick={() => setOffset((o) => o + PAGE)}
-              disabled={loading}
-              className="rounded-lg border border-border bg-card px-4 py-2 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-            >
+            <button onClick={() => setOffset((o) => o + PAGE)} disabled={loading}
+              className="rounded-lg border border-border bg-card px-4 py-2 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50">
               {loading ? "loading…" : `Load more (${rows.length} of ${total})`}
             </button>
           </div>
@@ -235,67 +262,12 @@ export default function OpsAuditPage() {
   );
 }
 
-/* ── Cells & badges ────────────────────────────────────────────────────── */
-function WhenCell({ iso }: { iso: string }) {
-  const d = new Date(iso);
-  return (
-    <div className="space-y-0.5">
-      <div className="text-xs tabular-nums text-foreground/80">{d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
-      <div className="text-[10px] text-muted-foreground">{fmtAgo(Date.now() - d.getTime())} ago</div>
-    </div>
-  );
-}
-
-function LocCell({ ip, geo }: { ip: string | null; geo: Geo }) {
-  const place = geo ? [geo.city, geo.region, geo.country].filter(Boolean).join(", ") : null;
-  return (
-    <div className="space-y-0.5">
-      <div className="text-xs text-foreground/90">
-        {place || <span className="text-muted-foreground italic">unknown</span>}
-        {geo?.country_code && <span className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[9px] text-muted-foreground">{geo.country_code}</span>}
-      </div>
-      {ip && <div className="font-mono text-[10px] text-muted-foreground">{ip.replace(/\/32$|\/128$/, "")}</div>}
-    </div>
-  );
-}
-
-const EVENT_STYLE: Record<string, string> = {
-  login_success: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-  login_failure: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
-  logout: "bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300",
-};
-function EventBadge({ event }: { event: string }) {
-  const Icon = event === "login_success" ? LogIn : event === "logout" ? LogOut : XCircle;
-  return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", EVENT_STYLE[event] || "bg-muted text-muted-foreground")}>
-      <Icon className="h-3 w-3" />{event.replace("login_", "")}
-    </span>
-  );
-}
-
-const RESULT_STYLE: Record<string, string> = {
-  success: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-  denied: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  failure: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
-};
-function ResultBadge({ result }: { result: string }) {
-  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider", RESULT_STYLE[result] || "bg-muted text-muted-foreground")}>{result}</span>;
-}
-
-function TabButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className={cn("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors", active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80")}>
-      <Icon className="h-3.5 w-3.5" />{children}
-    </button>
-  );
-}
-
 function EmptyBox() {
   return (
     <div className="grid place-items-center px-6 py-16 text-center">
       <div className="grid h-12 w-12 place-items-center rounded-xl bg-muted ring-1 ring-border"><ShieldCheck className="h-5 w-5 text-muted-foreground" /></div>
       <div className="mt-3 text-sm font-semibold">Nothing here yet</div>
-      <div className="mt-1 max-w-sm text-xs text-muted-foreground">No records match the current filter. Audit entries appear here as users log in and act on the system.</div>
+      <div className="mt-1 max-w-sm text-xs text-muted-foreground">No records for this stream/filter. Entries appear here as users act on the system.</div>
     </div>
   );
 }

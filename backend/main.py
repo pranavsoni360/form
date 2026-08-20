@@ -1646,7 +1646,8 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     await _clear_failed_logins(payload.username)
     user_id = str(row["id"])
     bank_id = str(row["bank_id"])
-    access_token = create_access_token(user_id=user_id, role=row["role"], user_type="bank_user", bank_id=bank_id, username=row["username"])
+    _branch_id = str(row["branch_id"]) if row["branch_id"] else None
+    access_token = create_access_token(user_id=user_id, role=row["role"], user_type="bank_user", bank_id=bank_id, username=row["username"], branch_id=_branch_id)
     refresh_token, jti = create_refresh_token(user_id=user_id, role=row["role"], user_type="bank_user", bank_id=bank_id)
     await _store_refresh_token(user_id, jti, row["role"], "bank_user", bank_id)
     await db_pool.execute("UPDATE bank_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])

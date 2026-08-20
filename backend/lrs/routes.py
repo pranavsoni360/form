@@ -136,4 +136,11 @@ async def put_config(request: Request, user: dict = Depends(get_current_bank_use
             await sc_module.save_db_config(_state.db_pool, body)
     except sc_module.ScorecardConfigError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # Scorecard publish is a high-privilege config change → platform_audit_log.
+    from services import audit as _audit
+    await _audit.record_platform_audit(
+        _state.db_pool, request, actor=_audit.decode_actor(request), action="scorecard.publish",
+        entity_type="scorecard_config", target_bank_id=user.get("bank_id"),
+        after={"config_version": body.get("config_version", ""),
+               "scope": ("bank" if user.get("bank_id") else "global_default")})
     return {"ok": True, "config_version": body.get("config_version", "")}

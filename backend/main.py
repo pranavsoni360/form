@@ -1928,7 +1928,7 @@ async def admin_list_banks(admin: dict = Depends(get_current_admin)):
     return {"banks": _rows_to_list(rows)}
 
 @app.post("/api/admin/banks")
-async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_admin)):
+async def admin_create_bank(bank: BankCreate, request: Request, admin: dict = Depends(get_current_admin)):
     """Create a new bank."""
     # Trim fields
     name = bank.name.strip()
@@ -1960,10 +1960,14 @@ async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
         name, code, contact_email, contact_phone, bank.address, bank.logo_url
     )
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank.create",
+        entity_type="bank", entity_id=str(row["id"]), target_bank_id=str(row["id"]),
+        after={"name": name, "code": code, "contact_email": contact_email})
     return {"bank": _row_to_dict(row)}
 
 @app.put("/api/admin/banks/{bank_id}")
-async def admin_update_bank(bank_id: str, bank: BankUpdate, admin: dict = Depends(get_current_admin)):
+async def admin_update_bank(bank_id: str, bank: BankUpdate, request: Request, admin: dict = Depends(get_current_admin)):
     """Update a bank."""
     existing = await db_pool.fetchrow("SELECT * FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not existing:
@@ -2000,6 +2004,13 @@ async def admin_update_bank(bank_id: str, bank: BankUpdate, admin: dict = Depend
     vals.append(uuid.UUID(bank_id))
     await db_pool.execute(f"UPDATE banks SET {sets} WHERE id = ${len(updates)+1}", *vals)
     row = await db_pool.fetchrow("SELECT * FROM banks WHERE id = $1", uuid.UUID(bank_id))
+    _changed = [k for k in updates if k != "updated_at"]
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request),
+        action=("bank.suspend" if updates.get("status") == "inactive" else "bank.update"),
+        entity_type="bank", entity_id=bank_id, target_bank_id=bank_id,
+        before={k: (str(existing[k]) if existing[k] is not None else None) for k in _changed},
+        after={k: (str(updates[k]) if updates[k] is not None else None) for k in _changed})
     return {"bank": _row_to_dict(row)}
 
 @app.get("/api/admin/banks/{bank_id}")
@@ -2019,7 +2030,7 @@ async def admin_get_bank(bank_id: str, admin: dict = Depends(get_current_admin))
     return {"bank": bank_dict}
 
 @app.post("/api/admin/banks/{bank_id}/users")
-async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict = Depends(get_current_admin)):
+async def admin_create_bank_user(bank_id: str, user: BankUserCreate, request: Request, admin: dict = Depends(get_current_admin)):
     """Create a bank user (auto-generate password, return it once)."""
     bank = await db_pool.fetchrow("SELECT id FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not bank:
@@ -2059,10 +2070,14 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     )
     user_dict = _row_to_dict(row)
     user_dict["generated_password"] = password  # Show only once
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank_user.create",
+        entity_type="bank_user", entity_id=str(row["id"]), target_bank_id=bank_id,
+        after={"username": username, "role": user.role, "full_name": full_name})
     return {"user": user_dict}
 
 @app.put("/api/admin/banks/{bank_id}/users/{user_id}")
-async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdate, admin: dict = Depends(get_current_admin)):
+async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdate, request: Request, admin: dict = Depends(get_current_admin)):
     """Update a bank user."""
     existing = await db_pool.fetchrow("SELECT * FROM bank_users WHERE id = $1 AND bank_id = $2", uuid.UUID(user_id), uuid.UUID(bank_id))
     if not existing:
@@ -2088,15 +2103,26 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
         "SELECT id, bank_id, username, email, full_name, role, is_active, created_at, last_login_at FROM bank_users WHERE id = $1",
         uuid.UUID(user_id)
     )
+    _changed = list(updates.keys())
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank_user.update",
+        entity_type="bank_user", entity_id=user_id, target_bank_id=bank_id,
+        before={k: (str(existing[k]) if existing[k] is not None else None) for k in _changed},
+        after={k: (str(updates[k]) if updates[k] is not None else None) for k in _changed})
     return {"user": _row_to_dict(row)}
 
 @app.delete("/api/admin/banks/{bank_id}/users/{user_id}")
-async def admin_deactivate_bank_user(bank_id: str, user_id: str, admin: dict = Depends(get_current_admin)):
+async def admin_deactivate_bank_user(bank_id: str, user_id: str, request: Request, admin: dict = Depends(get_current_admin)):
     """Deactivate a bank user (set is_active=false)."""
     existing = await db_pool.fetchrow("SELECT * FROM bank_users WHERE id = $1 AND bank_id = $2", uuid.UUID(user_id), uuid.UUID(bank_id))
     if not existing:
         raise HTTPException(status_code=404, detail="Bank user not found")
     await db_pool.execute("UPDATE bank_users SET is_active = false WHERE id = $1", uuid.UUID(user_id))
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank_user.deactivate",
+        entity_type="bank_user", entity_id=user_id, target_bank_id=bank_id,
+        before={"is_active": "True"}, after={"is_active": "False"},
+        remark=f"deactivated {existing['username']}")
     return {"status": "deactivated", "message": f"User {existing['username']} has been deactivated"}
 
 @app.get("/api/admin/stats")

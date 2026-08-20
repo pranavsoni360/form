@@ -25,9 +25,11 @@ from typing import Optional
 import asyncpg
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
+
+from services import audit as _audit
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
@@ -154,7 +156,7 @@ async def list_vendors(
 
 
 @admin_router.post("/vendors")
-async def create_vendor(payload: VendorCreate, admin: dict = Depends(get_current_admin_dep)):
+async def create_vendor(payload: VendorCreate, request: Request, admin: dict = Depends(get_current_admin_dep)):
     try:
         row = await _db().fetchrow(
             "INSERT INTO vendors (name, code, contact_email, contact_phone, address, gstin, pan_number) "
@@ -165,6 +167,10 @@ async def create_vendor(payload: VendorCreate, admin: dict = Depends(get_current
     except asyncpg.UniqueViolationError:
         raise HTTPException(409, f"vendor code '{payload.code}' already exists")
     logger.info("vendor_created", extra={"vendor_id": str(row["id"]), "by_admin": admin["id"]})
+    await _audit.record_platform_audit(
+        _db(), request, actor=_audit.decode_actor(request), action="vendor.create",
+        entity_type="vendor", entity_id=str(row["id"]),
+        after={"name": payload.name, "code": payload.code})
     return _row(row)
 
 
@@ -192,7 +198,7 @@ async def get_vendor(vid: str, admin: dict = Depends(get_current_admin_dep)):
 
 
 @admin_router.patch("/vendors/{vid}")
-async def update_vendor(vid: str, payload: VendorUpdate, admin: dict = Depends(get_current_admin_dep)):
+async def update_vendor(vid: str, payload: VendorUpdate, request: Request, admin: dict = Depends(get_current_admin_dep)):
     try:
         vuuid = uuid.UUID(vid)
     except ValueError:
@@ -207,11 +213,15 @@ async def update_vendor(vid: str, payload: VendorUpdate, admin: dict = Depends(g
     row = await _db().fetchrow(f"UPDATE vendors SET {sets}, updated_at = NOW() WHERE id = $1 RETURNING *", *args)
     if not row:
         raise HTTPException(404, "vendor not found")
+    await _audit.record_platform_audit(
+        _db(), request, actor=_audit.decode_actor(request), action="vendor.update",
+        entity_type="vendor", entity_id=vid,
+        after={k: (str(v) if v is not None else None) for k, v in updates.items()})
     return _row(row)
 
 
 @admin_router.delete("/vendors/{vid}")
-async def deactivate_vendor(vid: str, admin: dict = Depends(get_current_admin_dep)):
+async def deactivate_vendor(vid: str, request: Request, admin: dict = Depends(get_current_admin_dep)):
     """Soft delete — set status=inactive. Hard delete would cascade to
     assignment history, which we never want to lose."""
     try:
@@ -224,6 +234,9 @@ async def deactivate_vendor(vid: str, admin: dict = Depends(get_current_admin_de
     )
     if not row:
         raise HTTPException(404, "vendor not found")
+    await _audit.record_platform_audit(
+        _db(), request, actor=_audit.decode_actor(request), action="vendor.deactivate",
+        entity_type="vendor", entity_id=vid, before={"status": "active"}, after={"status": "inactive"})
     return {"ok": True, "id": vid, "status": "inactive"}
 
 
@@ -339,7 +352,7 @@ async def list_partnerships(
 
 
 @admin_router.post("/partnerships")
-async def create_partnership(payload: PartnershipCreate, admin: dict = Depends(get_current_admin_dep)):
+async def create_partnership(payload: PartnershipCreate, request: Request, admin: dict = Depends(get_current_admin_dep)):
     try:
         buid, vuid = uuid.UUID(payload.bank_id), uuid.UUID(payload.vendor_id)
     except ValueError:
@@ -376,11 +389,15 @@ async def create_partnership(payload: PartnershipCreate, admin: dict = Depends(g
                 raise HTTPException(409, "partnership already exists for this bank+vendor")
             except asyncpg.ForeignKeyViolationError:
                 raise HTTPException(404, "vendor not found")
+    await _audit.record_platform_audit(
+        _db(), request, actor=_audit.decode_actor(request), action="partnership.create",
+        entity_type="partnership", entity_id=str(row["id"]), target_bank_id=payload.bank_id,
+        after={"vendor_id": payload.vendor_id, "commission_pct": str(payload.commission_pct)})
     return _row(row)
 
 
 @admin_router.patch("/partnerships/{pid}")
-async def update_partnership(pid: str, payload: PartnershipUpdate, admin: dict = Depends(get_current_admin_dep)):
+async def update_partnership(pid: str, payload: PartnershipUpdate, request: Request, admin: dict = Depends(get_current_admin_dep)):
     try:
         puid = uuid.UUID(pid)
     except ValueError:
@@ -395,6 +412,10 @@ async def update_partnership(pid: str, payload: PartnershipUpdate, admin: dict =
     )
     if not row:
         raise HTTPException(404, "partnership not found")
+    await _audit.record_platform_audit(
+        _db(), request, actor=_audit.decode_actor(request), action="partnership.update",
+        entity_type="partnership", entity_id=pid, target_bank_id=str(row["bank_id"]),
+        after={k: (str(v) if v is not None else None) for k, v in updates.items()})
     return _row(row)
 
 
@@ -723,7 +744,7 @@ class VendorDisburse(BaseModel):
 
 
 @vendor_router.post("/assignments/{ava_id}/disburse")
-async def vendor_disburse(ava_id: str, payload: VendorDisburse, vendor: dict = Depends(get_current_vendor)):
+async def vendor_disburse(ava_id: str, payload: VendorDisburse, request: Request, vendor: dict = Depends(get_current_vendor)):
     """Mark as disbursed + create matching settlement row in one transaction.
 
     Also updates loan_applications.status='disbursed' + sets disbursed_at.
@@ -812,6 +833,15 @@ async def vendor_disburse(ava_id: str, payload: VendorDisburse, vendor: dict = D
             "ref": payload.disbursement_ref,
         },
     )
+    # Financial audit — disbursement is real money leaving. Record to audit_logs
+    # with the settlement detail (amount, commission, payout) + who/where.
+    await _audit.record_sensitive_access(
+        _db(), request, actor=_audit.decode_actor(request), action="vendor_disburse",
+        entity_type="application", entity_id=str(row["application_id"]),
+        details={"assignment_id": ava_id, "amount": float(amount),
+                 "commission_amount": (float(commission_amount) if commission_amount is not None else None),
+                 "bank_payout": (float(bank_payout) if bank_payout is not None else None),
+                 "disbursement_ref": payload.disbursement_ref, "vendor_id": vendor["vendor_id"]})
     return {"assignment": _row(updated), "settlement": _row(settlement)}
 
 

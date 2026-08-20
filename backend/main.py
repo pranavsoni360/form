@@ -2190,7 +2190,7 @@ async def admin_get_applications(
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/admin/applications/{app_id}")
-async def admin_get_application(app_id: str, admin: dict = Depends(get_current_admin)):
+async def admin_get_application(app_id: str, request: Request, admin: dict = Depends(get_current_admin)):
     """Admin: full application detail (read-only, any bank)."""
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", uuid.UUID(app_id))
     if not app_row:
@@ -2198,6 +2198,11 @@ async def admin_get_application(app_id: str, admin: dict = Depends(get_current_a
     app_dict = _row_to_dict(app_row)
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
+        # Sensitive read — decrypted Aadhaar was surfaced to an admin.
+        await _audit.record_sensitive_access(
+            db_pool, request, actor=_audit.decode_actor(request), action="view_aadhaar",
+            entity_type="application", entity_id=app_id, phone=app_row.get("phone"),
+            details={"loan_id": app_row.get("loan_id"), "bank_id": (str(app_row["bank_id"]) if app_row.get("bank_id") else None)})
     _attach_code_labels(app_dict)
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC", uuid.UUID(app_id)

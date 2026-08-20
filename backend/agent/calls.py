@@ -21,6 +21,8 @@ from .state import (
     CALL_START_HOUR, CALL_END_HOUR, release_batch_lock,
 )
 
+from services import audit as _audit
+
 logger = logging.getLogger("agent-calls")
 router = APIRouter()
 
@@ -256,7 +258,7 @@ async def get_call_transcript(call_id: str, user: dict = Depends(get_current_ban
 
 
 @router.get("/calls/{call_id}/recording")
-async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank_user)):
+async def get_call_recording(call_id: str, request: Request, user: dict = Depends(get_current_bank_user)):
     """Get recording URL for a call."""
     try:
         call_uuid = uuid.UUID(call_id)
@@ -271,6 +273,10 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     call = _row_to_dict(row)
+    if call.get("recording_url"):
+        await _audit.record_sensitive_access(
+            _state.db_pool, request, actor=_audit.decode_actor(request), action="view_recording",
+            entity_type="agent_call", entity_id=call_id)
     return {
         "call_id": call_id,
         "name": call.get("customer_name"),
@@ -649,11 +655,15 @@ async def get_analytics(user: dict = Depends(get_current_bank_user)):
 
 @router.get("/export/daily-report")
 async def export_daily_report(
+    request: Request,
     date: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
     """Export daily report as Excel."""
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
+    await _audit.record_sensitive_access(
+        _state.db_pool, request, actor=_audit.decode_actor(request), action="export_daily_report",
+        entity_type="agent_calls", details={"date": date, "bank_id": (str(bank_uuid) if bank_uuid else None)})
     if not date:
         date = now_ist().strftime("%Y-%m-%d")
     try:
@@ -707,6 +717,7 @@ async def export_daily_report(
 
 @router.get("/export/all-calls")
 async def export_all_calls(
+    request: Request,
     status: Optional[str] = None,
     category: Optional[str] = None,
     date_from: Optional[str] = None,
@@ -718,6 +729,11 @@ async def export_all_calls(
     params: list = []
     idx = 1
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
+    await _audit.record_sensitive_access(
+        _state.db_pool, request, actor=_audit.decode_actor(request), action="export_all_calls",
+        entity_type="agent_calls",
+        details={"bank_id": (str(bank_uuid) if bank_uuid else None), "status": status,
+                 "category": category, "date_from": date_from, "date_to": date_to})
     if bank_uuid:
         conditions.append(f"bank_id = ${idx}")
         params.append(bank_uuid)

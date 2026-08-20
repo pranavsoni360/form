@@ -109,7 +109,12 @@ export function Sidebar({
 
       {/* Identity block */}
       {!collapsed && (
-        <div className="rounded-[14px] bg-fx-surface p-3">
+        <div className="rounded-[14px] p-3" style={{
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.10)",
+          backdropFilter: "blur(16px)",
+          boxShadow: "0 2px 12px rgba(59,130,246,0.04), inset 0 1px 0 rgba(255,255,255,0.5)",
+        }}>
           <div className="flex items-center gap-2">
             <span className="grid h-[34px] w-[34px] place-items-center rounded-[10px] bg-fx-surface2 text-[13px] font-medium text-fx-text">
               {identity.initials}
@@ -123,14 +128,17 @@ export function Sidebar({
           <div className="text-[12px] text-fx-text3">
             {identity.tenant} · {identity.role}
           </div>
-          {/* Slot under the identity lines — used by the shells for the idle
-              session countdown, which has to be visible on every screen. */}
           {identityFooter && <div className="mt-2">{identityFooter}</div>}
         </div>
       )}
 
       {/* Nav panel */}
-      <nav className="rounded-[14px] bg-fx-surface p-2">
+      <nav className="rounded-[14px] p-2" style={{
+        background: "rgba(59,130,246,0.04)",
+        border: "1px solid rgba(59,130,246,0.10)",
+        backdropFilter: "blur(16px)",
+        boxShadow: "0 2px 12px rgba(59,130,246,0.04), inset 0 1px 0 rgba(255,255,255,0.5)",
+      }}>
         {nav.map((item) => {
           const active = item.href === pathname || (item.href !== "/" && pathname?.startsWith(item.href));
           return (

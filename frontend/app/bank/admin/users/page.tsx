@@ -281,16 +281,16 @@ export default function UsersPage() {
         subtitle="Manage your bank's officers and supervisors. Suspending frees the seat immediately and keeps history; deleting removes access permanently but the audit record survives."
       />
 
-      {/* Metric row — glassy cards with subtle color accents */}
+      {/* Metric row — uniform blue glass cards */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-        {/* Seats card — blue */}
+        {/* Seats */}
         <div className="rounded-2xl p-4 md:col-span-1" style={{
-          background: "linear-gradient(135deg, rgba(59,130,246,0.08) 0%, rgba(99,102,241,0.05) 100%)",
-          border: "1px solid rgba(59,130,246,0.18)",
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
           backdropFilter: "blur(12px)",
-          boxShadow: "0 4px 24px rgba(59,130,246,0.07), inset 0 1px 0 rgba(255,255,255,0.6)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
         }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.8)" }}>Seats</div>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Seats</div>
           <div className="mt-1.5 flex items-baseline gap-1.5">
             <span className="text-[26px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
               {seats ? `${seats.used} of ${seats.cap}` : "—"}
@@ -310,46 +310,42 @@ export default function UsersPage() {
           </div>
         </div>
 
-        {/* Active users — green */}
+        {/* Active users */}
         <div className="rounded-2xl p-4" style={{
-          background: "linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(5,150,105,0.05) 100%)",
-          border: "1px solid rgba(16,185,129,0.18)",
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
           backdropFilter: "blur(12px)",
-          boxShadow: "0 4px 24px rgba(16,185,129,0.07), inset 0 1px 0 rgba(255,255,255,0.6)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
         }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(16,185,129,0.85)" }}>Active users</div>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Active users</div>
           <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
             {counts?.active ?? "—"}
           </div>
           <div className="mt-2 text-[12px] text-fx-text3">signed-in accounts</div>
         </div>
 
-        {/* Pending invites — violet */}
+        {/* Pending invites */}
         <div className="rounded-2xl p-4" style={{
-          background: "linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(109,40,217,0.05) 100%)",
-          border: "1px solid rgba(139,92,246,0.18)",
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
           backdropFilter: "blur(12px)",
-          boxShadow: "0 4px 24px rgba(139,92,246,0.07), inset 0 1px 0 rgba(255,255,255,0.6)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
         }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(139,92,246,0.85)" }}>Pending invites</div>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Pending invites</div>
           <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
             {counts?.invited ?? "—"}
           </div>
           <div className="mt-2 text-[12px] text-fx-text3">awaiting acceptance</div>
         </div>
 
-        {/* Free seats — amber (red tint when at capacity) */}
+        {/* Free seats */}
         <div className="rounded-2xl p-4" style={{
-          background: seats?.free === 0
-            ? "linear-gradient(135deg, rgba(245,158,11,0.1) 0%, rgba(217,119,6,0.06) 100%)"
-            : "linear-gradient(135deg, rgba(20,184,166,0.08) 0%, rgba(13,148,136,0.05) 100%)",
-          border: seats?.free === 0 ? "1px solid rgba(245,158,11,0.25)" : "1px solid rgba(20,184,166,0.18)",
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
           backdropFilter: "blur(12px)",
-          boxShadow: seats?.free === 0
-            ? "0 4px 24px rgba(245,158,11,0.08), inset 0 1px 0 rgba(255,255,255,0.6)"
-            : "0 4px 24px rgba(20,184,166,0.07), inset 0 1px 0 rgba(255,255,255,0.6)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
         }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: seats?.free === 0 ? "rgba(245,158,11,0.9)" : "rgba(20,184,166,0.85)" }}>Free seats</div>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Free seats</div>
           <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
             {seats?.free ?? "—"}
           </div>

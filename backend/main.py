@@ -2442,6 +2442,43 @@ async def _record_decision(request, app_row, actor_dict, *, action, from_status,
         logger.warning("decision audit write failed for %s: %s", app_row.get("id"), e)
 
 
+_SNAPSHOT_FIELDS = [
+    ("customer_name", "Customer Name"), ("date_of_birth", "Date of Birth"),
+    ("employment_type", "Employment Type"), ("monthly_income", "Monthly Income"),
+    ("loan_purpose", "Loan Purpose"), ("loan_amount_requested", "Loan Amount Requested"),
+    ("pan_number", "PAN"),
+]
+
+
+def _snapshot_fields(app_data: dict) -> list:
+    """Curated field snapshot for application_field_history at submit. PAN is
+    masked to last-4 (audit trail must not become a second PII store)."""
+    changes = []
+    for key, label in _SNAPSHOT_FIELDS:
+        val = app_data.get(key)
+        if val is None:
+            continue
+        if key == "pan_number":
+            s = str(val)
+            val = ("XXXXXX" + s[-4:]) if len(s) >= 4 else "****"
+        changes.append({"field_key": key, "field_label": label, "old_value": None, "new_value": val})
+    return changes
+
+
+async def _record_submission_audit(request, app_data, app_uuid):
+    """Rich status-change + field snapshot for a customer form submission."""
+    actor = {"actor_type": "customer", "actor_id": None,
+             "actor_username": app_data.get("customer_name"), "actor_role": None}
+    await _audit.record_status_change(
+        db_pool, request, application_id=app_uuid, bank_id=app_data.get("bank_id"),
+        branch_id=app_data.get("branch_id"), from_status="draft", to_status="submitted",
+        actor=actor, source="app", notes="Form submitted by customer")
+    await _audit.record_field_history(
+        db_pool, request, application_id=app_uuid, bank_id=app_data.get("bank_id"),
+        branch_id=app_data.get("branch_id"), actor=actor, value_source="customer_submit",
+        changes=_snapshot_fields(app_data))
+
+
 @app.post("/api/bank/applications/{app_id}/officer-approve")
 async def officer_approve(app_id: str, body: OfficerReviewRequest, request: Request, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_approved, record officer_id, officer_reviewed_at, officer_notes."""
@@ -3483,6 +3520,7 @@ async def submit_form(token: str, request: Request):
     await db_pool.execute("UPDATE form_tokens SET is_used = true, form_status = 'submitted' WHERE id = $1", token_row["id"])
     # Record status transition
     await record_transition(app_uuid, "draft", "submitted", "customer", app_uuid, "Form submitted by customer")
+    await _record_submission_audit(request, app_data, app_uuid)
     # Guarantor consent call (additive, best-effort — never block submission)
     try:
         from guarantor.trigger import enqueue_guarantor_consent_call
@@ -4454,6 +4492,7 @@ async def submit_form_session(session_token: str, request: Request):
                 app_row["id"], "draft", "submitted", "customer", app_row["id"],
                 "Form submitted by customer via session", conn=conn
             )
+    await _record_submission_audit(request, dict(app_row), app_row["id"])
     # Guarantor consent call (additive, best-effort — never block submission)
     try:
         from guarantor.trigger import enqueue_guarantor_consent_call

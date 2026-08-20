@@ -1732,10 +1732,20 @@ async def auth_logout(request: Request):
         try:
             payload = jwt.decode(refresh_jwt, JWT_SECRET, algorithms=["HS256"])
             await db_pool.execute("DELETE FROM refresh_tokens WHERE jti = $1", payload.get("jti"))
+            _uid = payload.get("user_id") or payload.get("sub")
+            _uname = payload.get("email") or payload.get("username")
+            _is_admin = payload.get("user_type") == "admin"
+            if not _uname and _uid:
+                try:
+                    if _is_admin:
+                        _uname = await db_pool.fetchval("SELECT email FROM admin_users WHERE id = $1", uuid.UUID(_uid))
+                    else:
+                        _uname = await db_pool.fetchval("SELECT username FROM bank_users WHERE id = $1", uuid.UUID(_uid))
+                except Exception:
+                    pass
             await _record_login_audit(
-                actor_type=("platform_admin" if payload.get("user_type") == "admin" else "bank_user"),
-                actor_id=payload.get("user_id") or payload.get("sub"),
-                username=payload.get("email") or payload.get("username") or "",
+                actor_type=("platform_admin" if _is_admin else "bank_user"),
+                actor_id=_uid, username=_uname or "",
                 role=payload.get("role"), bank_id=payload.get("bank_id"),
                 success=True, event="logout", jti=payload.get("jti"), request=request)
         except Exception:

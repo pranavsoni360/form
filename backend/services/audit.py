@@ -228,20 +228,19 @@ async def record_login_event(pool, *, event: str, actor_type: str, actor_id,
     """Best-effort login_audit write with IP + geo + device fingerprint. `event`
     is e.g. 'login_success', 'login_failed', 'logout'. Never raises."""
     try:
-        ip = get_client_ip(request) if request else None
-        geo = resolve_geo(ip)
+        c = audit_context(request)
         await pool.execute(
             """INSERT INTO login_audit
                    (event, actor_type, actor_id, username_tried, actor_username,
                     actor_role, bank_id, success, jti, failure_reason,
-                    ip_address, user_agent, device_fingerprint, location)
-               VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)""",
+                    ip_address, machine_ip, machine_name, user_agent, device_fingerprint, location)
+               VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)""",
             event, actor_type, _as_uuid(actor_id) if actor_id else None,
             username, role, _as_uuid(bank_id) if bank_id else None,
-            success, jti, failure_reason, ip,
-            (request.headers.get("user-agent") if request else None),
+            success, jti, failure_reason, c["ip"], c["machine_ip"], c["machine_name"],
+            c["user_agent"],
             (device_fingerprint(request) if request else None),
-            json.dumps(geo) if geo else None,
+            json.dumps(c["geo"]) if c["geo"] else None,
         )
     except Exception as e:
         logger.warning("login_audit write failed for %s: %s", username, e)

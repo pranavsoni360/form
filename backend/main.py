@@ -2308,8 +2308,41 @@ async def _record_approval(app_id, bank_id, approver_type, approver, decision, n
         logger.warning("application_approvals write failed for %s: %s", app_id, e)
 
 
+async def _record_decision(request, app_row, actor_dict, *, action, from_status, to_status,
+                           decision_level, reason_code=None, reason_text=None, notes=None,
+                           decided_amount=None, decided_tenure_m=None, decided_roi=None):
+    """Rich officer-decision audit: officer_action_log + application_status_log,
+    with LRS-score-at-decision, branch, and the full IP/machine/geo envelope.
+    Best-effort — never breaks the decision."""
+    try:
+        app_id = app_row["id"]; bank_id = app_row["bank_id"]; branch_id = app_row.get("branch_id")
+        lrs = None
+        try:
+            lrs = await db_pool.fetchval(
+                "SELECT total_score FROM lrs_scores WHERE application_id = $1 ORDER BY created_at DESC LIMIT 1",
+                app_id)
+        except Exception:
+            pass
+        uname = actor_dict.get("full_name") or actor_dict.get("username")
+        await _audit.record_officer_action(
+            db_pool, request, application_id=app_id, bank_id=bank_id, branch_id=branch_id,
+            officer_id=actor_dict.get("id"), officer_username=uname, officer_role=actor_dict.get("role"),
+            action=action, decision_level=decision_level, from_status=from_status, to_status=to_status,
+            reason_code=reason_code, reason_text=reason_text, notes=notes, decided_amount=decided_amount,
+            decided_tenure_m=decided_tenure_m, decided_roi=decided_roi, lrs_score=lrs)
+        await _audit.record_status_change(
+            db_pool, request, application_id=app_id, bank_id=bank_id, branch_id=branch_id,
+            from_status=from_status, to_status=to_status,
+            actor={"actor_type": "bank_user", "actor_id": actor_dict.get("id"),
+                   "actor_username": uname, "actor_role": actor_dict.get("role")},
+            reason_code=reason_code, reason_text=reason_text, notes=notes,
+            decided_amount=decided_amount, decided_tenure_m=decided_tenure_m, decided_roi=decided_roi)
+    except Exception as e:
+        logger.warning("decision audit write failed for %s: %s", app_row.get("id"), e)
+
+
 @app.post("/api/bank/applications/{app_id}/officer-approve")
-async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict = Depends(get_bank_officer)):
+async def officer_approve(app_id: str, body: OfficerReviewRequest, request: Request, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_approved, record officer_id, officer_reviewed_at, officer_notes."""
     await _require_perm(officer, "application.officer_approve")
     bank_id = uuid.UUID(officer["bank_id"])
@@ -2333,10 +2366,12 @@ async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "officer_approved", "bank_officer", officer_id, body.notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "approved", body.notes)
+    await _record_decision(request, app_row, officer, action="approve", from_status=current_status,
+                           to_status="officer_approved", decision_level="officer", notes=body.notes)
     return {"status": "success", "message": "Application approved by officer", "new_status": "officer_approved"}
 
 @app.post("/api/bank/applications/{app_id}/officer-reject")
-async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict = Depends(get_bank_officer)):
+async def officer_reject(app_id: str, body: OfficerRejectRequest, request: Request, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_rejected, record officer_id, notes, rejection_reason."""
     await _require_perm(officer, "application.officer_reject")
     bank_id = uuid.UUID(officer["bank_id"])
@@ -2363,6 +2398,9 @@ async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict 
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "officer_rejected", "bank_officer", officer_id, rejection_notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "rejected", rejection_notes)
+    await _record_decision(request, app_row, officer, action="reject", from_status=current_status,
+                           to_status="officer_rejected", decision_level="officer",
+                           reason_code=body.rejection_reason, reason_text=rejection_notes)
     # Send WhatsApp notification
     if app_row["phone"]:
         message = (
@@ -2389,7 +2427,7 @@ async def supervisor_list_applications(supervisor: dict = Depends(get_bank_super
     return {"applications": _rows_to_list(rows)}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-approve")
-async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def supervisor_approve(app_id: str, body: OfficerReviewRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=approved."""
     await _require_perm(supervisor, "application.supervisor_approve")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2435,10 +2473,12 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
             except Exception as e:
                 print(f"[AiSensy Approval] ERROR: {e}", flush=True)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", body.notes)
+    await _record_decision(request, app_row, supervisor, action="approve", from_status=current_status,
+                           to_status="approved", decision_level="supervisor", notes=body.notes)
     return {"status": "success", "message": "Application approved by supervisor", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-reject")
-async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def supervisor_reject(app_id: str, body: OfficerRejectRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=supervisor_rejected."""
     await _require_perm(supervisor, "application.supervisor_reject")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2465,6 +2505,9 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "supervisor_rejected", "bank_supervisor", supervisor_id, rejection_notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "rejected", rejection_notes)
+    await _record_decision(request, app_row, supervisor, action="reject", from_status=current_status,
+                           to_status="supervisor_rejected", decision_level="supervisor",
+                           reason_code=body.rejection_reason, reason_text=rejection_notes)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2476,7 +2519,7 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
     return {"status": "success", "message": "Application rejected by supervisor", "new_status": "supervisor_rejected"}
 
 @app.post("/api/bank/applications/{app_id}/request-documents")
-async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def request_documents(app_id: str, body: OfficerReviewRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=documents_requested, documents_requested_at."""
     await _require_perm(supervisor, "application.request_documents")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2499,6 +2542,8 @@ async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor:
     if _rows_affected(_u) == 0:
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "documents_requested", "bank_supervisor", supervisor_id, body.notes)
+    await _record_decision(request, app_row, supervisor, action="request_documents", from_status=current_status,
+                           to_status="documents_requested", decision_level="supervisor", notes=body.notes)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2510,7 +2555,7 @@ async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor:
     return {"status": "success", "message": "Documents requested", "new_status": "documents_requested"}
 
 @app.post("/api/bank/applications/{app_id}/disburse")
-async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=approved, approved_at."""
     await _require_perm(supervisor, "application.disburse")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2555,10 +2600,13 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
             except Exception as e:
                 print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", (body.notes or "") + " [disbursement initiated]")
+    await _record_decision(request, app_row, supervisor, action="disburse", from_status=current_status,
+                           to_status="approved", decision_level="supervisor",
+                           notes=(body.notes or "") + " [disbursement initiated]")
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/cancel")
-async def cancel_application(app_id: str, body: CancelApplicationRequest, user: dict = Depends(get_bank_officer)):
+async def cancel_application(app_id: str, body: CancelApplicationRequest, request: Request, user: dict = Depends(get_bank_officer)):
     """Staff-initiated cancel: void an application (duplicate, data error, customer
     request over phone, etc.). Allowed at ANY stage before money is out.
 
@@ -2599,6 +2647,9 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
     if _rows_affected(_u) == 0:
         raise HTTPException(status_code=409, detail="Cannot cancel — the application was disbursed or its status changed. Refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "cancelled", changed_by_type, actor_id, body.reason)
+    await _record_decision(request, app_row, user, action="cancel", from_status=current_status,
+                           to_status="cancelled", decision_level=user.get("role", "bank_officer"),
+                           reason_text=body.reason)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"

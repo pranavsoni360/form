@@ -2536,17 +2536,10 @@ async def _record_decision(request, app_row, actor_dict, *, action, from_status,
     Best-effort — never breaks the decision."""
     try:
         app_id = app_row["id"]; bank_id = app_row["bank_id"]
-        # Branch attribution: the loan's branch if set, else the acting officer's
-        # branch. On first officer touch of a branchless loan, stamp it so the
-        # loan is attributed to the branch that handled it (idempotent, best-effort).
+        # Branch attribution for the AUDIT ROWS ONLY: the loan's branch if set,
+        # else the acting officer's branch. Logging-only — never writes back to
+        # loan_applications (keeps the audit system strictly additive).
         branch_id = app_row.get("branch_id") or actor_dict.get("branch_id")
-        if branch_id and not app_row.get("branch_id"):
-            try:
-                await db_pool.execute(
-                    "UPDATE loan_applications SET branch_id = $1 WHERE id = $2 AND branch_id IS NULL",
-                    uuid.UUID(str(branch_id)), uuid.UUID(str(app_id)))
-            except Exception:
-                pass
         lrs = None
         try:
             lrs = await db_pool.fetchval(

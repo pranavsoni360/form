@@ -425,5 +425,14 @@ async def record_sensitive_access(pool, request, *, actor: dict, action: str,
             json.dumps(details, default=str) if details else None,
             c["ip"], c["user_agent"], json.dumps(c["geo"]) if c["geo"] else None,
         )
+        # Mass-sensitive-access detector (late import avoids a circular dependency).
+        if actor.get("actor_id"):
+            try:
+                from services import security_events as _secev
+                await _secev.check_mass_sensitive_access(
+                    pool, request, actor=actor,
+                    bank_id=actor.get("bank_id"))
+            except Exception:
+                pass
     except Exception as e:
         logger.warning("audit_logs write failed (%s): %s", action, e)

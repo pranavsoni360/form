@@ -167,10 +167,15 @@ async def restrict_internal_paths(request: Request, call_next):
         peer = request.client.host if request.client else ""
         if peer not in _LOOPBACK or request.headers.get("x-forwarded-for"):
             from fastapi.responses import JSONResponse
+            _origin = request.headers.get("x-forwarded-for") or peer
             logger.warning(
                 "Blocked external call to internal-only path %s from %s",
-                request.url.path, request.headers.get("x-forwarded-for") or peer,
+                request.url.path, _origin,
             )
+            try:
+                await _secev.record_blocked_path(db_pool, request, path=request.url.path, peer=_origin)
+            except Exception:
+                pass
             return JSONResponse({"detail": "Not Found"}, status_code=404)
     return await call_next(request)
 
@@ -181,6 +186,7 @@ async def restrict_internal_paths(request: Request, call_next):
 # duration. Auth/webhook/health paths are excluded (auth is in login_audit).
 # Best-effort: a logging failure never affects the response.
 from services import audit as _audit  # noqa: E402
+from services import security_events as _secev  # noqa: E402
 
 
 @app.middleware("http")
@@ -1589,6 +1595,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
                                   failure_reason=("account_locked" if locked else "invalid_credentials"),
                                   request=request)
         if locked:
+            await _secev.record_failed_login_burst(db_pool, request, username=payload.email,
+                                                   actor_id=(row["id"] if row else None),
+                                                   actor_type="platform_admin", attempts=attempts)
             raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
         if attempts >= WARN_AFTER_ATTEMPTS:
@@ -1607,6 +1616,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
     await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
                               role=row["role"], success=True, jti=jti, request=request)
+    await _secev.check_login_anomalies(db_pool, request, actor_id=str(row["id"]),
+                                       actor_type="platform_admin", actor_username=payload.email,
+                                       actor_role=row["role"])
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1631,6 +1643,10 @@ async def auth_bank_login(payload: BankLogin, request: Request):
                                   failure_reason=("account_locked" if locked else "invalid_credentials"),
                                   request=request)
         if locked:
+            await _secev.record_failed_login_burst(db_pool, request, username=payload.username,
+                                                   actor_id=(row["id"] if row else None), actor_type="bank_user",
+                                                   bank_id=(str(row["bank_id"]) if row and row["bank_id"] else None),
+                                                   attempts=attempts)
             raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
         if attempts >= WARN_AFTER_ATTEMPTS:
@@ -1655,6 +1671,9 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     await db_pool.execute("UPDATE bank_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
     await _record_login_audit(actor_type="bank_user", actor_id=row["id"], username=payload.username,
                               role=row["role"], success=True, jti=jti, bank_id=bank_id, request=request)
+    await _secev.check_login_anomalies(db_pool, request, actor_id=user_id, actor_type="bank_user",
+                                       actor_username=payload.username, actor_role=row["role"],
+                                       bank_id=bank_id, branch_id=_branch_id)
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1941,6 +1960,10 @@ _STATUS_COLS = ("id, created_at, application_id, bank_id, branch_id, from_status
                 "machine_ip::text AS machine_ip, machine_name, location, notes")
 _SENSITIVE_COLS = ("id, timestamp, user_type, user_id, phone, action, entity_type, entity_id, details, "
                    "ip_address::text AS ip_address, geolocation")
+_SECURITY_COLS = ("id, created_at, event_type, severity, actor_type, actor_username, actor_role, "
+                  "bank_id, branch_id, title, description, entity_type, entity_id, "
+                  "ip_address::text AS ip_address, machine_ip::text AS machine_ip, machine_name, "
+                  "location, metadata, acknowledged, acknowledged_at")
 
 
 @app.get("/api/admin/audit/platform")
@@ -1975,6 +1998,28 @@ async def admin_audit_sensitive(_a: dict = Depends(get_current_admin), action: O
     return await _audit_page("audit_logs", _SENSITIVE_COLS, [("action", action)], limit, offset, order="timestamp")
 
 
+@app.get("/api/admin/audit/security")
+async def admin_audit_security(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                               severity: Optional[str] = None, event_type: Optional[str] = None,
+                               acknowledged: Optional[bool] = None, limit: int = 50, offset: int = 0):
+    """Security-events feed (platform: all banks + platform-level events)."""
+    return await _audit_page("security_events", _SECURITY_COLS,
+                             [("bank_id", uuid.UUID(bank_id) if bank_id else None),
+                              ("severity", severity), ("event_type", event_type),
+                              ("acknowledged", acknowledged)], limit, offset)
+
+
+@app.post("/api/admin/audit/security/{event_id}/ack")
+async def admin_ack_security(event_id: int, _a: dict = Depends(get_current_admin),
+                             request: Request = None):
+    """Acknowledge a security event (platform admin)."""
+    actor = _audit.decode_actor(request)
+    r = await db_pool.execute(
+        "UPDATE security_events SET acknowledged=true, acknowledged_by=$1, acknowledged_at=NOW() WHERE id=$2 AND acknowledged=false",
+        actor.get("actor_id"), event_id)
+    return {"acknowledged": _rows_affected(r) > 0}
+
+
 # ── Bank-scoped audit (bank admin sees their bank; branch officer sees their branch) ──
 @app.get("/api/bank/audit")
 async def bank_audit(stream: str = "status-changes", user: dict = Depends(get_current_bank_user),
@@ -1993,8 +2038,38 @@ async def bank_audit(stream: str = "status-changes", user: dict = Depends(get_cu
             "module, endpoint, http_method, http_status, result, ip_address::text AS ip_address, "
             "machine_ip::text AS machine_ip, machine_name, location, duration_ms",
             [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    if stream == "security":
+        return await _audit_page("security_events", _SECURITY_COLS,
+                                 [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    if stream == "logins":
+        return await _audit_page(
+            "login_audit",
+            "id, created_at, event, actor_type, actor_username, username_tried, actor_role, "
+            "bank_id, success, failure_reason, ip_address::text AS ip_address, "
+            "machine_ip::text AS machine_ip, machine_name, location, device_fingerprint",
+            [("bank_id", bank_id)], limit, offset)
     return await _audit_page("application_status_log", _STATUS_COLS,
                              [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+
+
+@app.post("/api/bank/audit/security/{event_id}/ack")
+async def bank_ack_security(event_id: int, user: dict = Depends(get_current_bank_user),
+                            request: Request = None):
+    """Acknowledge a security event within the caller's bank (and branch if scoped)."""
+    bank_id = uuid.UUID(user["bank_id"])
+    branch_id = uuid.UUID(user["branch_id"]) if user.get("branch_id") else None
+    actor = _audit.decode_actor(request)
+    if branch_id is not None:
+        r = await db_pool.execute(
+            "UPDATE security_events SET acknowledged=true, acknowledged_by=$1, acknowledged_at=NOW() "
+            "WHERE id=$2 AND bank_id=$3 AND branch_id=$4 AND acknowledged=false",
+            actor.get("actor_id"), event_id, bank_id, branch_id)
+    else:
+        r = await db_pool.execute(
+            "UPDATE security_events SET acknowledged=true, acknowledged_by=$1, acknowledged_at=NOW() "
+            "WHERE id=$2 AND bank_id=$3 AND acknowledged=false",
+            actor.get("actor_id"), event_id, bank_id)
+    return {"acknowledged": _rows_affected(r) > 0}
 
 
 # Keep old admin login for backward compatibility
@@ -2243,6 +2318,12 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
         entity_type="bank_user", entity_id=user_id, target_bank_id=bank_id,
         before={k: (str(existing[k]) if existing[k] is not None else None) for k in _changed},
         after={k: (str(updates[k]) if updates[k] is not None else None) for k in _changed})
+    # Security event on privilege change (role escalation risk).
+    if "role" in updates and str(updates["role"]) != str(existing["role"]):
+        await _secev.record_privilege_change(
+            db_pool, request, actor=_audit.decode_actor(request), target_user_id=user_id,
+            bank_id=bank_id, branch_id=(str(existing["branch_id"]) if existing.get("branch_id") else None),
+            change={"role": {"from": existing["role"], "to": updates["role"]}, "username": existing["username"]})
     return {"user": _row_to_dict(row)}
 
 @app.delete("/api/admin/banks/{bank_id}/users/{user_id}")

@@ -584,6 +584,7 @@ async def resend_invite(invite_id: str, admin: dict = Depends(get_bank_admin)):
     invite_url = f"{public_base_url()}/bank/accept-invite?token={row['token']}"
     expires_human = row["expires_at"].strftime("%d %b %Y")
     email_sent = send_invite_email(row["email"], row["full_name"], admin.get("bank_name", "your bank"), invite_url, expires_human)
+    await log_activity(_db(), bank_id, admin, "resend_invite", {"invite_id": invite_id, "email": row["email"], "email_sent": email_sent})
     return {"invite_url": invite_url, "email_sent": email_sent}
 
 

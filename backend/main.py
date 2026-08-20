@@ -1078,12 +1078,14 @@ class BankUserCreate(BaseModel):
     email: str
     full_name: str
     role: str  # bank_officer or bank_supervisor
+    branch_id: Optional[str] = None  # assign the user to a branch (audit scoping)
 
 class BankUserUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    branch_id: Optional[str] = None
 
 class OfficerReviewRequest(BaseModel):
     notes: Optional[str] = None
@@ -1997,13 +1999,18 @@ async def bank_audit(stream: str = "status-changes", user: dict = Depends(get_cu
 
 # Keep old admin login for backward compatibility
 @app.post("/api/admin/login")
-async def admin_login(payload: AdminLogin):
+async def admin_login(payload: AdminLogin, request: Request):
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
-    if not row:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    if not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
+    if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
+        await _record_login_audit(actor_type="platform_admin", actor_id=(row["id"] if row else None),
+                                  username=payload.email, role=(row["role"] if row else None),
+                                  success=False, event="login_failure",
+                                  failure_reason="invalid_credentials", request=request)
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
+        await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                                  role=row["role"], success=False, event="login_failure",
+                                  failure_reason="account_deactivated", request=request)
         raise HTTPException(status_code=403, detail="Account deactivated")
     token = jwt.encode({
         "user_id": str(row["id"]),
@@ -2013,6 +2020,8 @@ async def admin_login(payload: AdminLogin):
         "exp": now_utc() + timedelta(days=7)
     }, JWT_SECRET, algorithm="HS256")
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
+    await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                              role=row["role"], success=True, event="login_success", request=request)
     return {
         "token": token,
         "user": {
@@ -2135,6 +2144,21 @@ async def admin_get_bank(bank_id: str, admin: dict = Depends(get_current_admin))
     bank_dict["application_count"] = app_count
     return {"bank": bank_dict}
 
+async def _validate_branch(branch_id, bank_id):
+    """Return the branch UUID if it belongs to the bank, else raise 400. None → None."""
+    if not branch_id:
+        return None
+    try:
+        buid = uuid.UUID(branch_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid branch_id")
+    ok = await db_pool.fetchval("SELECT 1 FROM bank_branches WHERE id = $1 AND bank_id = $2 AND COALESCE(is_deleted,false)=false",
+                                buid, uuid.UUID(bank_id))
+    if not ok:
+        raise HTTPException(status_code=400, detail="Branch not found in this bank")
+    return buid
+
+
 @app.post("/api/admin/banks/{bank_id}/users")
 async def admin_create_bank_user(bank_id: str, user: BankUserCreate, request: Request, admin: dict = Depends(get_current_admin)):
     """Create a bank user (auto-generate password, return it once)."""
@@ -2167,19 +2191,21 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, request: Re
     existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", email, uuid.UUID(bank_id))
     if existing_email:
         raise HTTPException(status_code=400, detail=f"Email '{email}' already exists in this bank")
+    branch_uuid = await _validate_branch(user.branch_id, bank_id)
     password = generate_random_password()
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     row = await db_pool.fetchrow(
-        """INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, bank_id, username, email, full_name, role, is_active, created_at""",
-        uuid.UUID(bank_id), username, email, password_hash, full_name, user.role
+        """INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role, branch_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, bank_id, username, email, full_name, role, branch_id, is_active, created_at""",
+        uuid.UUID(bank_id), username, email, password_hash, full_name, user.role, branch_uuid
     )
     user_dict = _row_to_dict(row)
     user_dict["generated_password"] = password  # Show only once
     await _audit.record_platform_audit(
         db_pool, request, actor=_audit.decode_actor(request), action="bank_user.create",
         entity_type="bank_user", entity_id=str(row["id"]), target_bank_id=bank_id,
-        after={"username": username, "role": user.role, "full_name": full_name})
+        after={"username": username, "role": user.role, "full_name": full_name,
+               "branch_id": (str(branch_uuid) if branch_uuid else None)})
     return {"user": user_dict}
 
 @app.put("/api/admin/banks/{bank_id}/users/{user_id}")
@@ -2199,6 +2225,8 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
         updates["role"] = user.role
     if user.is_active is not None:
         updates["is_active"] = user.is_active
+    if user.branch_id is not None:
+        updates["branch_id"] = await _validate_branch(user.branch_id, bank_id)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     sets = ", ".join(f"{k} = ${i+1}" for i, k in enumerate(updates.keys()))
@@ -2426,7 +2454,18 @@ async def _record_decision(request, app_row, actor_dict, *, action, from_status,
     with LRS-score-at-decision, branch, and the full IP/machine/geo envelope.
     Best-effort — never breaks the decision."""
     try:
-        app_id = app_row["id"]; bank_id = app_row["bank_id"]; branch_id = app_row.get("branch_id")
+        app_id = app_row["id"]; bank_id = app_row["bank_id"]
+        # Branch attribution: the loan's branch if set, else the acting officer's
+        # branch. On first officer touch of a branchless loan, stamp it so the
+        # loan is attributed to the branch that handled it (idempotent, best-effort).
+        branch_id = app_row.get("branch_id") or actor_dict.get("branch_id")
+        if branch_id and not app_row.get("branch_id"):
+            try:
+                await db_pool.execute(
+                    "UPDATE loan_applications SET branch_id = $1 WHERE id = $2 AND branch_id IS NULL",
+                    uuid.UUID(str(branch_id)), uuid.UUID(str(app_id)))
+            except Exception:
+                pass
         lrs = None
         try:
             lrs = await db_pool.fetchval(

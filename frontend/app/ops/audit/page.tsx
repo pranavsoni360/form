@@ -11,6 +11,10 @@ import { StatCard } from "@/components/ops/StatCard";
 import { DataTable, type DataTableColumn } from "@/components/ops/DataTable";
 import { cn } from "@/lib/utils";
 import { opsFetch } from "@/lib/ops-fetch";
+import {
+  describeActivity, describePlatformAction, describeOfficerAction,
+  describeSensitive, describeSecurityType,
+} from "@/lib/audit-describe";
 
 type Geo = { country?: string | null; country_code?: string | null;
   region?: string | null; city?: string | null } | null;
@@ -153,7 +157,7 @@ const TABS: TabDef[] = [
     columns: [
       { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
       { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_username} sub={r.actor_type} /> },
-      { key: "act", header: "Action", render: (r) => <div className="space-y-0.5"><div className="font-mono text-xs font-semibold">{r.http_method} {r.endpoint}</div><div className="text-[10px] uppercase text-muted-foreground">{r.module}</div></div> },
+      { key: "act", header: "Action", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold text-foreground">{describeActivity(r.http_method, r.endpoint)}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.module}</div></div> },
       { key: "res", header: "Result", render: (r) => <div className="flex items-center gap-1"><Pill text={r.result} styles={RESULT_STYLE[r.result] || "bg-muted"} /><span className="font-mono text-[10px] text-muted-foreground">{r.http_status}</span></div> },
       { key: "loc", header: "Location", render: loc },
     ],
@@ -163,7 +167,7 @@ const TABS: TabDef[] = [
     columns: [
       { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
       { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_email} sub={r.actor_role} /> },
-      { key: "act", header: "Action", render: (r) => <div className="space-y-0.5"><Pill text={r.action} styles="bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" /><div className="text-[10px] text-muted-foreground">{r.entity_type}</div></div> },
+      { key: "act", header: "Action", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold text-foreground">{describePlatformAction(r.action)}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.entity_type}</div></div> },
       { key: "diff", header: "Change", render: (r) => <Diff before={r.before_data} after={r.after_data} /> },
       { key: "loc", header: "Location", render: loc },
     ],
@@ -173,7 +177,7 @@ const TABS: TabDef[] = [
     columns: [
       { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
       { key: "off", header: "Officer", render: (r) => <ActorCell name={r.officer_username} sub={`${r.officer_role || ""}${r.decision_level ? " · " + r.decision_level : ""}`} /> },
-      { key: "act", header: "Decision", render: (r) => <div className="space-y-0.5"><Pill text={r.action} styles="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" /><StatusFlow from={r.from_status} to={r.to_status} /></div> },
+      { key: "act", header: "Decision", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold text-foreground">{describeOfficerAction(r.action)}</div><StatusFlow from={r.from_status} to={r.to_status} /></div> },
       { key: "terms", header: "Terms / LRS", render: (r) => <div className="space-y-0.5 font-mono text-[10px] text-muted-foreground">{r.decided_amount && <div>₹{Number(r.decided_amount).toLocaleString()}</div>}{r.lrs_score_at_decision != null && <div>LRS {r.lrs_score_at_decision}</div>}</div> },
       { key: "loc", header: "Location", render: loc },
     ],
@@ -193,7 +197,7 @@ const TABS: TabDef[] = [
     columns: [
       { key: "when", header: "When", render: (r) => <WhenCell iso={r.timestamp} /> },
       { key: "u", header: "User", render: (r) => <ActorCell name={r.user_type} sub={r.user_id ? String(r.user_id).slice(0, 8) : null} /> },
-      { key: "act", header: "Action", render: (r) => <Pill text={r.action} styles="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" /> },
+      { key: "act", header: "Action", render: (r) => <div className="text-xs font-semibold text-foreground">{describeSensitive(r.action)}</div> },
       { key: "ent", header: "Entity", render: (r) => <div className="space-y-0.5 text-[10px] text-muted-foreground"><div>{r.entity_type}</div>{r.phone && <div className="font-mono">{r.phone}</div>}</div> },
       { key: "loc", header: "Location", render: loc },
     ],
@@ -204,7 +208,7 @@ const TABS: TabDef[] = [
     columns: [
       { key: "when", header: "When", render: (r) => <WhenCell iso={r.created_at} /> },
       { key: "sev", header: "Severity", render: (r) => <Pill text={r.severity} styles={SEVERITY_STYLE[r.severity] || "bg-muted"} /> },
-      { key: "ev", header: "Event", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold text-foreground">{r.title}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground">{r.event_type}</div></div> },
+      { key: "ev", header: "Event", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold text-foreground">{r.title}</div><div className="text-[10px] uppercase tracking-wider text-muted-foreground">{describeSecurityType(r.event_type)}</div></div> },
       { key: "actor", header: "Actor", render: (r) => <ActorCell name={r.actor_username} sub={r.actor_role || r.actor_type} /> },
       { key: "loc", header: "Location", render: loc },
       { key: "ack", header: "", render: (r) => <AckButton eventId={r.id} acknowledged={!!r.acknowledged} ackBase="/api/admin/audit/security" /> },

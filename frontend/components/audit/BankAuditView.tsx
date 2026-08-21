@@ -8,6 +8,7 @@
 import * as React from "react";
 import { API_URL } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth";
+import { describeActivity, describeOfficerAction, describeSecurityType } from "@/lib/audit-describe";
 
 type Geo = { country?: string | null; region?: string | null; city?: string | null; country_code?: string | null } | null;
 type Col = { header: string; render: (r: any) => React.ReactNode };
@@ -65,7 +66,7 @@ const STREAMS: { key: string; label: string; cols: Col[] }[] = [
   { key: "officer-actions", label: "Officer decisions", cols: [
     { header: "When", render: (r) => <When iso={r.created_at} /> },
     { header: "Officer", render: (r) => <Who n={r.officer_username} s={`${r.officer_role || ""}${r.decision_level ? " · " + r.decision_level : ""}`} /> },
-    { header: "Decision", render: (r) => <div className="space-y-0.5"><span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">{r.action}</span><Flow from={r.from_status} to={r.to_status} /></div> },
+    { header: "Decision", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold">{describeOfficerAction(r.action)}</div><Flow from={r.from_status} to={r.to_status} /></div> },
     { header: "Terms/LRS", render: (r) => <div className="font-mono text-[10px] opacity-70">{r.decided_amount ? `₹${Number(r.decided_amount).toLocaleString()}` : ""}{r.lrs_score_at_decision != null ? ` · LRS ${r.lrs_score_at_decision}` : ""}</div> },
     { header: "Location", render: (r) => <Loc r={r} /> },
   ]},
@@ -78,7 +79,7 @@ const STREAMS: { key: string; label: string; cols: Col[] }[] = [
   { key: "security", label: "Security", cols: [
     { header: "When", render: (r) => <When iso={r.created_at} /> },
     { header: "Severity", render: (r) => <span className={`rounded-full px-2 py-0.5 text-[10px] ${SEV[r.severity] || "bg-black/10"}`}>{r.severity}</span> },
-    { header: "Event", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold">{r.title}</div><div className="text-[10px] uppercase tracking-wider opacity-60">{r.event_type}</div></div> },
+    { header: "Event", render: (r) => <div className="space-y-0.5"><div className="text-xs font-semibold">{r.title}</div><div className="text-[10px] uppercase tracking-wider opacity-60">{describeSecurityType(r.event_type)}</div></div> },
     { header: "Actor", render: (r) => <Who n={r.actor_username} s={r.actor_role || r.actor_type} /> },
     { header: "Location", render: (r) => <Loc r={r} /> },
     { header: "", render: (r) => <AckBtn id={r.id} acked={!!r.acknowledged} /> },
@@ -86,7 +87,7 @@ const STREAMS: { key: string; label: string; cols: Col[] }[] = [
   { key: "activity", label: "Activity", cols: [
     { header: "When", render: (r) => <When iso={r.created_at} /> },
     { header: "Actor", render: (r) => <Who n={r.actor_username} s={r.actor_type} /> },
-    { header: "Action", render: (r) => <div className="font-mono text-[11px]">{r.http_method} {r.endpoint}</div> },
+    { header: "Action", render: (r) => <div className="text-xs font-semibold">{describeActivity(r.http_method, r.endpoint)}</div> },
     { header: "Result", render: (r) => <span className="text-[10px] opacity-70">{r.result} · {r.http_status}</span> },
     { header: "Location", render: (r) => <Loc r={r} /> },
   ]},

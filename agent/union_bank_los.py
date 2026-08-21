@@ -23,16 +23,20 @@ AGENT_NAME = os.getenv("UNION_BANK_AGENT_NAME", "union-bank-account-opening")
 # `OSError 10048: only one usage of each socket address ... is normally permitted`.
 # Union Bank → 8081 (default), Pusad loan agent → 8082 (see los_updated.py).
 AGENT_HTTP_PORT = int(os.getenv("UNION_BANK_AGENT_PORT", "8081"))
+# Loopback-only: the worker dials OUT to LiveKit, nothing dials in. See the
+# note in los_updated.py. Override with AGENT_HTTP_HOST.
+AGENT_HTTP_HOST = os.getenv("AGENT_HTTP_HOST", "127.0.0.1")
 
 if __name__ == "__main__":
     while True:
         try:
             logging.getLogger("loan-enquiry-agent").info(
-                f"Starting Union Bank Account Opening Agent Worker on :{AGENT_HTTP_PORT}..."
+                f"Starting Union Bank Account Opening Agent Worker on {AGENT_HTTP_HOST}:{AGENT_HTTP_PORT}..."
             )
             cli.run_app(WorkerOptions(
                 entrypoint_fnc=entrypoint,
                 agent_name=AGENT_NAME,
+                host=AGENT_HTTP_HOST,
                 port=AGENT_HTTP_PORT,
             ))
         except KeyboardInterrupt:

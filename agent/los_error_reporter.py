@@ -23,6 +23,10 @@ Required env (in agent/.env.local):
     LOS_INTERNAL_HMAC_SECRET    same value as backend/.env
 
 Tuneable env:
+    LOS_REPORT_TLS_VERIFY       1 (default) | 0 — set 0 when posting to the
+                                backend over https on 127.0.0.1, whose cert is
+                                issued for the public hostname and so fails
+                                hostname verification on the loopback address.
     LOS_REPORT_LEVEL            warning | error    (default: error — only ERROR+ go to webhook)
     LOS_REPORT_DEDUP_WINDOW_S   default 60 — suppress same (logger_name, message) within N seconds
     LOS_REPORT_MAX_QPS          default 5 — burst cap; excess silently dropped (avoid backend self-DOS)
@@ -65,6 +69,7 @@ _CONFIG = {
     "dedup_window_s": 60,
     "max_qps": 5,
     "endpoint": "/api/internal/errors",
+    "tls_verify": True,
 }
 
 # Dedup memory — short ring of recently sent (key, ts) so we suppress dupes.
@@ -107,7 +112,14 @@ async def _post(payload: dict) -> None:
     sig = _sign(body)
     try:
         timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as sess:
+        # The backend serves TLS on loopback with a cert issued for its public
+        # hostname, so https://127.0.0.1:<port> fails hostname verification.
+        # LOS_REPORT_TLS_VERIFY=0 turns verification off for that hop — safe
+        # because the request never leaves the box and is HMAC-signed anyway.
+        connector = None
+        if not _CONFIG["tls_verify"] and url.startswith("https://"):
+            connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as sess:
             async with sess.post(
                 url,
                 data=body,
@@ -121,20 +133,30 @@ async def _post(payload: dict) -> None:
 
 def _schedule(payload: dict) -> None:
     """Hand off to the event loop. Safe from any thread."""
-    if not _LOOP:
-        return
+    global _LOOP
+    loop = _LOOP
+    # install() normally runs at module import time, before the agent's event
+    # loop exists, so there is nothing to capture then. Capture the real
+    # running loop here, on the first report. Also re-capture if the loop we
+    # were given has since closed or never started — queueing onto a loop that
+    # does not run means the report is silently dropped.
+    if loop is None or loop.is_closed() or not loop.is_running():
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # not on a loop thread and nothing usable captured — drop
+        _LOOP = loop
     try:
         # If called from the loop's own thread (most common), use create_task.
         # Otherwise (logging from a non-async thread) use run_coroutine_threadsafe.
-        if threading.current_thread() is threading.main_thread() and _LOOP.is_running():
+        if threading.current_thread() is threading.main_thread():
             try:
-                running = asyncio.get_running_loop()
-                if running is _LOOP:
-                    _LOOP.create_task(_post(payload))
+                if asyncio.get_running_loop() is loop:
+                    loop.create_task(_post(payload))
                     return
             except RuntimeError:
                 pass
-        asyncio.run_coroutine_threadsafe(_post(payload), _LOOP)
+        asyncio.run_coroutine_threadsafe(_post(payload), loop)
     except Exception:
         pass  # never propagate
 
@@ -250,6 +272,10 @@ def install(
         _CONFIG["max_qps"] = int(os.getenv("LOS_REPORT_MAX_QPS", "5"))
     except ValueError:
         _CONFIG["max_qps"] = 5
+    _CONFIG["tls_verify"] = (
+        os.getenv("LOS_REPORT_TLS_VERIFY", "1").strip().lower()
+        not in ("0", "false", "no", "off")
+    )
 
     if not _CONFIG["backend_url"] or not _CONFIG["secret"]:
         _logger.warning(
@@ -265,9 +291,14 @@ def install(
         _LOOP = loop
     else:
         try:
-            _LOOP = asyncio.get_event_loop()
+            # get_running_loop(), NOT get_event_loop(): install() is called at
+            # module import time, before the agent's loop exists. On 3.12
+            # get_event_loop() hands back a brand-new loop that never runs, and
+            # every report queued onto it is lost without a trace. None is the
+            # honest answer — _schedule() captures the real loop on first use.
+            _LOOP = asyncio.get_running_loop()
         except RuntimeError:
-            _LOOP = None  # will be picked up lazily later
+            _LOOP = None  # picked up lazily by _schedule()
 
     # Attach to the ROOT logger so every getLogger(...) inside the agent
     # benefits without per-module wiring.
@@ -288,10 +319,10 @@ def install(
 
     _INSTALLED = True
     _logger.info(
-        "LOS error reporter armed → %s%s (min=%s, dedup=%ds, max_qps=%d)",
+        "LOS error reporter armed → %s%s (min=%s, dedup=%ds, max_qps=%d, tls_verify=%s)",
         _CONFIG["backend_url"], _CONFIG["endpoint"],
         logging.getLevelName(_CONFIG["min_level"]),
-        _CONFIG["dedup_window_s"], _CONFIG["max_qps"],
+        _CONFIG["dedup_window_s"], _CONFIG["max_qps"], _CONFIG["tls_verify"],
     )
     return True
 

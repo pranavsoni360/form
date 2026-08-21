@@ -100,6 +100,13 @@ tail_livekit_sip() {
     if echo "$line" | grep -qE 'reason":\s*"flood"|Rejecting inbound flood|Server transaction (destroyed|terminating)'; then
       continue
     fi
+    # Port 5060 is open to the internet, so SIP scanners connect, send garbage
+    # (or nothing) and drop the socket. LiveKit logs each as ERROR "Read error"
+    # on transport<TCP>. It is scanner noise, not a call failure — forwarding it
+    # buried the real errors and would flood the notification bell.
+    if echo "$line" | grep -qE '"Read error".*transport<TCP>|Read error.*"caller":\s*"transport<TCP>"'; then
+      continue
+    fi
     if echo "$line" | grep -qE '\bERROR\b|\bFATAL\b|panic:|level":"error"|"failed":\s*true'; then
       meta=$(jq -nc --arg raw "$line" '{raw: $raw}')
       post_error "sip" "LiveKitSIPError" "$(echo "$line" | head -c 400)" "$meta"
@@ -166,6 +173,13 @@ tail_agent() {
     if echo "$line" | grep -qE '"level":\s*"(ERROR|CRITICAL)"|\bERROR\b|\bCRITICAL\b|Traceback|Unhandled exception'; then
       # Skip benign worker lifecycle noise emitted during deploys/restarts.
       if echo "$line" | grep -qE 'process exited with non-zero exit code|draining worker|shutting down worker'; then
+        continue
+      fi
+      # Scanners hitting the worker's health-check HTTP port make aiohttp log a
+      # request-handling traceback per probe. The port is now bound to loopback
+      # (see AGENT_HTTP_HOST in the entrypoints), so this only covers workers
+      # still running the old build — but keep it: it is pure noise either way.
+      if echo "$line" | grep -qE 'aiohttp\.server|Error handling request from|BadHttpMessage|BadStatusLine'; then
         continue
       fi
       meta=$(jq -nc --arg u "$unit" --arg raw "$line" '{unit:$u, raw:$raw}')

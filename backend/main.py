@@ -2020,6 +2020,44 @@ async def admin_ack_security(event_id: int, _a: dict = Depends(get_current_admin
     return {"acknowledged": _rows_affected(r) > 0}
 
 
+def _notif_items(rows):
+    return [{"id": r["id"], "created_at": r["created_at"], "event_type": r["event_type"],
+             "severity": r["severity"], "title": r["title"],
+             "bank_id": str(r["bank_id"]) if r["bank_id"] else None} for r in rows]
+
+
+@app.get("/api/admin/notifications")
+async def admin_notifications(_a: dict = Depends(get_current_admin), limit: int = 15):
+    """Unread (unacknowledged) security alerts across all banks — the platform
+    super-admin notification feed."""
+    limit = max(1, min(int(limit), 50))
+    count = await db_pool.fetchval("SELECT count(*) FROM security_events WHERE acknowledged = false")
+    rows = await db_pool.fetch(
+        "SELECT id, created_at, event_type, severity, title, bank_id FROM security_events "
+        "WHERE acknowledged = false ORDER BY created_at DESC LIMIT $1", limit)
+    return {"count": count or 0, "items": _notif_items(rows)}
+
+
+@app.get("/api/bank/notifications")
+async def bank_notifications(user: dict = Depends(get_current_bank_user), limit: int = 15):
+    """Unread security alerts scoped to the caller's bank (and branch if the caller
+    is branch-scoped)."""
+    limit = max(1, min(int(limit), 50))
+    bank_id = uuid.UUID(user["bank_id"])
+    branch_id = uuid.UUID(user["branch_id"]) if user.get("branch_id") else None
+    if branch_id is not None:
+        where = "acknowledged = false AND bank_id = $1 AND branch_id = $2"
+        args = (bank_id, branch_id)
+    else:
+        where = "acknowledged = false AND bank_id = $1"
+        args = (bank_id,)
+    count = await db_pool.fetchval(f"SELECT count(*) FROM security_events WHERE {where}", *args)
+    rows = await db_pool.fetch(
+        f"SELECT id, created_at, event_type, severity, title, bank_id FROM security_events "
+        f"WHERE {where} ORDER BY created_at DESC LIMIT ${len(args)+1}", *args, limit)
+    return {"count": count or 0, "items": _notif_items(rows)}
+
+
 # ── Bank-scoped audit (bank admin sees their bank; branch officer sees their branch) ──
 @app.get("/api/bank/audit")
 async def bank_audit(stream: str = "status-changes", user: dict = Depends(get_current_bank_user),
@@ -3711,6 +3749,10 @@ async def send_campaign(request: Request):
     if not phone:
         raise HTTPException(status_code=400, detail="Phone number required")
     result = await send_whatsapp_aisensy(phone, customer_name, template_params)
+    await _audit.record_sensitive_access(
+        db_pool, request, actor=_audit.decode_actor(request), action="whatsapp_campaign_sent",
+        entity_type="customer", phone=phone,
+        details={"customer_name": customer_name, "recipients": 1})
     return {"status": "sent", "phone": phone, "aisensy_response": result}
 
 @app.post("/api/send-campaign-bulk")
@@ -3729,6 +3771,10 @@ async def send_campaign_bulk(request: Request):
     for r in rows:
         result = await send_whatsapp_aisensy(phone=r["phone"], customer_name=r["customer_name"], template_params=[r["customer_name"]])
         results.append({"phone": r["phone"], "customer_name": r["customer_name"], "loan_id": r["loan_id"], "status": "sent", "response": result})
+    await _audit.record_sensitive_access(
+        db_pool, request, actor=_audit.decode_actor(request), action="whatsapp_campaign_bulk",
+        entity_type="campaign",
+        details={"recipients": len(results), "loan_ids_filter": len(loan_ids) if loan_ids else "all_drafts"})
     return {"status": "completed", "total_sent": len(results), "results": results}
 
 # ============================================

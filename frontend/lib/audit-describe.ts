@@ -182,6 +182,9 @@ const SENSITIVE_MAP: Record<string, string> = {
   export_daily_report: "Exported the daily report",
   vendor_disburse: "Recorded a loan disbursement",
   guarantor_consent: "Recorded guarantor consent",
+  whatsapp_campaign_sent: "Sent a WhatsApp message to a customer",
+  whatsapp_campaign_bulk: "Sent a bulk WhatsApp campaign",
+  call_completed: "AI call completed",
 };
 export function describeSensitive(action: string): string {
   return SENSITIVE_MAP[action] || titleCase(action || "");

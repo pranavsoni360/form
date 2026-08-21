@@ -13,6 +13,7 @@ from .state import (
     now_ist, RECORDING_BASE_URL, _row_to_dict,
     TranscriptPayload, IST,
 )
+from services import audit as _audit
 
 logger = logging.getLogger("agent-transcript")
 router = APIRouter()
@@ -231,6 +232,18 @@ async def save_transcript(data: TranscriptPayload):
     # means the call was answered). Best-effort + idempotent; never blocks the webhook.
     if transcript:
         await _bill_completed_call(call, duration_seconds)
+
+    # Audit: call completed (call-end webhook). Best-effort; never blocks.
+    try:
+        await _audit.record_sensitive_access(
+            _state.db_pool, None, actor={"actor_type": "agent", "actor_id": None},
+            action="call_completed", entity_type="agent_call", entity_id=call.get("id"),
+            phone=call.get("phone"),
+            details={"outcome": status, "category": category, "duration_seconds": duration_seconds,
+                     "interested": bool(data.customer_interested),
+                     "bank_id": (str(call.get("bank_id")) if call.get("bank_id") else None)})
+    except Exception as e:
+        logger.warning("call_completed audit failed for %s: %s", call.get("id"), e)
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:

@@ -93,6 +93,15 @@ const STREAMS: { key: string; label: string; cols: Col[] }[] = [
   ]},
 ];
 
+// Plain-English explanation of each stream (for non-technical bank staff).
+const STREAM_DESC: Record<string, string> = {
+  "status-changes": "Every stage a loan application moved through, and who moved it.",
+  "officer-actions": "Loan decisions by officers and supervisors — approvals, rejections, and disbursements.",
+  logins: "Who signed in, who failed to sign in, and who signed out — with the place and device.",
+  security: "Security alerts — unusual sign-ins, permission changes, and suspicious activity that need attention.",
+  activity: "Everything users did — each action, who did it, and whether it succeeded.",
+};
+
 export function BankAuditView({ scopeLabel }: { scopeLabel?: string }) {
   const [key, setKey] = React.useState("status-changes");
   const [rows, setRows] = React.useState<any[]>([]);
@@ -133,6 +142,7 @@ export function BankAuditView({ scopeLabel }: { scopeLabel?: string }) {
         {loading && <span className="self-center text-[11px] opacity-60">loading…</span>}
         {err && <span className="self-center text-[11px] text-rose-500">error: {err}</span>}
       </div>
+      <p className="text-xs opacity-60">{STREAM_DESC[key]}</p>
       <div className="overflow-x-auto rounded-xl border">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b bg-black/5 text-[10px] uppercase tracking-wider opacity-60 dark:bg-white/5">

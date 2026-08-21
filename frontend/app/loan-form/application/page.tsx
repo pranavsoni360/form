@@ -740,7 +740,7 @@ export default function LoanApplication() {
   };
 
   // Live validation on blur (called from inputs as needed)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line no-unused-vars
   const onBlur = (field: string, required?: boolean) => {
     if (required && (!formData[field] || String(formData[field]).trim() === '')) {
       setErrors((p: any) => ({ ...p, [field]: 'This field is required' }));

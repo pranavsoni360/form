@@ -492,7 +492,7 @@ export default function OpsBatchPage() {
               {!bankId && (
                 <div className="flex items-center text-xs text-muted-foreground">
                   <span className="rounded-md bg-warning/10 px-2 py-1 text-warning ring-1 ring-warning/20">
-                    Pick a bank first — every batch must be assigned to a bank, or its calls won't appear in any portal.
+                    Pick a bank first — every batch must be assigned to a bank, or its calls won&apos;t appear in any portal.
                   </span>
                 </div>
               )}

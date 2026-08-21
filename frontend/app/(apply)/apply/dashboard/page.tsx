@@ -203,7 +203,7 @@ export default function CustomerDashboard() {
           </div>
           <p className="font-bold text-base" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Delete application?</p>
           <p className="text-sm mt-1.5" style={{ color: '#64748B', fontFamily: 'var(--font-body)' }}>
-            Your loan application {app?.loan_id ? <span className="font-semibold" style={{ color: '#0F172A' }}>{app.loan_id}</span> : ''} will be removed and you'll be signed out. This can't be undone from your side.
+            Your loan application {app?.loan_id ? <span className="font-semibold" style={{ color: '#0F172A' }}>{app.loan_id}</span> : ''} will be removed and you&apos;ll be signed out. This can&apos;t be undone from your side.
           </p>
         </div>
         <div className="flex gap-2 px-5 pb-5">
@@ -321,7 +321,7 @@ export default function CustomerDashboard() {
 
                 {/* ── Action 2: Form ── */}
                 <button
-                  onClick={() => !isRejected && router.push('/apply')}
+                  onClick={() => !isRejected && router.push('/loan-form/application')}
                   className="w-full rounded-2xl p-4 text-left group transition-all hover:shadow-xl active:scale-[0.99]"
                   style={{
                     background: isRejected ? '#F8F9FC' : '#0D2650',

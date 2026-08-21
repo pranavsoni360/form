@@ -105,7 +105,7 @@ const SEVERITY_STYLE: Record<string, string> = {
 function AckButton({ eventId, acknowledged, ackBase }: { eventId: string | number; acknowledged: boolean; ackBase: string }) {
   const [done, setDone] = React.useState(acknowledged);
   const [busy, setBusy] = React.useState(false);
-  if (done) return <span className="text-[10px] text-emerald-600 dark:text-emerald-400">✓ ack'd</span>;
+  if (done) return <span className="text-[10px] text-emerald-600 dark:text-emerald-400">✓ ack&apos;d</span>;
   const onClick = async () => {
     setBusy(true);
     try {

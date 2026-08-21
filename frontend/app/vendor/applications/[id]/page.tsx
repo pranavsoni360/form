@@ -170,7 +170,7 @@ export default function VendorApplicationDetailPage() {
             )}
             {a.notes && (
               <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-                <div className="font-semibold uppercase tracking-wider">Bank's notes</div>
+                <div className="font-semibold uppercase tracking-wider">Bank&apos;s notes</div>
                 <div className="mt-1">{a.notes}</div>
               </div>
             )}
@@ -225,7 +225,7 @@ function RejectModal({
     <Backdrop onClose={onClose}>
       <h3 className="text-lg font-bold">Reject assignment</h3>
       <p className="mt-1 text-sm text-slate-500">
-        Tell the bank why you can't disburse this loan. The application returns to the bank for reassignment.
+        Tell the bank why you can&apos;t disburse this loan. The application returns to the bank for reassignment.
       </p>
       <textarea
         autoFocus

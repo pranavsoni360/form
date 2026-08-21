@@ -45,7 +45,7 @@ const SEV: Record<string, string> = {
 function AckBtn({ id, acked }: { id: number; acked: boolean }) {
   const [done, setDone] = React.useState(acked);
   const [busy, setBusy] = React.useState(false);
-  if (done) return <span className="text-[10px] text-emerald-600 dark:text-emerald-400">✓ ack'd</span>;
+  if (done) return <span className="text-[10px] text-emerald-600 dark:text-emerald-400">✓ ack&apos;d</span>;
   return <button disabled={busy} onClick={async () => {
     setBusy(true);
     try {

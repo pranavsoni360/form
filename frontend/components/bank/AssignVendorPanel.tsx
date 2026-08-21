@@ -89,7 +89,7 @@ export function AssignVendorPanel({
                 Since {new Date(active.assigned_at).toLocaleString()}
               </div>
               {active.notes && (
-                <div className="mt-1 text-xs italic text-emerald-700">"{active.notes}"</div>
+                <div className="mt-1 text-xs italic text-emerald-700">&quot;{active.notes}&quot;</div>
               )}
             </div>
             <button
@@ -165,7 +165,7 @@ export function AssignVendorPanel({
                 <Building2 className="h-3 w-3" />
                 <span className="font-medium">{h.vendor_name}</span>
                 <span>· {h.status}</span>
-                {h.rejection_reason && <span className="italic">("{h.rejection_reason}")</span>}
+                {h.rejection_reason && <span className="italic">(&quot;{h.rejection_reason}&quot;)</span>}
                 <span className="ml-auto">{new Date(h.assigned_at).toLocaleString()}</span>
               </li>
             ))}

@@ -163,6 +163,49 @@ not an existence oracle. 32 tests.
 
 ---
 
+### 2.6 Reliability and correctness — `b87ce38`, `5bbd273`
+
+* **Billing was two autocommit writes.** `usage_records` and `credit_ledger`
+  were separate `pool.execute` calls, and `fn_credit_ledger_before()` takes
+  `SELECT ... FROM banks ... FOR UPDATE`, so the second genuinely can fail on
+  lock wait or a statement timeout under concurrent billing for one bank. When
+  it did: `usage_records` was already committed, the handler logged a warning,
+  the bank was never debited — and because the idempotency guard reads
+  `usage_records`, every webhook retry returned early. **The debit was lost
+  permanently and silently, with the wallet overstated.** Now one transaction;
+  a concurrent duplicate (`uq_usage_records_call`) is absorbed, not logged as a
+  failure.
+* **The emergency-stop kill switch failed open.** `is_emergency_stop_active()`
+  swallowed its DB error and returned the stale module global — defeating the
+  staleness it exists to prevent. `guarantor/runner.py` wrapped the same call in
+  a *second* `except/pass` and dialled anyway. Both now fail closed.
+* **Guarantor dispatch burned retries on a config error.** `os.environ[...]` for
+  the three `LIVEKIT_*` keys sat *after* `_claim()` (status='calling',
+  retry_count+1) and *before* the try block. A missing env raised `KeyError`
+  with no cleanup: the row stranded, `_reclaim_stuck` failed it 10 minutes
+  later, and after `_MAX_ATTEMPTS` cycles the application was stamped
+  `guarantor_consent='no_answer'` — recording that the guarantor declined to
+  answer **when no call was ever placed.** Config is now checked before the
+  claim.
+* **`smtplib` ran inside the event loop** (`bank_admin.py` invite + resend,
+  15s timeout per phase). One unreachable SMTP host froze the entire
+  single-process backend — every tenant, the dispatcher, the job workers. Moved
+  to `asyncio.to_thread`.
+* **Anonymous error ingest was unbounded.** `/api/internal/frontend-error`
+  accepts anonymous posts on purpose (a login-page crash would otherwise be
+  lost), but any internet client could inject unlimited `exc_type` / `message` /
+  4KB `trace` rows into the operator error console. Capped per source IP
+  (`FRONTEND_ERROR_ANON_PER_MIN`, default 10/min).
+* **Frontend:** the customer portal's primary CTA pushed to `/apply`, which is
+  not a route — it 404'd. (The older copy of the same dashboard shows the
+  intended target, `/loan-form/application`.) `--fx-accent-tint` was missing
+  from the Tailwind palette so `bg-fx-accent-tint` generated no rule and the
+  dropzone had no drag fill. And **`npm run lint` was a silent no-op** — with no
+  `.eslintrc*`, `next lint` drops into its setup wizard and exits 0, so
+  `react-hooks/exhaustive-deps` and friends had never run. Config added and the
+  14 errors it found fixed, so `next build` (which fails on ESLint errors) stays
+  green. ~90 warnings remain and are real — separate pass.
+
 ## 3. Test position
 
 `226 passed, 6 skipped` — up from 138. New suites:
@@ -286,23 +329,13 @@ dimension, so knowing usernames lets an attacker lock out every bank user.
 Both need a design decision, not a one-line patch — an authenticated,
 bank-scoped file handler, and a short-lived single-use token for the form.
 
-### 5.5 Smaller, still real
+### 5.5 Smaller, still open
 
-* **Billing is two autocommit writes.** `usage_records` and `credit_ledger` are
-  separate `pool.execute` calls in `agent/transcript.py`. If the second fails,
-  the bank is never debited — and the idempotency guard then blocks any retry,
-  so the debit is permanently lost with the wallet overstated. Wrap both in one
-  `conn.transaction()`.
-* **`smtplib` runs inside the event loop** (`bank_admin.py` invite/resend,
-  `timeout=15`). One unreachable SMTP host freezes the entire single-process
-  backend — every tenant, the dispatcher and the job workers — for 15s+.
 * **Emergency stop is global.** `/emergency-stop` and `/resume-calling` act
   platform-wide by design while being gated on any bank user, so one officer can
-  halt or resume every tenant's calling. I did **not** change this: the state is
-  a single global flag and making it per-bank is a schema plus dispatcher
-  change. Deliberately left for sign-off.
-* `is_emergency_stop_active()` fails **open** (swallows the DB error and returns
-  a stale module global) — a kill switch should fail closed.
+  halt or resume every tenant's calling. Deliberately **not** changed: the state
+  is a single global flag and making it per-bank is a schema plus dispatcher
+  change. Needs sign-off.
 * `_audit_page` runs an unbounded `SELECT count(*)` on append-only audit tables
   on every page load, with no `created_at` bound. Fine at today's row counts;
   multi-second full scans later.
@@ -311,20 +344,24 @@ bank-scoped file handler, and a short-lived single-use token for the form.
   A compliance gap once a second bank is live.
 * Branch isolation is enforced only by the audit endpoints. A branch-scoped
   officer still sees the whole bank's pipeline, calls, recordings and exports.
-* Frontend: `npm run lint` is a **silent no-op** (no `.eslintrc*`, so `next lint`
-  drops into its setup wizard and exits 0). Every hooks-deps bug is unguarded.
-  Separately: `/apply/dashboard`'s primary CTA pushes to `/apply`, which does not
-  exist — a 404 on the customer portal's main action.
-
----
+* ~90 ESLint warnings, now that the linter actually runs. The substantive ones:
+  a stale-closure in `RealtimeProvider` tears down a healthy SSE connection on
+  every tab refocus; `bank/admin/users` fires `navigator.clipboard.writeText`
+  without awaiting or catching and flips the button to "Copied" regardless, so a
+  failed write loses a one-time generated password permanently; and several data
+  screens (`bank/dashboard`, `bank/batch`, `bank/calls`, `ops/errors`,
+  `admin/dashboard`) swallow fetch failures into an empty state, so an outage
+  renders as "no data" — `/ops/errors` in particular shows "everything is quiet"
+  during one.
 
 ## 6. Recommended order
 
 1. Firewall allowlist (§5.1) — planned, with rollback.
 2. Re-verify and fix the prod `vendors` drift; replace `deploy.sh`'s migration
    loops with the tracked runner (§5.2).
-3. Deploy `0cc4de8` + `30cd25b` to QA, exercise all four roles, then prod.
+3. Deploy the five commits to QA, exercise all four roles, then prod:
+   `0cc4de8` `30cd25b` `4e866d2` `b87ce38` `5bbd273`.
 4. Rate limiting (§5.3).
 5. Authenticated file handler + form-token redesign (§5.4).
-6. Billing transaction, SMTP off the loop, ESLint config (§5.5).
+6. The frontend warning pass (§5.5) — SSE reconnect, clipboard, error states.
 7. Emergency-stop tenancy and branch isolation — product decisions.

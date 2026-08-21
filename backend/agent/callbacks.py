@@ -135,13 +135,28 @@ async def schedule_callback_manual(request: Request, user: dict = Depends(_state
 async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200), user: dict = Depends(_state.get_current_bank_user)):
     """List upcoming scheduled callbacks ordered by callback time.
     Used by the dashboard's 'Upcoming Callbacks' section."""
-    rows = await _state.db_pool.fetch(
-        """SELECT * FROM agent_calls
-           WHERE status IN ('Scheduled', 'Called - Callback Requested')
-             AND scheduled_callback_at IS NOT NULL
-           ORDER BY scheduled_callback_at ASC LIMIT $1""",
-        limit,
-    )
+    # Scope to the caller's bank. _serialize_call flattens collected_data to the
+    # top level (aadhar_number, pan_number, monthly_income, employer_name,
+    # address...), so without the predicate one authenticated officer could read
+    # up to 200 of EVERY bank's callback leads per request, no id to guess.
+    bank_uuid = _state._bank_uuid(user)
+    if bank_uuid is None:
+        rows = await _state.db_pool.fetch(
+            """SELECT * FROM agent_calls
+               WHERE status IN ('Scheduled', 'Called - Callback Requested')
+                 AND scheduled_callback_at IS NOT NULL
+               ORDER BY scheduled_callback_at ASC LIMIT $1""",
+            limit,
+        )
+    else:
+        rows = await _state.db_pool.fetch(
+            """SELECT * FROM agent_calls
+               WHERE status IN ('Scheduled', 'Called - Callback Requested')
+                 AND scheduled_callback_at IS NOT NULL
+                 AND bank_id = $2
+               ORDER BY scheduled_callback_at ASC LIMIT $1""",
+            limit, bank_uuid,
+        )
     payload = [_serialize_call(_row_to_dict(r)) for r in rows]
     return {"scheduled": payload, "count": len(payload)}
 

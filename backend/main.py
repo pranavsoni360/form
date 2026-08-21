@@ -353,6 +353,25 @@ _DEFAULT_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR") or _DEFAULT_UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Uploaded-file naming. `document_type` and the uploaded filename both arrive
+# straight from the customer's browser and both used to reach the path unfiltered:
+# document_type="../../../../etc/cron.d/x" escaped UPLOAD_DIR entirely (this
+# process runs as root), and an .html/.svg extension declared as image/png was
+# served straight back from the public /uploads mount with that content type —
+# stored XSS on our own origin. Reduce the label to a safe alphabet and the
+# extension to the three types these endpoints already claim to accept.
+_SAFE_UPLOAD_EXTS = frozenset({"jpg", "jpeg", "png", "pdf"})
+
+
+def safe_upload_filename(document_type: str, original_name: str | None) -> str:
+    """Filename that cannot escape its directory or change the served type."""
+    label = re.sub(r"[^A-Za-z0-9_-]", "_", (document_type or "").strip())[:40] or "document"
+    name = original_name or ""
+    raw_ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    ext = raw_ext if raw_ext in _SAFE_UPLOAD_EXTS else "bin"
+    return f"{label}_{int(now_utc().timestamp())}.{ext}"
+
+
 FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001")
 
 # ── Network switch ──
@@ -2113,25 +2132,43 @@ async def bank_ack_security(event_id: int, user: dict = Depends(get_current_bank
 # Keep old admin login for backward compatibility
 @app.post("/api/admin/login")
 async def admin_login(payload: AdminLogin, request: Request):
+    """Legacy super-admin login, superseded by POST /api/auth/admin-login.
+
+    Nothing in the product calls this any more (the frontend uses
+    /api/auth/admin-login), but while the route exists it must enforce the same
+    controls: it was missing BOTH the account lockout and the failed-attempt
+    counter, so choosing this URL instead of the other one bypassed the lockout
+    entirely and allowed unlimited password guessing against platform
+    super-admin accounts. It also minted a 7-day token with no refresh_tokens
+    row, which no logout or admin action could revoke; it now issues the same
+    30-minute access token as the primary path.
+
+    Recommended follow-up: delete this route once the doc examples are updated.
+    """
+    await _check_lockout(payload.email)
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
+        attempts, locked = await _record_failed_login(payload.email)
         await _record_login_audit(actor_type="platform_admin", actor_id=(row["id"] if row else None),
                                   username=payload.email, role=(row["role"] if row else None),
                                   success=False, event="login_failure",
-                                  failure_reason="invalid_credentials", request=request)
+                                  failure_reason=("account_locked" if locked else "invalid_credentials"),
+                                  request=request)
+        if locked:
+            await _secev.record_failed_login_burst(db_pool, request, username=payload.email,
+                                                   actor_id=(row["id"] if row else None),
+                                                   actor_type="platform_admin", attempts=attempts)
+            raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
         await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
                                   role=row["role"], success=False, event="login_failure",
                                   failure_reason="account_deactivated", request=request)
         raise HTTPException(status_code=403, detail="Account deactivated")
-    token = jwt.encode({
-        "user_id": str(row["id"]),
-        "email": row["email"],
-        "role": row["role"],
-        "user_type": "admin",
-        "exp": now_utc() + timedelta(days=7)
-    }, JWT_SECRET, algorithm="HS256")
+    await _clear_failed_logins(payload.email)
+    token = create_access_token(
+        user_id=str(row["id"]), role=row["role"], user_type="admin", email=row["email"],
+    )
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
     await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
                               role=row["role"], success=True, event="login_success", request=request)
@@ -2791,6 +2828,9 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, request: Re
     current_status = app_row["status"]
     if current_status != "officer_approved":
         raise HTTPException(status_code=400, detail=f"Cannot supervisor-reject application with status '{current_status}'. Must be 'officer_approved'.")
+    # Same maker-checker rule as supervisor-approve (see the v38 CHECK).
+    if app_row.get("officer_id") is not None and app_row["officer_id"] == supervisor_id:
+        raise HTTPException(status_code=403, detail="Maker-checker: you reviewed this as the officer and cannot also reject it as supervisor.")
     rejection_notes = body.notes or ""
     if body.rejection_reason:
         rejection_notes = f"[Reason: {body.rejection_reason}] {rejection_notes}".strip()
@@ -2868,6 +2908,13 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, request
     current_status = app_row["status"]
     if current_status not in ("officer_approved", "approved", "documents_submitted"):
         raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'officer_approved', 'approved' or 'documents_submitted'.")
+    # Maker-checker. get_bank_officer admits bank_supervisor, so one supervisor
+    # could officer-approve and then land here on the same file. The v38 CHECK
+    # (officer_id <> supervisor_id) does stop the write, but as an unhandled
+    # CheckViolationError -> HTTP 500. Fail with the same clear 403 the
+    # supervisor-approve path already gives.
+    if app_row.get("officer_id") is not None and app_row["officer_id"] == supervisor_id:
+        raise HTTPException(status_code=403, detail="Maker-checker: you reviewed this as the officer and cannot also disburse it as supervisor.")
     _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'approved', approved_at = $1, supervisor_id = $2, supervisor_notes = $3
@@ -3561,10 +3608,9 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
-    ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
     loan_dir = UPLOAD_DIR / token_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{document_type}_{int(now_utc().timestamp())}.{ext}"
+    filename = safe_upload_filename(document_type, file.filename)
     filepath = loan_dir / filename
     async with aiofiles.open(filepath, 'wb') as f:
         await f.write(file_content)
@@ -4441,10 +4487,9 @@ async def upload_document_session(
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
-    ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
     loan_dir = UPLOAD_DIR / app_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{document_type}_{int(now_utc().timestamp())}.{ext}"
+    filename = safe_upload_filename(document_type, file.filename)
     filepath = loan_dir / filename
     async with aiofiles.open(filepath, 'wb') as f:
         await f.write(file_content)

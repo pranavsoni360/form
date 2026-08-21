@@ -895,31 +895,50 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
 async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
     """Clean up calls stuck in 'Calling' status.
 
-    Operator action (no auth) — matches /emergency-stop, /resume-calling,
-    /batch-call and the other recovery endpoints in this file. The function
-    body already ignores bank scoping (`bank_uuid = None`), so requiring a
-    bank-user JWT was an inconsistency: /ops/batch is admin-context and
-    the button was silently failing.
+    Recovery action for /ops/batch. The body used to ignore bank scoping
+    entirely while the dependency admits any bank officer, so one officer at one
+    bank could hard-DELETE in-flight call rows and fail live calls for EVERY
+    tenant — destructive and unrecoverable. Both statements are now scoped to
+    the caller's bank; a platform operator (admin token) stays cross-bank, which
+    is what the /ops console needs.
     """
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
 
     # 1. Delete broken calls (no room_name)
-    del_result = await _state.db_pool.execute(
-        """DELETE FROM agent_calls
-           WHERE status = 'Calling'
-                 AND (room_name IS NULL OR room_name = '')""",
-    )
+    if bank_uuid is None:
+        del_result = await _state.db_pool.execute(
+            """DELETE FROM agent_calls
+               WHERE status = 'Calling'
+                     AND (room_name IS NULL OR room_name = '')""",
+        )
+    else:
+        del_result = await _state.db_pool.execute(
+            """DELETE FROM agent_calls
+               WHERE status = 'Calling'
+                     AND (room_name IS NULL OR room_name = '')
+                     AND bank_id = $1""",
+            bank_uuid,
+        )
     deleted = int(del_result.split()[-1]) if del_result else 0
 
     # 2. Fail old stuck calls (>10 min)
     ten_min_ago = now_ist() - timedelta(minutes=10)
-    upd_result = await _state.db_pool.execute(
-        """UPDATE agent_calls
-           SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
-               ended_at = $1, updated_at = $1
-           WHERE status = 'Calling' AND started_at < $2""",
-        now_ist(), ten_min_ago,
-    )
+    if bank_uuid is None:
+        upd_result = await _state.db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
+                   ended_at = $1, updated_at = $1
+               WHERE status = 'Calling' AND started_at < $2""",
+            now_ist(), ten_min_ago,
+        )
+    else:
+        upd_result = await _state.db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
+                   ended_at = $1, updated_at = $1
+               WHERE status = 'Calling' AND started_at < $2 AND bank_id = $3""",
+            now_ist(), ten_min_ago, bank_uuid,
+        )
     cleaned = int(upd_result.split()[-1]) if upd_result else 0
 
     await release_batch_lock()

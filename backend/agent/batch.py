@@ -33,6 +33,73 @@ from .state import (
 from .analytics import process_analytics_batch
 
 logger = logging.getLogger("agent-batch")
+
+
+# -- Tenant scoping ----------------------------------------------------------
+# get_current_bank_user resolves the caller's bank_id; the batch handlers below
+# resolved a batch (or a caller-ID number) by id alone and ignored it. A
+# bank_officer at Bank A could therefore start, retry or stop Bank B's batch --
+# placing real PSTN calls to Bank B's customers on Bank B's money -- and with no
+# id at all the handler simply took whatever batch was newest platform-wide.
+#
+# `($n::uuid IS NULL OR bank_id = $n)` keeps a platform operator (admin token,
+# bank_uuid None) deliberately cross-bank while pinning a bank user to their own
+# rows. Same idiom /upload/{batch_id} already uses.
+
+async def _fetch_batch_scoped(batch_ref, bank_uuid, statuses=None):
+    """Resolve a batch within the caller's scope.
+
+    `batch_ref` may be the UUID (agent_batches.id) or the string batch_id the
+    frontend uses as its row key -- both accepted, as before. When it is None,
+    return the caller's most recent batch in `statuses`. None if nothing matches.
+    """
+    pool = _state.db_pool
+    if batch_ref:
+        try:
+            row = await pool.fetchrow(
+                "SELECT * FROM agent_batches WHERE id = $1 "
+                "AND ($2::uuid IS NULL OR bank_id = $2)",
+                uuid.UUID(str(batch_ref)), bank_uuid,
+            )
+            if row is not None:
+                return row
+        except ValueError:
+            pass  # not a UUID -- fall through to the string batch_id lookup
+        return await pool.fetchrow(
+            "SELECT * FROM agent_batches WHERE batch_id = $1 "
+            "AND ($2::uuid IS NULL OR bank_id = $2)",
+            str(batch_ref), bank_uuid,
+        )
+    if not statuses:
+        return None
+    return await pool.fetchrow(
+        "SELECT * FROM agent_batches WHERE status = ANY($1::text[]) "
+        "AND ($2::uuid IS NULL OR bank_id = $2) "
+        "ORDER BY created_at DESC LIMIT 1",
+        list(statuses), bank_uuid,
+    )
+
+
+async def _assert_phone_in_scope(phone_uuid, bank_uuid) -> None:
+    """404 unless the number is active AND usable by this bank.
+
+    Existence was the only check, so Bank A could force its whole campaign to
+    dial FROM Bank B's number -- burning that number's reputation, consuming
+    their pool capacity and attributing the calls to them at the carrier.
+    phone_numbers.bank_id is nullable (shared / platform-owned numbers, see the
+    v27 backfill), so NULL stays usable by everyone.
+    """
+    ok = await _state.db_pool.fetchval(
+        "SELECT 1 FROM phone_numbers WHERE id = $1 AND status = 'active' "
+        "AND ($2::uuid IS NULL OR bank_id = $2 OR bank_id IS NULL)",
+        phone_uuid, bank_uuid,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"phone_number_id {phone_uuid} not found or not active",
+        )
+
 router = APIRouter()
 
 
@@ -782,17 +849,9 @@ async def upload_excel(
                     status_code=400,
                     detail=f"phone_number_id is not a valid UUID: {phone_number_id}",
                 )
-            # Verify the row exists + is active — fail fast if operator picked
-            # a stale id (e.g. the row was deleted between page load and submit).
-            exists = await _state.db_pool.fetchval(
-                "SELECT 1 FROM phone_numbers WHERE id = $1 AND status = 'active'",
-                preferred_phone_uuid,
-            )
-            if not exists:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"phone_number_id {phone_number_id} not found or not active",
-                )
+            # Verify the row exists, is active, and belongs to (or is shared
+            # with) the bank this batch is being assigned to.
+            await _assert_phone_in_scope(preferred_phone_uuid, _bank_check_uuid)
 
         await _state.db_pool.execute(
             """INSERT INTO agent_batches (id, batch_id, bank_id, filename, total_records, completed, failed, status, uploaded_by, created_at, agent_type, preferred_phone_id)
@@ -900,13 +959,11 @@ async def trigger_batch(
     # Clear emergency stop first (operator is explicitly starting)
     await set_emergency_stop(False)
 
-    # Find the batch to start (pending first, then running/paused)
-    if batch_id:
-        batch_row = await _state.db_pool.fetchrow(
-            "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
-    else:
-        batch_row = await _state.db_pool.fetchrow(
-            "SELECT * FROM agent_batches WHERE status IN ('pending', 'running', 'paused') ORDER BY created_at DESC LIMIT 1")
+    # Find the batch to start (pending first, then running/paused), in scope.
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks)
+    batch_row = await _fetch_batch_scoped(
+        batch_id, bank_uuid, statuses=("pending", "running", "paused"),
+    )
 
     if not batch_row:
         raise HTTPException(status_code=404, detail="No pending batch found. Upload a CSV first.")
@@ -919,15 +976,7 @@ async def trigger_batch(
             preferred_phone_uuid = uuid.UUID(phone_number_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="phone_number_id is not a valid UUID")
-        exists = await _state.db_pool.fetchval(
-            "SELECT 1 FROM phone_numbers WHERE id = $1 AND status = 'active'",
-            preferred_phone_uuid,
-        )
-        if not exists:
-            raise HTTPException(
-                status_code=404,
-                detail=f"phone_number_id {phone_number_id} not found or not active",
-            )
+        await _assert_phone_in_scope(preferred_phone_uuid, bank_uuid)
         await _state.db_pool.execute(
             "UPDATE agent_batches SET preferred_phone_id = $1 WHERE id = $2",
             preferred_phone_uuid, batch_row["id"],
@@ -959,6 +1008,12 @@ async def batch_status(
         # of which optional filters (batch_id, date range) are active.
         parts: list = []
         params: list = []
+        # Tenant predicate first: without it, calling this with no batch_id
+        # handed any bank officer platform-wide call counts.
+        bank_uuid = _bank_uuid(user)
+        if bank_uuid is not None:
+            params.append(bank_uuid)
+            parts.append(f"bank_id = ${len(params)}")
         if batch_id:
             params.append(batch_id)
             parts.append(f"batch_id = ${len(params)}")
@@ -1036,23 +1091,10 @@ async def trigger_batch_retry(
 
     # Find the batch. batch_id may be the UUID (agent_batches.id) OR the string
     # batch_id the frontend uses as its row key — accept both.
-    if batch_id:
-        batch_row = None
-        try:
-            batch_row = await _state.db_pool.fetchrow(
-                "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id)
-            )
-        except ValueError:
-            pass  # not a UUID — fall through to the string batch_id lookup
-        if batch_row is None:
-            batch_row = await _state.db_pool.fetchrow(
-                "SELECT * FROM agent_batches WHERE batch_id = $1", batch_id
-            )
-        if not batch_row:
-            raise HTTPException(status_code=404, detail=f"Batch not found: {batch_id}")
-    else:
-        batch_row = await _state.db_pool.fetchrow(
-            "SELECT * FROM agent_batches WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1")
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks)
+    batch_row = await _fetch_batch_scoped(batch_id, bank_uuid, statuses=("completed",))
+    if batch_id and not batch_row:
+        raise HTTPException(status_code=404, detail=f"Batch not found: {batch_id}")
 
     if not batch_row:
         raise HTTPException(status_code=404, detail="No completed batch found to retry.")
@@ -1189,16 +1231,8 @@ async def stop_batch(batch_id: str, user: dict = Depends(get_current_bank_user))
       4. Cancel its not-yet-dialed calls so they are never placed.
     Accepts either the batch UUID (id) or the string batch_id.
     """
-    # Resolve by UUID id first, then fall back to the string batch_id.
-    row = None
-    try:
-        row = await _state.db_pool.fetchrow(
-            "SELECT * FROM agent_batches WHERE id = $1", uuid.UUID(batch_id))
-    except ValueError:
-        row = None
-    if row is None:
-        row = await _state.db_pool.fetchrow(
-            "SELECT * FROM agent_batches WHERE batch_id = $1", batch_id)
+    # Resolve by UUID id first, then fall back to the string batch_id, in scope.
+    row = await _fetch_batch_scoped(batch_id, _bank_uuid(user))
     if not row:
         raise HTTPException(status_code=404, detail="Batch not found")
 
@@ -1326,7 +1360,9 @@ async def get_upload_detail(batch_id: str, user: dict = Depends(get_current_bank
     try:
         batch_uuid = uuid.UUID(batch_id)
         row = await _state.db_pool.fetchrow(
-            "SELECT batch_id FROM agent_batches WHERE id = $1", batch_uuid
+            "SELECT batch_id FROM agent_batches WHERE id = $1 "
+            "AND ($2::uuid IS NULL OR bank_id = $2)",
+            batch_uuid, _bank_uuid(user),
         )
         if row and row["batch_id"]:
             call_batch_id = row["batch_id"]
@@ -1349,8 +1385,12 @@ async def download_batch_csv(batch_id: str, user: dict = Depends(get_current_ban
     batch_filename = batch_id[:8]
     try:
         batch_uuid = uuid.UUID(batch_id)
+        # Scoped: the other tenant's filename was echoed back in
+        # Content-Disposition, a metadata leak and an existence oracle.
         row = await _state.db_pool.fetchrow(
-            "SELECT batch_id, filename FROM agent_batches WHERE id = $1", batch_uuid
+            "SELECT batch_id, filename FROM agent_batches WHERE id = $1 "
+            "AND ($2::uuid IS NULL OR bank_id = $2)",
+            batch_uuid, _bank_uuid(user),
         )
         if row:
             if row["batch_id"]:

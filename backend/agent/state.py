@@ -53,7 +53,19 @@ AISENSY_IMAGE_URL = os.getenv(
 FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001")
 
 # JWT -- reuse the same secret as main.py
-JWT_SECRET = os.getenv("JWT_SECRET", "your-jwt-secret-key")
+# JWT — same value main.py validates. This module keeps its own copy because it
+# must not import main (circular), but the dev fallback used to be silent here:
+# main.py refuses to boot in prod/staging with the placeholder secret while this
+# copy would happily verify tokens signed with the public, guessable literal.
+# Mirror the guard so the two can never disagree about what is acceptable.
+_INSECURE_JWT_DEFAULT = "your-jwt-secret-key"
+JWT_SECRET = os.getenv("JWT_SECRET", _INSECURE_JWT_DEFAULT)
+if os.getenv("LOS_ENV", "dev").lower() in {"prod", "production", "staging"} and (
+    JWT_SECRET == _INSECURE_JWT_DEFAULT or len(JWT_SECRET) < 32
+):
+    raise RuntimeError(
+        "JWT_SECRET must be set to a strong (>=32 char) value when LOS_ENV is prod/staging"
+    )
 
 # Call time window (IST) — this is the LEGAL CAP (RBI/TRAI). Outbound calling for
 # loans must stay inside daytime hours; midnight calling is non-compliant. Both
@@ -382,10 +394,14 @@ async def get_current_bank_user(
     no filter, so any unauthenticated caller could read every bank's data.
 
     - No token          -> 401.
+    - refresh token     -> 401 (it is not an API credential; see below).
     - admin JWT         -> operator scope (bank_id=None, sees all banks). VGIPL
                            platform operators authenticate via the admin login and
                            reach the ops views this way.
     - bank_user JWT     -> scoped to their own bank_id (officer/supervisor only).
+
+    Scope, role and active-status are read from the DB row on every request, the
+    same way main.py's equivalent dependency does — never from the JWT claims.
     """
     if not credentials:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -397,30 +413,66 @@ async def get_current_bank_user(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    # A refresh token carries exactly the same claims as an access token and
+    # differs only by "type". Nothing checked it, so a refresh token worked as a
+    # bearer credential for its full 9-hour life AND survived logout: logout
+    # deletes the refresh_tokens row, but the JWT itself still verifies here.
+    # Deny explicitly rather than requiring type == "access", so legacy tokens
+    # minted without a "type" claim keep working.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
+
     user_type = payload.get("user_type")
+
+    # Identity, scope and role now come from the DB row, not from the claims.
+    # Reading them out of the token meant a deactivated user kept full access
+    # until their token expired (main.py's equivalent dependency has always
+    # re-read the row, so deactivation applied on /api/bank/* but silently did
+    # not apply to the ~34 routes guarded here), and a stale bank_id/role claim
+    # was trusted verbatim.
+    if db_pool is None:
+        raise HTTPException(status_code=503, detail="Service starting, retry shortly")
+
+    try:
+        user_uuid = uuid.UUID(str(payload.get("user_id")))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     # Platform operators (admin token) get cross-bank operator scope.
     if user_type == "admin":
+        row = await db_pool.fetchrow(
+            "SELECT id FROM admin_users WHERE id = $1 AND is_active = true", user_uuid
+        )
+        if not row:
+            raise HTTPException(status_code=401, detail="Admin user not found or inactive")
         return {
-            "user_id": payload.get("user_id", "operator"),
+            "user_id": str(user_uuid),
             "role": "operator",
             "bank_id": None,
             "user_type": "operator",
         }
 
     if user_type == "bank_user":
+        row = await db_pool.fetchrow(
+            "SELECT id, bank_id, branch_id, role FROM bank_users "
+            "WHERE id = $1 AND is_active = true",
+            user_uuid,
+        )
+        if not row:
+            raise HTTPException(status_code=401, detail="Bank user not found or inactive")
         # bank_admin is the senior bank role and must have at least the same
         # bank-scoped READ access as officers/supervisors — the scorecard editor
         # (/api/lrs/config), call logs, etc. Excluding it here 403'd bank_admins
         # out of those pages ("Failed to load config"). Approval/maker-checker
         # actions stay officer/supervisor-only via get_bank_officer, which keeps
         # its own stricter check, so this does not let admins self-approve.
-        if payload.get("role") not in ("bank_officer", "bank_supervisor", "bank_admin"):
+        if row["role"] not in ("bank_officer", "bank_supervisor", "bank_admin"):
             raise HTTPException(status_code=403, detail="Bank user access required")
         return {
-            "user_id": payload["user_id"],
-            "role": payload["role"],
-            "bank_id": payload.get("bank_id"),
+            "user_id": str(row["id"]),
+            "role": row["role"],
+            "bank_id": str(row["bank_id"]) if row["bank_id"] else None,
+            "branch_id": str(row["branch_id"]) if row["branch_id"] else None,
             "user_type": "bank_user",
         }
 

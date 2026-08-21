@@ -15,6 +15,7 @@ export function FinixShell({
   identity,
   identityFooter,
   action,
+  headerRight,
   children,
 }: {
   nav: FinixNavItem[];
@@ -22,6 +23,8 @@ export function FinixShell({
   /** Rendered in the identity card — the shells pass the idle session timer. */
   identityFooter?: React.ReactNode;
   action?: SidebarAction;
+  /** Rendered top-right of the content panel (e.g. the notification bell). */
+  headerRight?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
@@ -40,6 +43,7 @@ export function FinixShell({
           {/* Content column: one 18px panel, right/top/bottom gutter of 12px. */}
           <main className="min-w-0 flex-1 py-3 pr-3">
             <div className="min-h-[calc(100vh-24px)] rounded-[18px] bg-fx-surface px-[18px] pb-5 pt-4">
+              {headerRight && <div className="mb-2 flex justify-end">{headerRight}</div>}
               <div className="flex flex-col gap-4">{children}</div>
             </div>
           </main>

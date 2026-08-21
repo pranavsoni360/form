@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { getAccessToken, getCurrentUser, logout } from "@/lib/auth";
 import { getMe } from "@/lib/api/bank";
 import { FinixShell, SessionTimer, type FinixNavItem, type SidebarAction } from "@/components/finix";
+import { BankNotificationBell } from "@/components/audit/BankNotificationBell";
 
 const NAV: FinixNavItem[] = [
   { href: "/bank/dashboard", label: "My queue", glyph: "▤" },
@@ -111,6 +112,7 @@ export function BankUserShell({
         />
       }
       action={action ?? logoutAction}
+      headerRight={<BankNotificationBell auditHref="/bank/audit" />}
     >
       {children}
     </FinixShell>

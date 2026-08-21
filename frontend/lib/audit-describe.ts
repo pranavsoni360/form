@@ -169,6 +169,7 @@ const SECURITY_MAP: Record<string, string> = {
   privilege_change: "Permission change",
   blocked_internal_path: "Blocked suspicious request",
   mass_sensitive_access: "Unusual volume of data access",
+  system_error: "System error",
 };
 export function describeSecurityType(t: string): string {
   return SECURITY_MAP[t] || titleCase(t || "");

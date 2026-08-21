@@ -42,6 +42,7 @@ import logging
 import os
 import time
 import uuid
+from collections import deque
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -189,6 +190,30 @@ async def ingest_external_error(
 
 _browser_security = HTTPBearer(auto_error=False)
 
+# Anonymous browser errors are accepted on purpose (a crash on the login page
+# would otherwise be lost), but that also means any internet client can inject
+# arbitrary exc_type / message / trace rows straight into the operator error
+# console — with nothing to stop it drowning out a real incident. Cap the
+# anonymous path per source IP with a small in-process bucket: no dependency,
+# no schema, and losing the counters on restart is fine for an abuse guard.
+_ANON_MAX_PER_MIN = int(os.getenv("FRONTEND_ERROR_ANON_PER_MIN", "10"))
+_ANON_TRACKED_IPS = 5000
+_anon_hits: dict[str, deque] = {}
+
+
+def _anon_rate_ok(ip: str) -> bool:
+    now = time.time()
+    if len(_anon_hits) > _ANON_TRACKED_IPS:
+        _anon_hits.clear()  # crude, but keeps the dict bounded
+    q = _anon_hits.setdefault(ip, deque())
+    while q and q[0] < now - 60:
+        q.popleft()
+    if len(q) >= _ANON_MAX_PER_MIN:
+        return False
+    q.append(now)
+    return True
+
+
 
 @router.post("/frontend-error")
 async def report_frontend_error(
@@ -207,8 +232,12 @@ async def report_frontend_error(
     # this isn't an anonymous attacker spamming.
     if credentials is None:
         # Unauthenticated browser errors (e.g. error before login) — accept
-        # silently with a relaxed cap so login-page crashes don't go missing.
-        # Could remove this branch if we want strict auth.
+        # silently with a relaxed cap so login-page crashes don't go missing,
+        # but rate-limit per IP (see _anon_rate_ok).
+        from services.audit import get_client_ip
+        peer = get_client_ip(request) or "unknown"
+        if not _anon_rate_ok(peer):
+            raise HTTPException(429, "too many anonymous error reports")
         user_label = "anonymous"
     else:
         try:

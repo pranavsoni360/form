@@ -154,14 +154,25 @@ async def set_emergency_stop(active: bool):
 
 
 async def is_emergency_stop_active() -> bool:
-    """Check emergency stop — read from DB to avoid stale in-memory flag."""
+    """Check emergency stop — read from DB to avoid a stale in-memory flag.
+
+    Fails CLOSED. The read used to swallow its exception and return the stale
+    module global, which defeats the very staleness this function exists to
+    prevent: an operator activates the stop, a DB blip coincides with the next
+    runner tick in a process whose `_emergency_stop` is still False, and the
+    dialler keeps placing calls during a declared stop. A safety kill-switch
+    must assume "stopped" when it cannot confirm otherwise.
+    """
     global _emergency_stop
     try:
         row = await db_pool.fetchrow("SELECT value FROM agent_system_config WHERE key = 'emergency_stop'")
         if row:
             _emergency_stop = row["value"] == "true"
     except Exception:
-        pass
+        logger.warning(
+            "emergency-stop check failed; assuming ACTIVE (fail closed)", exc_info=True
+        )
+        return True
     return _emergency_stop
 
 

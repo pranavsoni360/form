@@ -11,6 +11,7 @@ Step 4a covers users + invites + activity. Step 4b adds usage & call statistics
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -565,7 +566,14 @@ async def invite_user(body: InviteUser, admin: dict = Depends(get_bank_admin)):
 
     invite_url = f"{public_base_url()}/bank/accept-invite?token={token}"
     expires_human = expires.strftime("%d %b %Y")
-    email_sent = send_invite_email(email, full_name, admin.get("bank_name", "your bank"), invite_url, expires_human)
+    # send_invite_email is sync smtplib with a 15s timeout per phase. Called
+    # directly it blocked the whole single-process event loop — every
+    # tenant's requests, the dispatcher and the job workers — on one
+    # unreachable SMTP host. Push it to a worker thread.
+    email_sent = await asyncio.to_thread(
+        send_invite_email, email, full_name,
+        admin.get("bank_name", "your bank"), invite_url, expires_human,
+    )
     out = _row(row)
     out.pop("token", None)  # don't leak the raw token in the list payload
     return {"invite": out, "invite_url": invite_url, "email_sent": email_sent}
@@ -583,7 +591,10 @@ async def resend_invite(invite_id: str, admin: dict = Depends(get_bank_admin)):
         raise HTTPException(404, "Pending invite not found.")
     invite_url = f"{public_base_url()}/bank/accept-invite?token={row['token']}"
     expires_human = row["expires_at"].strftime("%d %b %Y")
-    email_sent = send_invite_email(row["email"], row["full_name"], admin.get("bank_name", "your bank"), invite_url, expires_human)
+    email_sent = await asyncio.to_thread(
+        send_invite_email, row["email"], row["full_name"],
+        admin.get("bank_name", "your bank"), invite_url, expires_human,
+    )
     await log_activity(_db(), bank_id, admin, "resend_invite", {"invite_id": invite_id, "email": row["email"], "email_sent": email_sent})
     return {"invite_url": invite_url, "email_sent": email_sent}
 

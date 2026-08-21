@@ -73,10 +73,14 @@ async def process_guarantor_run() -> None:
         stop = is_emergency_stop_active()
         if asyncio.iscoroutine(stop):
             stop = await stop
-        if stop:
-            return
     except Exception:
-        pass
+        # Fail closed: the swallow used to fall through and keep dialing during
+        # a declared emergency stop. Skip this tick instead.
+        logger.warning("guarantor runner: emergency-stop check failed; skipping tick",
+                       exc_info=True)
+        return
+    if stop:
+        return
 
     await _reclaim_stuck(_state.db_pool)
     await _promote_retryable(_state.db_pool)

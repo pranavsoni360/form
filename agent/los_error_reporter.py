@@ -76,6 +76,15 @@ _CONFIG = {
 _DEDUP: deque[tuple[str, float]] = deque(maxlen=500)
 _RATE_BUCKET: deque[float] = deque(maxlen=50)   # timestamps of last sends for QPS cap
 _LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+# Benign worker lifecycle lines that LiveKit emits at ERROR level on every
+# deploy/restart. Substring match, lower-cased.
+_LIFECYCLE_NOISE = (
+    "process exited with non-zero exit code",
+    "draining worker",
+    "shutting down worker",
+    "worker closed",
+)
 _INSTALLED = False
 
 
@@ -175,6 +184,15 @@ class _LOSErrorHandler(logging.Handler):
                 return
 
             message = record.getMessage()[:1000]
+
+            # LiveKit logs worker lifecycle at ERROR during every deploy and
+            # restart. Reporting it turned each restart into a "Calling system
+            # error" notification. The gpu-error-tailer already skips these
+            # exact phrases; keep the two paths consistent.
+            low = message.lower()
+            if any(p in low for p in _LIFECYCLE_NOISE):
+                return
+
             key = f"{record.name}|{message[:120]}"
             if not _should_send(key):
                 return

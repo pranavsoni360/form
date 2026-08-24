@@ -195,3 +195,37 @@ def test_reporter_never_reports_its_own_logs(monkeypatch):
 
     asyncio.run(main())
     assert sent == []
+
+# -- deploy noise must not become a "Calling system error" -------------------
+
+@pytest.mark.parametrize("message", [
+    "process exited with non-zero exit code 255",
+    "draining worker",
+    "shutting down worker",
+    "worker closed",
+    "Process exited with non-zero exit code 1",  # case-insensitive
+])
+def test_worker_lifecycle_lines_are_not_reported(monkeypatch, message):
+    """LiveKit logs these at ERROR on every deploy and restart. Reporting them
+    turned each restart into a super-admin notification. The gpu-error-tailer
+    already skips the same phrases."""
+    sent = _arm(monkeypatch)
+
+    async def main():
+        logging.getLogger("livekit.agents").error(message)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(main())
+    assert sent == [], f"reported deploy noise: {message!r}"
+
+
+def test_a_real_failure_is_still_reported(monkeypatch):
+    """The noise filter must be a substring match, not a blanket mute."""
+    sent = _arm(monkeypatch)
+
+    async def main():
+        logging.getLogger("livekit.agents").error("SIP INVITE failed: 503 from trunk")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(main())
+    assert len(sent) == 1

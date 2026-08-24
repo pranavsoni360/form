@@ -253,6 +253,19 @@ from routers.bank_admin import router as bank_admin_router  # noqa: E402
 app.include_router(bank_admin_router)
 
 
+# Exception types that mean "the caller went away", not "we broke". Matched by
+# name so we do not import uvicorn/starlette internals that move between
+# versions. ConnectionResetError/BrokenPipeError are checked by isinstance.
+_CLIENT_GONE = frozenset({
+    "ClientDisconnect",      # starlette.requests
+    "ClientDisconnected",    # uvicorn.protocols.utils (an OSError)
+    "ConnectionResetError",
+    "BrokenPipeError",
+    "EndOfStream",
+    "IncompleteRead",
+})
+
+
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
     """Catch-all for unhandled exceptions. Logs with correlation_id and
@@ -264,6 +277,19 @@ async def _global_exception_handler(request: Request, exc: Exception):
     """
     from fastapi.responses import JSONResponse
     cid = correlation_id_var.get() or "-"
+
+    # A client that hangs up mid-request is not a server fault. These used to
+    # take the full error path: a logger.exception traceback, a row in
+    # system_errors, and a "Loan system error: ClientDisconnect" notification in
+    # the super-admin bell. Log and move on.
+    if type(exc).__name__ in _CLIENT_GONE or isinstance(exc, (ConnectionResetError, BrokenPipeError)):
+        logger.info(
+            "client_disconnected",
+            extra={"route": str(request.url.path), "method": request.method,
+                   "exc_type": type(exc).__name__},
+        )
+        return JSONResponse(status_code=499, content={"error": "client_disconnected"})
+
     logger.exception(
         "unhandled_exception",
         extra={

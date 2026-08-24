@@ -475,31 +475,41 @@ async def get_dashboard_stats(
         except ValueError:
             pass
 
-    base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{bank_clause}{date_clause}"
+    where = f"WHERE TRUE{bank_clause}{date_clause}"
 
-    total = await _state.db_pool.fetchval(base, *params)
-    whatsapp_forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true", *params)
-    hot_leads = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'", *params)
-    warm_leads = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'", *params)
-    pending_calls = await _state.db_pool.fetchval(f"{base} AND status = 'Pending'", *params)
-    not_answered = await _state.db_pool.fetchval(
-        f"{base} AND status IN ('Not Answered', 'Failed', 'Invalid Phone', 'Call Not Connected')", *params
+    # One pass for every headline counter. This used to be nine separate
+    # COUNT(*) round-trips over the same rows with the same WHERE, and the two
+    # breakdowns below added one more per status and per category — about 29
+    # scans of agent_calls per dashboard load. Under load that was the slowest
+    # endpoint in the API by a wide margin (p99 ~1.9s at 60 concurrent).
+    # COUNT(*) FILTER gives identical numbers from a single scan.
+    agg = await _state.db_pool.fetchrow(
+        f"""SELECT
+              COUNT(*)                                                        AS total,
+              COUNT(*) FILTER (WHERE form_sent = true)                        AS forms_sent,
+              COUNT(*) FILTER (WHERE call_analysis->>'lead_quality' = 'hot')  AS hot,
+              COUNT(*) FILTER (WHERE call_analysis->>'lead_quality' = 'warm') AS warm,
+              COUNT(*) FILTER (WHERE status = 'Pending')                      AS pending,
+              COUNT(*) FILTER (WHERE status IN ('Not Answered', 'Failed',
+                                                'Invalid Phone', 'Call Not Connected')) AS not_answered,
+              COUNT(*) FILTER (WHERE loan_type = 'education')                 AS education,
+              COUNT(*) FILTER (WHERE loan_type = 'business')                  AS business,
+              COUNT(*) FILTER (WHERE loan_type = 'personal')                  AS personal
+            FROM agent_calls {where}""",
+        *params,
     )
-    education_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'education'", *params)
-    business_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'business'", *params)
-    personal_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'personal'", *params)
 
     stats = {
-        "total_calls": total,
-        "whatsapp_forms_sent": whatsapp_forms_sent,
-        "hot_leads": hot_leads,
-        "warm_leads": warm_leads,
-        "pending_calls": pending_calls,
-        "not_answered": not_answered,
+        "total_calls": agg["total"],
+        "whatsapp_forms_sent": agg["forms_sent"],
+        "hot_leads": agg["hot"],
+        "warm_leads": agg["warm"],
+        "pending_calls": agg["pending"],
+        "not_answered": agg["not_answered"],
         "loan_interests": {
-            "education": education_loans,
-            "business": business_loans,
-            "personal": personal_loans,
+            "education": agg["education"],
+            "business": agg["business"],
+            "personal": agg["personal"],
         },
         "calling_hours": {
             "start": f"{CALL_START_HOUR}:00 IST",
@@ -509,14 +519,22 @@ async def get_dashboard_stats(
     }
 
     # Breakdowns
-    by_status = {}
-    for s in STATUS_OPTIONS:
-        by_status[s] = await _state.db_pool.fetchval(f"{base} AND status = ${idx}", *params, s)
+    # Two GROUP BY queries instead of one COUNT per option. Every configured
+    # option keeps a key (zero when absent), so the response shape is unchanged.
+    by_status = {opt: 0 for opt in STATUS_OPTIONS}
+    for r in await _state.db_pool.fetch(
+        f"SELECT status, COUNT(*) AS n FROM agent_calls {where} GROUP BY status", *params
+    ):
+        if r["status"] in by_status:
+            by_status[r["status"]] = r["n"]
     stats["by_status"] = by_status
 
-    by_category = {}
-    for c in CATEGORY_OPTIONS:
-        by_category[c] = await _state.db_pool.fetchval(f"{base} AND category = ${idx}", *params, c)
+    by_category = {opt: 0 for opt in CATEGORY_OPTIONS}
+    for r in await _state.db_pool.fetch(
+        f"SELECT category, COUNT(*) AS n FROM agent_calls {where} GROUP BY category", *params
+    ):
+        if r["category"] in by_category:
+            by_category[r["category"]] = r["n"]
     stats["by_category"] = by_category
 
     return {"date": date or now_ist().strftime("%Y-%m-%d"), **stats}

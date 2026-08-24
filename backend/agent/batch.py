@@ -1003,43 +1003,58 @@ async def batch_status(
     definition as Call Logs (COALESCE(started_at, created_at))."""
     lo, hi = _ist_day_bounds(date_from, date_to)
 
-    async def _count(extra_clause: str):
-        # Build the WHERE incrementally so placeholders stay in sync regardless
-        # of which optional filters (batch_id, date range) are active.
-        parts: list = []
-        params: list = []
-        # Tenant predicate first: without it, calling this with no batch_id
-        # handed any bank officer platform-wide call counts.
-        bank_uuid = _bank_uuid(user)
-        if bank_uuid is not None:
-            params.append(bank_uuid)
-            parts.append(f"bank_id = ${len(params)}")
-        if batch_id:
-            params.append(batch_id)
-            parts.append(f"batch_id = ${len(params)}")
-        if lo is not None:
-            params.append(lo)
-            parts.append(f"COALESCE(started_at, created_at) >= ${len(params)}")
-        if hi is not None:
-            params.append(hi)
-            parts.append(f"COALESCE(started_at, created_at) < ${len(params)}")
-        where = " AND ".join(parts) if parts else "TRUE"
-        return await _state.db_pool.fetchval(
-            f"SELECT COUNT(*) FROM agent_calls WHERE {where}{extra_clause}", *params,
-        )
+    # Build the WHERE incrementally so placeholders stay in sync regardless of
+    # which optional filters (batch_id, date range) are active.
+    parts: list = []
+    params: list = []
+    # Tenant predicate first: without it, calling this with no batch_id handed
+    # any bank officer platform-wide call counts.
+    bank_uuid = _bank_uuid(user)
+    if bank_uuid is not None:
+        params.append(bank_uuid)
+        parts.append(f"bank_id = ${len(params)}")
+    if batch_id:
+        params.append(batch_id)
+        parts.append(f"batch_id = ${len(params)}")
+    if lo is not None:
+        params.append(lo)
+        parts.append(f"COALESCE(started_at, created_at) >= ${len(params)}")
+    if hi is not None:
+        params.append(hi)
+        parts.append(f"COALESCE(started_at, created_at) < ${len(params)}")
+    where = " AND ".join(parts) if parts else "TRUE"
 
-    pending_count = await _count(" AND status IN ('Pending', 'Calling', 'Scheduled', 'Called - Callback Requested')")
-    active_count = await _count(" AND status = 'Calling'")
+    # One pass for all eight counters. This was eight separate COUNT(*) round
+    # trips over the same rows with the same WHERE; the batch dashboard polls
+    # this endpoint, so it was the second-slowest path in the API under load.
     # 'failed' is the single agreed umbrella for all hard-failure outcomes —
     # Failed + Invalid Phone + Call Not Connected — used consistently across the
     # bank/ops batch dashboards AND the Call Logs 'Failed' filter. 'Not Answered'
     # is a distinct outcome and stays in its own bucket.
-    failed_count = await _count(" AND status IN ('Failed', 'Invalid Phone', 'Call Not Connected')")
-    not_answered_count = await _count(" AND status = 'Not Answered'")
-    completed_count = await _count(" AND status IN ('Called', 'Called - Interested', 'Called - Not Interested')")
-    cancelled_count = await _count(" AND status = 'Cancelled'")
-    wrong_contact_count = await _count(" AND status = 'Wrong Contact'")
-    total_count = await _count("")
+    counts = await _state.db_pool.fetchrow(
+        f"""SELECT
+              COUNT(*) FILTER (WHERE status IN ('Pending', 'Calling', 'Scheduled',
+                                                'Called - Callback Requested')) AS pending,
+              COUNT(*) FILTER (WHERE status = 'Calling')                        AS active,
+              COUNT(*) FILTER (WHERE status IN ('Failed', 'Invalid Phone',
+                                                'Call Not Connected'))          AS failed,
+              COUNT(*) FILTER (WHERE status = 'Not Answered')                   AS not_answered,
+              COUNT(*) FILTER (WHERE status IN ('Called', 'Called - Interested',
+                                                'Called - Not Interested'))     AS completed,
+              COUNT(*) FILTER (WHERE status = 'Cancelled')                      AS cancelled,
+              COUNT(*) FILTER (WHERE status = 'Wrong Contact')                  AS wrong_contact,
+              COUNT(*)                                                          AS total
+            FROM agent_calls WHERE {where}""",
+        *params,
+    )
+    pending_count = counts["pending"]
+    active_count = counts["active"]
+    failed_count = counts["failed"]
+    not_answered_count = counts["not_answered"]
+    completed_count = counts["completed"]
+    cancelled_count = counts["cancelled"]
+    wrong_contact_count = counts["wrong_contact"]
+    total_count = counts["total"]
 
     # Why isn't a 'running' batch dialing? Surface the blocking reason so a batch
     # stuck at Pending is self-explaining instead of a silent hang. Both of these

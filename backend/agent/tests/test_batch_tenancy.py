@@ -202,3 +202,40 @@ def test_ops_errors_refuses_bank_users(ops_pool):
 def test_ops_errors_still_serves_the_operator_console(ops_pool):
     out = asyncio.run(ops_mod.list_recent_errors(user=OPERATOR))
     assert "errors" in out
+
+# -- batch-status: one query, still tenant-scoped ---------------------------
+
+def test_batch_status_is_one_query_and_still_scoped(monkeypatch):
+    """Eight COUNT round-trips became one COUNT(*) FILTER aggregate. The tenant
+    predicate has to survive that rewrite."""
+    counts = {"pending": 1, "active": 2, "failed": 3, "not_answered": 4,
+              "completed": 5, "cancelled": 6, "wrong_contact": 7, "total": 28}
+    pool = _SpyPool(row=counts)
+    monkeypatch.setattr(state_mod, "db_pool", pool)
+
+    async def _no_stop():
+        return False
+
+    monkeypatch.setattr(batch_mod, "is_emergency_stop_active", _no_stop)
+    out = asyncio.run(batch_mod.batch_status(user=_bank_user(BANK_A)))
+
+    aggs = [q for q in (s for s, _ in pool.statements) if "COUNT(*) FILTER" in q]
+    assert len(aggs) == 1, f"expected a single aggregate query, got {len(aggs)}"
+    assert "bank_id = $1" in aggs[0], "the tenant predicate must survive"
+    assert pool.statements[0][1][0] == BANK_A
+    assert out["total"] == 28 and out["pending"] == 1 and out["wrong_contact"] == 7
+
+
+def test_batch_status_operator_is_not_bank_filtered(monkeypatch):
+    counts = dict.fromkeys(
+        ("pending", "active", "failed", "not_answered", "completed",
+         "cancelled", "wrong_contact", "total"), 0)
+    pool = _SpyPool(row=counts)
+    monkeypatch.setattr(state_mod, "db_pool", pool)
+
+    async def _no_stop():
+        return False
+
+    monkeypatch.setattr(batch_mod, "is_emergency_stop_active", _no_stop)
+    asyncio.run(batch_mod.batch_status(user=OPERATOR))
+    assert "bank_id = $" not in pool.sql

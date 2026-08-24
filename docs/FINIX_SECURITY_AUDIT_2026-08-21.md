@@ -280,6 +280,18 @@ loopback) applied with a timed rollback.
 From the database audit (server currently unreachable, so **re-verify before
 acting**):
 
+**Deferred to the next version by decision — checked that it cannot block
+anything that works today.** The only place vendor data touches the live loan
+flow is `cancel_application` (`main.py:3019`), which refuses to cancel while an
+active `application_vendor_assignments` row exists. Prod has **0 vendors**, so
+**0 assignments**, so that check always passes and cancel behaves normally.
+The breakage is confined to `POST /api/admin/vendors` (500) and `PATCH` when the
+payload carries `gstin`/`pan_number`; `GET` still works (`SELECT *`) and the
+admin page just renders an empty list with a blank GSTIN field. Nothing sticks,
+nothing blocks. The one thing to remember: if vendors are ever created in prod
+*before* the columns are reconciled, `cancel_application` starts refusing
+cancels — so fix the schema before enabling the feature.
+
 * **`POST /api/admin/vendors` is broken in production right now.** The insert
   writes `gstin`/`pan_number`, which prod's `vendors` table lacks, and omits
   `bank_id`, which is `NOT NULL` there. `SELECT count(*) FROM vendors` on prod

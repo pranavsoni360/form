@@ -449,6 +449,69 @@ Two noise sources were reaching the super-admin bell, both fixed in `f705cde`:
   gpu-error-tailer already skipped those phrases; the in-process reporter now
   agrees. The following deploy produced zero rows.
 
+## 8. Round two (2026-08-24) - B, C and D
+
+Your decisions: firewall = plan only (docs/FINIX_FIREWALL_PLAN.md); vendors =
+deferred, verified it blocks nothing live (see 5.2); calling isolation = build
+it fully per bank (NOT started, see below); /uploads + /api/recordings = leave
+open; the account-opening form = corrected below.
+
+### 8.1 A5 correction - the account-opening form has no OTP
+
+You are right that the **loan** form is OTP-gated: `/form/[token]` posts to
+`/api/verify-otp-session` and the backend refuses on `otp_verified = false`.
+
+The **account-opening** form is a different flow and has none.
+`frontend/app/bank/account-form/page.tsx` reads `call_id` from the query string
+and immediately fetches `/api/agent/form-data/{call_id}`; the two backend
+handlers' own docstrings say "Public (no auth)". So the `call_id` UUID is the
+whole credential: no OTP, no expiry, not single-use, and `submit-form` lets the
+caller set `otp_verified` to any value. It needs a short-lived single-use token
+like the loan form has - a design change, not a patch.
+
+### 8.2 Fixed in this round
+
+| Area | What was wrong |
+|---|---|
+| `/api/admin/review` | no status precondition and no affected-row check: a withdrawn, cancelled, disbursed or draft application could be moved to `approved`, and the customer WhatsApped "Congratulations ... APPROVED" |
+| manual callbacks | the INSERT omitted `bank_id`, so the call was invisible in the bank's portal AND unbillable (billing short-circuits on a missing bank_id). Added the bank picker to /ops/callbacks so operators are not just handed a 400 |
+| `IS NOT DISTINCT FROM` | used in two places believing NULL matched everything for an operator; it matches only rows whose bank_id IS NULL, so /live-status showed an operator nothing but orphans |
+| categorise | wrote with a tenant predicate but never checked the row count, so a cross-tenant attempt returned `{"status":"updated"}` |
+| **rate limiting** | there was none. Paid Aadhaar/PAN calls, the bulk exports and the login endpoints were all unbounded. Two dimensions on the KYC endpoints: loose per-IP (CGNAT shares addresses in India) plus a tight per-token cap |
+| audit `count(*)` | unbounded on append-only tables; now windowed (365 days, env-tunable) so both the count and the page use the existing indexes |
+| `recording_path` | webhook-supplied, stored, rendered to officers, never validated |
+| **`deploy.sh` drift** | it regenerates the systemd units every run and disagreed with reality in three places, each hand-fixed on the box: the backend on `0.0.0.0` (re-publishing :8200 past every nginx block), the tailer env on `http://` against an https backend (breaking every LiveKit/SIP/docker error), and `https-server.js` hardcoding `0.0.0.0`. The next prod deploy would have reverted all three |
+| fd limits | every unit ran on the systemd default soft limit of 1024 |
+| QA `max_connections` | prod and QA both defaulted to a 40+8 pool = 96 of 100. QA lowered to 20+8; total 76 |
+| **QA nginx `X-Real-IP`** | prod set it, QA did not - so a client's own `X-Real-IP` survived and was trusted, forging the audit trail's IP and evading (or poisoning) the new per-IP limits. Found because the verification script's own login flood made me check what the key resolves to end to end |
+| SSE churn | `RealtimeProvider`'s visibility handler read a `state` frozen at "closed", so its guard was always true and every tab refocus tore down a healthy EventSource |
+| lost password | the one-time credential panel flipped to "Copied" without awaiting or catching the clipboard write |
+| screens hiding outages | `/ops/errors` showed "everything is quiet" when the error API was down; `/bank/calls` said "No calls found"; `/bank/batch` dropped the live-status card, both banners and the batch list, all silently |
+
+### 8.3 Deliberately not done
+
+* `agent_calls.is_deleted` / `deleted_at` / `deleted_by` / `delete_reason` exist
+  and **nothing anywhere writes them** - there is no soft-delete path for calls.
+  Adding `is_deleted IS NOT TRUE` to a dozen read queries would filter for a
+  flag nothing sets and imply an erasure control that does not exist. Build the
+  delete path first.
+* Per-bank calling isolation (your A3) - batch upload/start/stop/clean-stuck and
+  emergency stop fully separated per bank. Approved, not started: emergency stop
+  is a single global flag in `agent_system_config`, so this needs a schema change
+  plus dispatcher changes, and is the next piece of work.
+
+### 8.4 Verified live on QA
+
+Per-token PAN cap: 1st call 404 (not limited), 14th 429. Export cap: 22nd 429.
+Per-IP login cap: 33rd 429. Admin review on a `draft` application: HTTP 400
+"Cannot approve an application in status 'draft'", status unchanged. All seven
+audit streams 200 with their real totals (199 activity, 172 logins, 40
+sensitive, 12 security) - the window bound hides nothing. Notification bell 200.
+Six frontend routes 200. `tsc` clean, `next lint` 0 errors, `next build`
+succeeds. Zero new backend errors. Spoof proof: a request carrying
+`X-Real-IP: 203.0.113.222` through :8445 now records the real peer.
+
+Backend tests: 138 at the start of this work, **369** now.
 ## 6. Recommended order
 
 1. Firewall allowlist (§5.1) — planned, with rollback.

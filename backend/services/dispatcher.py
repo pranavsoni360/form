@@ -276,6 +276,7 @@ class Dispatcher:
         max_retries: int,
         concurrency: int = DEFAULT_CONCURRENCY,
         preferred_phone_id: Optional[str] = None,
+        bank_id: Optional[str] = None,
     ) -> None:
         self.batch_id_uuid = batch_id_uuid
         self.call_batch_id = call_batch_id
@@ -295,6 +296,9 @@ class Dispatcher:
         # When set, every call in this batch dials FROM this specific
         # phone_numbers row. Set via /ops/batch "From number" dropdown.
         self.preferred_phone_id = preferred_phone_id
+        # Which tenant this batch belongs to. Lets an emergency stop raised by
+        # one bank signal only that bank's dispatchers instead of every one.
+        self.bank_id = str(bank_id) if bank_id else None
 
         self.semaphore = asyncio.Semaphore(concurrency)
         self._stopped = False
@@ -839,6 +843,20 @@ class DispatcherManager:
         for d in list(self._active.values()):
             d.stop()
             n += 1
+        return n
+
+    def stop_bank(self, bank_id: str) -> int:
+        """Signal only the dispatchers belonging to one bank. Returns the count.
+
+        A bank raising its own emergency stop must not kill another tenant's
+        in-flight calls, which is what stop_all() did.
+        """
+        want = str(bank_id)
+        n = 0
+        for d in list(self._active.values()):
+            if getattr(d, "bank_id", None) == want:
+                d.stop()
+                n += 1
         return n
 
     def stop_one(self, batch_id: str) -> bool:

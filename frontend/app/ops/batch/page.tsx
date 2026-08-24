@@ -624,7 +624,7 @@ export default function OpsBatchPage() {
             Emergency stop?
           </div>
         }
-        description="This will pause all running batches and kill any active call mid-dial. Customer mid-conversation will be cut off."
+        description="PLATFORM-WIDE: this pauses every bank's running batches and kills every active call mid-dial, on every tenant. Customers mid-conversation will be cut off. To stop a single bank, use that bank's own batch screen."
         footer={
           <>
             <Button variant="outline" onClick={() => setConfirmStop(false)}>

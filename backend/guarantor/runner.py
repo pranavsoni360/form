@@ -86,10 +86,15 @@ async def process_guarantor_run() -> None:
     await _promote_retryable(_state.db_pool)
     await _mark_exhausted_unreached(_state.db_pool)
 
+    # Exclude banks that have stopped their own calling. The tick above already
+    # honours the platform switch; this is the per-bank one. LEFT JOIN so a row
+    # with no bank_id behaves exactly as before.
     rows = await _state.db_pool.fetch(
-        """SELECT * FROM guarantor_consent_calls
-             WHERE status='pending' AND scheduled_at <= NOW()
-             ORDER BY scheduled_at ASC
+        """SELECT g.* FROM guarantor_consent_calls g
+        LEFT JOIN banks bk ON bk.id = g.bank_id
+             WHERE g.status='pending' AND g.scheduled_at <= NOW()
+               AND NOT COALESCE(bk.calling_emergency_stopped, false)
+             ORDER BY g.scheduled_at ASC
              LIMIT $1""",
         _CONCURRENCY,
     )

@@ -92,7 +92,7 @@ const ACTIVITY_MAP: Record<string, string> = {
   "POST /api/agent/upload-excel": "Uploaded a calling list",
   "POST /api/agent/batch-call": "Started a calling batch",
   "POST /api/agent/batch-retry": "Retried a calling batch",
-  "POST /api/agent/emergency-stop": "Emergency-stopped all calling",
+  "POST /api/agent/emergency-stop": "Emergency-stopped calling",
   "POST /api/agent/resume-calling": "Resumed calling",
   "POST /api/agent/stop-batch": "Stopped a calling batch",
   "PUT /api/agent/calls/:id/categorize": "Categorised a call",

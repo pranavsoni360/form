@@ -305,7 +305,7 @@ export default function BatchPage() {
   const emergencyStop = async () => {
     if (!confirm('EMERGENCY STOP: This will terminate ALL active calls immediately.')) return;
     setStopping(true);
-    try { await apiPost('/api/agent/emergency-stop'); notify('Emergency stop sent'); refresh(); }
+    try { await apiPost('/api/agent/emergency-stop'); notify('Emergency stop sent for your bank'); refresh(); }
     catch (err: any) { notify(err.message, false); } finally { setStopping(false); }
   };
   const retryFailed   = async () => {
@@ -398,18 +398,31 @@ export default function BatchPage() {
           />
           <CardBody className="space-y-3">
             {/* Why isn't a running batch dialing? Make the silent hang visible. */}
-            {batchStatus?.blocked_reason === 'emergency_stop' && (
+            {/* Your bank's own stop — yours to clear. */}
+            {batchStatus?.blocked_reason === 'bank_emergency_stop' && (
               <div
                 className="flex flex-wrap items-center gap-3 rounded-[10px] px-4 py-3 text-[13px]"
                 style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)' }}
               >
                 <span>
-                  <b>Emergency stop is active</b> — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} won&apos;t dial until you resume.
+                  <b>Emergency stop is active for your bank</b> — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} won&apos;t dial until you resume. Other banks are unaffected.
                 </span>
                 <span className="ml-auto">
                   <Button variant="danger" disabled={resuming} onClick={resumeCalling}>
                     {resuming ? 'Resuming…' : 'Resume calling'}
                   </Button>
+                </span>
+              </div>
+            )}
+            {/* The platform switch. A bank cannot clear this, so do not offer
+                a Resume button that would only come back 409. */}
+            {batchStatus?.blocked_reason === 'platform_emergency_stop' && (
+              <div
+                className="flex flex-wrap items-center gap-3 rounded-[10px] px-4 py-3 text-[13px]"
+                style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)' }}
+              >
+                <span>
+                  <b>Calling is stopped platform-wide</b> — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} won&apos;t dial. Only the Finix operations team can lift this; please contact them.
                 </span>
               </div>
             )}

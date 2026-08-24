@@ -139,29 +139,78 @@ async def _init_system_state():
         _emergency_stop = False
 
 
-async def set_emergency_stop(active: bool):
-    global _emergency_stop
-    _emergency_stop = active
+def _coerce_bank_uuid(bank_id):
+    """Accept a UUID, a str, or None. None means "no bank in scope"."""
+    if bank_id is None:
+        return None
+    if isinstance(bank_id, uuid.UUID):
+        return bank_id
+    try:
+        return uuid.UUID(str(bank_id))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+async def set_emergency_stop(active: bool, bank_id=None, actor: str = None,
+                             reason: str = None):
+    """Set or clear an emergency stop.
+
+    bank_id None  -> the PLATFORM-wide flag in agent_system_config. This stops
+                     every tenant, so only a platform operator should reach it.
+    bank_id given -> only that bank's stop (banks.calling_emergency_stopped).
+
+    Deliberately NOT reusing banks.calling_paused: that column belongs to the
+    billing trigger (balance <= 0), and clearing it here would let a bank with
+    no credit start dialling again.
+    """
+    if bank_id is None:
+        global _emergency_stop
+        _emergency_stop = active
+        try:
+            await db_pool.execute(
+                """INSERT INTO agent_system_config (key, value, updated_at)
+                   VALUES ('emergency_stop', $1, $2)
+                   ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2""",
+                "true" if active else "false", now_ist(),
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist platform emergency_stop: {e}")
+        return
+
+    bank_uuid = _coerce_bank_uuid(bank_id)
+    if bank_uuid is None:
+        logger.error("set_emergency_stop: unusable bank_id %r", bank_id)
+        return
     try:
         await db_pool.execute(
-            """INSERT INTO agent_system_config (key, value, updated_at)
-               VALUES ('emergency_stop', $1, $2)
-               ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2""",
-            "true" if active else "false", now_ist(),
+            """UPDATE banks
+                  SET calling_emergency_stopped = $1,
+                      emergency_stopped_at      = CASE WHEN $1 THEN $2 ELSE NULL END,
+                      emergency_stopped_by      = $3,
+                      emergency_stop_reason     = CASE WHEN $1 THEN $4 ELSE NULL END
+                WHERE id = $5""",
+            active, now_ist(), actor, reason, bank_uuid,
         )
     except Exception as e:
-        logger.error(f"Failed to persist emergency_stop: {e}")
+        logger.error(f"Failed to persist emergency_stop for bank {bank_uuid}: {e}")
 
 
-async def is_emergency_stop_active() -> bool:
-    """Check emergency stop — read from DB to avoid a stale in-memory flag.
+async def is_emergency_stop_active(bank_id=None) -> bool:
+    """True when calling must not proceed. Fails CLOSED.
 
-    Fails CLOSED. The read used to swallow its exception and return the stale
-    module global, which defeats the very staleness this function exists to
-    prevent: an operator activates the stop, a DB blip coincides with the next
-    runner tick in a process whose `_emergency_stop` is still False, and the
-    dialler keeps placing calls during a declared stop. A safety kill-switch
-    must assume "stopped" when it cannot confirm otherwise.
+    Two independent switches, either of which blocks:
+      * the PLATFORM flag in agent_system_config — stops every tenant;
+      * banks.calling_emergency_stopped for `bank_id` — that one bank's stop.
+
+    Called once per call by the dispatcher, so the per-bank read is a single
+    indexed lookup and is deliberately NOT cached: a stop has to take effect on
+    the very next call, not after a cache expires.
+
+    Fails closed on either read. The platform read used to swallow its exception
+    and return the stale module global, which defeats the staleness this
+    function exists to prevent: an operator activates the stop, a DB blip
+    coincides with the next runner tick in a process whose `_emergency_stop` is
+    still False, and the dialler keeps placing calls during a declared stop.
     """
     global _emergency_stop
     try:
@@ -170,10 +219,60 @@ async def is_emergency_stop_active() -> bool:
             _emergency_stop = row["value"] == "true"
     except Exception:
         logger.warning(
-            "emergency-stop check failed; assuming ACTIVE (fail closed)", exc_info=True
+            "platform emergency-stop check failed; assuming ACTIVE (fail closed)",
+            exc_info=True,
         )
         return True
-    return _emergency_stop
+    if _emergency_stop:
+        return True
+
+    bank_uuid = _coerce_bank_uuid(bank_id)
+    if bank_uuid is None:
+        # No bank in scope: the platform flag is all there is to check. A caller
+        # that HAS a bank must pass it, or a bank-scoped stop is invisible here.
+        return False
+    try:
+        stopped = await db_pool.fetchval(
+            "SELECT calling_emergency_stopped FROM banks WHERE id = $1", bank_uuid
+        )
+    except Exception:
+        logger.warning(
+            "per-bank emergency-stop check failed for %s; assuming ACTIVE (fail closed)",
+            bank_uuid, exc_info=True,
+        )
+        return True
+    return bool(stopped)
+
+
+async def emergency_stop_state(bank_id=None) -> dict:
+    """Both switches, for the UI to explain WHICH one is blocking."""
+    platform = False
+    try:
+        row = await db_pool.fetchrow("SELECT value FROM agent_system_config WHERE key = 'emergency_stop'")
+        platform = bool(row) and row["value"] == "true"
+    except Exception:
+        logger.warning("emergency_stop_state: platform read failed", exc_info=True)
+        platform = True
+    out = {"platform_stopped": platform, "bank_stopped": False,
+           "stopped_at": None, "stopped_by": None, "reason": None}
+    bank_uuid = _coerce_bank_uuid(bank_id)
+    if bank_uuid is None:
+        return out
+    try:
+        r = await db_pool.fetchrow(
+            "SELECT calling_emergency_stopped, emergency_stopped_at, "
+            "emergency_stopped_by, emergency_stop_reason FROM banks WHERE id = $1",
+            bank_uuid,
+        )
+        if r:
+            out["bank_stopped"] = bool(r["calling_emergency_stopped"])
+            out["stopped_at"] = r["emergency_stopped_at"].isoformat() if r["emergency_stopped_at"] else None
+            out["stopped_by"] = r["emergency_stopped_by"]
+            out["reason"] = r["emergency_stop_reason"]
+    except Exception:
+        logger.warning("emergency_stop_state: per-bank read failed", exc_info=True)
+        out["bank_stopped"] = True
+    return out
 
 
 async def acquire_batch_lock() -> bool:

@@ -12,6 +12,7 @@ from typing import Optional
 
 import pandas as pd
 import csv
+from functools import partial
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from livekit import api
@@ -21,10 +22,10 @@ from apscheduler.events import EVENT_JOB_ERROR
 
 from . import state as _state
 from .state import (
-    get_current_bank_user, _bank_uuid,
+    get_current_bank_user, _bank_uuid, _rows_affected,
     now_ist, now_ist_str, is_within_calling_hours,
     acquire_batch_lock, release_batch_lock, is_emergency_stop_active,
-    set_emergency_stop, cleanup_stuck_calls, _init_system_state,
+    set_emergency_stop, emergency_stop_state, cleanup_stuck_calls, _init_system_state,
     _row_to_dict, _rows_to_list, _serialize_call,
     LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
     SIP_TRUNK_ID, AGENT_NAME, UNION_BANK_AGENT_NAME, DEMO_MODE, CALL_START_HOUR, CALL_END_HOUR,
@@ -426,10 +427,13 @@ async def process_batch_run(batch_uuid_str: str = None):
     # Emergency stop leaves calls at 'Pending' (the dispatcher skips each one),
     # so a batch would look "running but nothing dials". Detect it up front and
     # log the reason once, instead of emitting a per-call skip for every number.
+    # No bank in scope yet (the batch is selected below), so this is the
+    # PLATFORM-wide switch only. The per-bank stop is checked once the batch —
+    # and therefore its bank — is known.
     if await is_emergency_stop_active():
         logger.warning(
-            "Batch dispatch skipped — EMERGENCY STOP is active. Calls stay Pending "
-            "until an operator clicks Resume (POST /resume-calling)."
+            "Batch dispatch skipped — PLATFORM-WIDE emergency stop is active. Calls "
+            "stay Pending until an operator resumes (POST /resume-calling)."
         )
         await release_batch_lock()
         return
@@ -501,6 +505,18 @@ async def process_batch_run(batch_uuid_str: str = None):
         except Exception as _e:
             logger.warning("Could not check calling_paused for batch %s: %s", batch_id, _e)
 
+        # This bank's own emergency stop. Separate from calling_paused above:
+        # that one is the billing trigger (balance <= 0), this one is a person
+        # pressing stop. Either blocks, and resuming one must not clear the other.
+        _batch_bank_id = batch.get("bank_id")
+        if _batch_bank_id and await is_emergency_stop_active(_batch_bank_id):
+            logger.warning(
+                "Batch %s skipped — bank %s has an EMERGENCY STOP active. Other "
+                "banks keep dialling.", batch_id, _batch_bank_id,
+            )
+            await release_batch_lock()
+            return
+
         # ── M4-lite: delegate per-call placement to the concurrent dispatcher ──
         from services.dispatcher import Dispatcher, manager as dispatcher_mgr
 
@@ -528,10 +544,14 @@ async def process_batch_run(batch_uuid_str: str = None):
             demo_mode=DEMO_MODE,
             wait_for_call_completion=wait_for_call_completion,
             is_within_calling_hours_fn=bank_hours_fn,
-            is_emergency_stop_active_fn=is_emergency_stop_active,
+            # Bound to THIS batch's bank, so the dispatcher's per-call gate sees
+            # both the platform switch and this bank's own stop - and never
+            # another tenant's.
+            is_emergency_stop_active_fn=partial(is_emergency_stop_active, _batch_bank_id),
             now_ist_fn=now_ist,
             max_retries=MAX_RETRIES,
             preferred_phone_id=preferred_phone_id,
+            bank_id=str(_batch_bank_id) if _batch_bank_id else None,
         )
         dispatcher_mgr.register(batch_id, dispatcher)
         try:
@@ -579,11 +599,16 @@ async def process_batch_run(batch_uuid_str: str = None):
             # when those calls come due. Also gated on calling hours + emergency
             # stop so it can never hot-loop outside those windows.
             if is_within_calling_hours() and not await is_emergency_stop_active():
+                # Work belonging to a bank that has stopped itself is NOT due
+                # work: counting it would hot-loop the chain on a batch that the
+                # per-bank gate then refuses to dial.
                 due_left = await _state.db_pool.fetchval(
                     """SELECT COUNT(*)
                          FROM agent_calls c
                          JOIN agent_batches b ON b.batch_id = c.batch_id
+                    LEFT JOIN banks bk ON bk.id = b.bank_id
                         WHERE b.status = 'running'
+                          AND NOT COALESCE(bk.calling_emergency_stopped, false)
                           AND (c.status = 'Pending'
                                OR (c.status IN ('Scheduled', 'Called - Callback Requested')
                                    AND (c.scheduled_callback_at IS NULL
@@ -956,11 +981,26 @@ async def trigger_batch(
                    f"Current: {now_ist().strftime('%I:%M %p IST')}",
         )
 
-    # Clear emergency stop first (operator is explicitly starting)
-    await set_emergency_stop(False)
-
-    # Find the batch to start (pending first, then running/paused), in scope.
+    # Starting a batch used to call set_emergency_stop(False) unconditionally,
+    # so any bank user pressing Start cleared the PLATFORM-wide stop for every
+    # tenant. Now: an operator clears the platform switch; a bank user clears
+    # only their own bank's stop, and if the platform switch is on they are told
+    # rather than handed a batch that will never dial.
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks)
+    _stop_state = await emergency_stop_state(bank_uuid)
+    if bank_uuid is None:
+        await set_emergency_stop(False)
+    else:
+        if _stop_state["platform_stopped"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Calling is stopped platform-wide by the operator. It cannot be "
+                       "resumed from a bank account.",
+            )
+        if _stop_state["bank_stopped"]:
+            await set_emergency_stop(False, bank_id=bank_uuid,
+                                     actor=str(user.get("user_id") or ""))
+
     batch_row = await _fetch_batch_scoped(
         batch_id, bank_uuid, statuses=("pending", "running", "paused"),
     )
@@ -1061,12 +1101,18 @@ async def batch_status(
     # cause calls to stay 'Pending' (never dialed): an Emergency Stop that was
     # never resumed, or being outside the calling window. (A trunk/LiveKit
     # problem instead marks calls 'Failed', so it isn't a "blocked" reason.)
-    emergency_stop = await is_emergency_stop_active()
+    # Report both switches separately: "stopped" means very different things to
+    # a bank (someone here pressed stop, we can resume) and to the platform
+    # (VGIPL stopped everything, we cannot).
+    _st = await emergency_stop_state(bank_uuid)
+    emergency_stop = _st["platform_stopped"] or _st["bank_stopped"]
     within_hours = is_within_calling_hours()
     blocked_reason = None
     if pending_count > 0:
-        if emergency_stop:
-            blocked_reason = "emergency_stop"
+        if _st["platform_stopped"]:
+            blocked_reason = "platform_emergency_stop"
+        elif _st["bank_stopped"]:
+            blocked_reason = "bank_emergency_stop"
         elif not within_hours:
             blocked_reason = "outside_calling_hours"
 
@@ -1154,8 +1200,19 @@ async def trigger_batch_retry(
 
 
 @router.post("/emergency-stop")
-async def emergency_stop(user: dict = Depends(get_current_bank_user)):
-    """Immediately stop all calling and kill every active call.
+async def emergency_stop(
+    reason: Optional[str] = Query(None, description="Why calling was stopped (kept for the audit trail)"),
+    user: dict = Depends(get_current_bank_user),
+):
+    """Immediately stop calling and kill the active calls IN SCOPE.
+
+    Scope is the caller:
+      * bank user -> only their own bank. Their batches pause, their live calls
+        are killed, their dispatchers are signalled. Every other tenant keeps
+        dialling. Previously this was a single global flag, so one officer at one
+        bank halted calling for the whole platform - and every other bank's
+        in-flight calls were killed with it.
+      * operator (admin token) -> the platform-wide switch, as before.
 
     Order matters:
       1. Set the DB flag so any call still queued behind the concurrency
@@ -1169,21 +1226,31 @@ async def emergency_stop(user: dict = Depends(get_current_bank_user)):
          DISPATCHER_CONCURRENCY live calls in flight, a single LIMIT-1 delete
          left the rest ringing.
     """
-    await set_emergency_stop(True)
-    logger.warning("EMERGENCY STOP activated by operator")
+    bank_uuid = _bank_uuid(user)  # operator (admin) -> None (platform scope)
+    actor = str(user.get("user_id") or "")
+    scope = "PLATFORM" if bank_uuid is None else f"bank {bank_uuid}"
+    await set_emergency_stop(True, bank_id=bank_uuid, actor=actor, reason=reason)
+    logger.warning("EMERGENCY STOP activated (%s) by %s reason=%r", scope, actor, reason)
 
     # 2. Signal in-flight dispatchers to stop picking up / waiting for work.
     signaled = 0
     try:
         from services.dispatcher import manager as dispatcher_mgr
-        signaled = dispatcher_mgr.stop_all()
-        logger.warning("Emergency stop signaled %d active dispatcher(s)", signaled)
+        signaled = (dispatcher_mgr.stop_all() if bank_uuid is None
+                    else dispatcher_mgr.stop_bank(str(bank_uuid)))
+        logger.warning("Emergency stop signaled %d active dispatcher(s) (%s)", signaled, scope)
     except Exception as e:
         logger.error(f"Failed to signal dispatchers during emergency stop: {e}")
 
-    # 3. Kill EVERY active call (operator scope — no bank filter).
-    active_rows = await _state.db_pool.fetch(
-        "SELECT id, room_name FROM agent_calls WHERE status = 'Calling'")
+    # 3. Kill the active calls IN SCOPE. An operator kills every tenant's;
+    #    a bank kills only its own.
+    if bank_uuid is None:
+        active_rows = await _state.db_pool.fetch(
+            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling'")
+    else:
+        active_rows = await _state.db_pool.fetch(
+            "SELECT id, room_name FROM agent_calls WHERE status = 'Calling' AND bank_id = $1",
+            bank_uuid)
     rooms_deleted = 0
     lk = None
     try:
@@ -1212,25 +1279,93 @@ async def emergency_stop(user: dict = Depends(get_current_bank_user)):
             except Exception:
                 pass
 
-    # Pause all running batches
-    await _state.db_pool.execute("UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
+    # Pause the running batches in scope.
+    if bank_uuid is None:
+        res = await _state.db_pool.execute(
+            "UPDATE agent_batches SET status = 'paused' WHERE status = 'running'")
+    else:
+        res = await _state.db_pool.execute(
+            "UPDATE agent_batches SET status = 'paused' WHERE status = 'running' AND bank_id = $1",
+            bank_uuid)
+    paused = _rows_affected(res)
     await release_batch_lock()
     return {
         "status": "success",
-        "message": "Emergency stop activated — all batches paused",
+        "scope": "platform" if bank_uuid is None else "bank",
+        "message": ("Emergency stop activated platform-wide — all batches paused"
+                    if bank_uuid is None else
+                    "Emergency stop activated for your bank — your batches are paused. "
+                    "Other banks are unaffected."),
+        "batches_paused": paused,
         "active_calls_killed": rooms_deleted,
         "dispatchers_signaled": signaled,
     }
 
 
 @router.post("/resume-calling")
-async def resume_calling(user: dict = Depends(get_current_bank_user)):
-    """Disable emergency stop and resume paused batches."""
-    await set_emergency_stop(False)
-    result = await _state.db_pool.execute("UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
-    resumed = int(result.split()[-1]) if result else 0
-    logger.info(f"Emergency stop deactivated, {resumed} batches resumed")
-    return {"status": "success", "message": f"Calling resumed. {resumed} batch(es) reactivated."}
+async def resume_calling(
+    bank_id: Optional[str] = Query(None, description="Operator only: resume one specific bank"),
+    user: dict = Depends(get_current_bank_user),
+):
+    """Clear the emergency stop IN SCOPE and resume the paused batches.
+
+    Scope is the caller:
+      * bank user -> their own bank only. If the PLATFORM switch is on they are
+        told, rather than left with a cleared bank flag and a batch that still
+        will not dial.
+      * operator -> the platform switch, or one named bank via ?bank_id=.
+
+    Previously this cleared the single global flag and then ran
+    `UPDATE agent_batches SET status='running' WHERE status='paused'` — so one
+    bank pressing Resume also restarted batches another bank had deliberately
+    paused.
+    """
+    caller_bank = _bank_uuid(user)
+    actor = str(user.get("user_id") or "")
+
+    if caller_bank is None:
+        # Operator: either the platform switch, or a named bank.
+        target = None
+        if bank_id:
+            try:
+                target = uuid.UUID(str(bank_id))
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="Invalid bank_id.")
+            if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", target):
+                raise HTTPException(status_code=404, detail="Bank not found.")
+        await set_emergency_stop(False, bank_id=target, actor=actor)
+        if target is None:
+            res = await _state.db_pool.execute(
+                "UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
+            scope_msg = "platform-wide"
+        else:
+            res = await _state.db_pool.execute(
+                "UPDATE agent_batches SET status = 'running' WHERE status = 'paused' AND bank_id = $1",
+                target)
+            scope_msg = f"bank {target}"
+    else:
+        st = await emergency_stop_state(caller_bank)
+        if st["platform_stopped"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Calling is stopped platform-wide by the operator. It cannot be "
+                       "resumed from a bank account.",
+            )
+        await set_emergency_stop(False, bank_id=caller_bank, actor=actor)
+        res = await _state.db_pool.execute(
+            "UPDATE agent_batches SET status = 'running' WHERE status = 'paused' AND bank_id = $1",
+            caller_bank)
+        scope_msg = "your bank"
+
+    resumed = _rows_affected(res)
+    logger.info("Emergency stop cleared (%s) by %s, %d batch(es) resumed",
+                scope_msg, actor, resumed)
+    return {
+        "status": "success",
+        "scope": "platform" if caller_bank is None and not bank_id else "bank",
+        "message": f"Calling resumed for {scope_msg}. {resumed} batch(es) reactivated.",
+        "batches_resumed": resumed,
+    }
 
 
 @router.post("/stop-batch")

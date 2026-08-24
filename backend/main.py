@@ -1990,14 +1990,30 @@ async def admin_audit_logins(
 _AUDIT_JSON_COLS = {"location", "geolocation", "before_data", "after_data", "metadata", "details"}
 
 
-async def _audit_page(table, cols, filters, limit, offset, order="created_at"):
+# How far back an audit list looks by default. The audit stores are append-only
+# and are never pruned below this, so without a bound both the page query and its
+# count(*) degrade into a full table scan as the logs grow - and Postgres cannot
+# answer count(*) from an index alone. A year is well past any review window and
+# it makes the existing (bank_id, created_at DESC) indexes usable for both.
+AUDIT_DEFAULT_WINDOW_DAYS = int(os.getenv("AUDIT_DEFAULT_WINDOW_DAYS", "365"))
+
+
+async def _audit_page(table, cols, filters, limit, offset, order="created_at",
+                      since_days=None):
     """filters: list of (sql_col, value); None values are skipped. Serializes
-    UUIDs to str and parses JSON columns. Returns {items, total, limit, offset}."""
+    UUIDs to str and parses JSON columns. Returns {items, total, limit, offset}.
+
+    `since_days` bounds both the page and its count. None uses
+    AUDIT_DEFAULT_WINDOW_DAYS; 0 removes the bound (use sparingly)."""
     limit = max(1, min(int(limit), 200)); offset = max(0, int(offset))
     conds, params = [], []
     for col, val in filters:
         if val is not None:
             params.append(val); conds.append(f"{col} = ${len(params)}")
+    window = AUDIT_DEFAULT_WINDOW_DAYS if since_days is None else int(since_days)
+    if window > 0:
+        params.append(now_utc() - timedelta(days=window))
+        conds.append(f"{order} >= ${len(params)}")
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     total = await db_pool.fetchval(f"SELECT count(*) FROM {table} {where}", *params)
     rows = await db_pool.fetch(

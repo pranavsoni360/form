@@ -17,6 +17,24 @@ from .state import (
 from services import audit as _audit
 
 logger = logging.getLogger("agent-transcript")
+
+
+def safe_recording_url(recording_path):
+    """Absolute URL for a call recording, or None if the path is not acceptable.
+
+    `recording_path` arrives from the agent webhook and is stored, then rendered
+    to officers as a link. Nothing validated it, so a traversing or absolute
+    value would be persisted verbatim. The webhook is loopback-only, which is
+    what keeps this low severity - but a stored bad URL is cheap to prevent.
+    """
+    rp = (recording_path or "").strip()
+    if not rp or not RECORDING_BASE_URL:
+        return None
+    if ".." in rp or "://" in rp or rp.startswith("//") or "\\" in rp:
+        logger.warning("transcript webhook: rejected recording_path %r", rp[:120])
+        return None
+    return f"{RECORDING_BASE_URL}{rp}"
+
 router = APIRouter()
 
 # Both status names indicate a callback was already scheduled during this call.
@@ -145,7 +163,7 @@ async def save_transcript(data: TranscriptPayload):
     else:
         status = "Not Answered"
 
-    recording_url = f"{RECORDING_BASE_URL}{data.recording_path}" if data.recording_path and RECORDING_BASE_URL else None
+    recording_url = safe_recording_url(data.recording_path)
 
     # Calculate duration
     duration_seconds = 0

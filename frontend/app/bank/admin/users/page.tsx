@@ -13,7 +13,6 @@ import {
   Breadcrumb,
   PageTitle,
   FilterPills,
-  MetricCard,
   Card,
   CardHeader,
   Pill,
@@ -282,18 +281,24 @@ export default function UsersPage() {
         subtitle="Manage your bank's officers and supervisors. Suspending frees the seat immediately and keeps history; deleting removes access permanently but the audit record survives."
       />
 
-      {/* Metric row — seat meter card is the wider first cell. */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-        <Card className="p-[14px] md:col-span-1">
-          <div className="text-[11px] text-fx-text3">Seats</div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-[26px] font-medium leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
+      {/* Metric row — uniform blue glass cards */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+        {/* Seats */}
+        <div className="rounded-2xl p-4 md:col-span-1" style={{
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
+          backdropFilter: "blur(12px)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
+        }}>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Seats</div>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span className="text-[26px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
               {seats ? `${seats.used} of ${seats.cap}` : "—"}
             </span>
             {seats && <span className="text-[12px] text-fx-text2">· {seats.free} free</span>}
           </div>
           {seats && (
-            <div className="mt-2.5">
+            <div className="mt-3">
               <SplitBar filled={seats.cap ? seats.active / seats.cap : 0} outlined={seats.cap ? seats.invited / seats.cap : 0} />
             </div>
           )}
@@ -303,15 +308,51 @@ export default function UsersPage() {
           <div className="mt-1 text-[11px] text-fx-text3">
             Seat cap is set by Virtual Galaxy under your contract; everything else on this page is yours to change.
           </div>
-        </Card>
-        <MetricCard label="Active users" value={counts?.active ?? "—"} note="signed-in accounts" />
-        <MetricCard label="Pending invites" value={counts?.invited ?? "—"} note="awaiting acceptance" />
-        <MetricCard
-          label="Free seats"
-          value={seats?.free ?? "—"}
-          ring={seats && seats.free === 0 ? "amber" : "none"}
-          note={seats && seats.free === 0 ? "at capacity" : "available to assign"}
-        />
+        </div>
+
+        {/* Active users */}
+        <div className="rounded-2xl p-4" style={{
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
+          backdropFilter: "blur(12px)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
+        }}>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Active users</div>
+          <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
+            {counts?.active ?? "—"}
+          </div>
+          <div className="mt-2 text-[12px] text-fx-text3">signed-in accounts</div>
+        </div>
+
+        {/* Pending invites */}
+        <div className="rounded-2xl p-4" style={{
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
+          backdropFilter: "blur(12px)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
+        }}>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Pending invites</div>
+          <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
+            {counts?.invited ?? "—"}
+          </div>
+          <div className="mt-2 text-[12px] text-fx-text3">awaiting acceptance</div>
+        </div>
+
+        {/* Free seats */}
+        <div className="rounded-2xl p-4" style={{
+          background: "rgba(59,130,246,0.04)",
+          border: "1px solid rgba(59,130,246,0.12)",
+          backdropFilter: "blur(12px)",
+          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
+        }}>
+          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Free seats</div>
+          <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
+            {seats?.free ?? "—"}
+          </div>
+          <div className="mt-2 text-[12px] text-fx-text3">
+            {seats?.free === 0 ? "at capacity" : "available to assign"}
+          </div>
+        </div>
       </div>
 
       <Card>
@@ -693,7 +734,11 @@ function CreateUserModal({
   const [busy, setBusy] = React.useState(false);
   const [serverErr, setServerErr] = React.useState<string | null>(null);
   const [created, setCreated] = React.useState<CreatedUser | null>(null);
-  const [copied, setCopied] = React.useState(false);
+  // Tri-state, not a boolean: the clipboard write can genuinely fail (an
+  // insecure context leaves navigator.clipboard undefined, and the permission
+  // can be denied). It used to flip to "Copied" regardless, so an admin would
+  // dismiss the one-time credential panel believing the password was saved.
+  const [copied, setCopied] = React.useState<"idle" | "done" | "failed">("idle");
 
   const errs = {
     fullName: NAME_RE.test(fullName.trim()) ? null : "Letters and spaces only, no digits or symbols.",
@@ -720,7 +765,7 @@ function CreateUserModal({
 
   function reset() {
     setCreated(null);
-    setFullName(""); setUsername(""); setEmail(""); setBranch(""); setTouched(false); setCopied(false);
+    setFullName(""); setUsername(""); setEmail(""); setBranch(""); setTouched(false); setCopied("idle");
   }
 
   return (
@@ -744,15 +789,27 @@ function CreateUserModal({
             </div>
             <button
               type="button"
-              onClick={() => {
-                navigator.clipboard?.writeText(`Username: ${created.username}\nPassword: ${created.generated_password}`);
-                setCopied(true);
+              onClick={async () => {
+                const text = `Username: ${created.username}\nPassword: ${created.generated_password}`;
+                try {
+                  if (!navigator.clipboard) throw new Error("clipboard unavailable");
+                  await navigator.clipboard.writeText(text);
+                  setCopied("done");
+                } catch {
+                  setCopied("failed");
+                }
               }}
               className="mt-3 inline-flex h-[30px] items-center rounded-[10px] px-3 text-[13px] font-medium"
               style={{ background: "var(--fx-green-tint)", color: "var(--fx-green)" }}
             >
-              {copied ? "Copied" : "Copy credentials"}
+              {copied === "done" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy credentials"}
             </button>
+            {copied === "failed" && (
+              <p className="mt-2 text-[11px]" style={{ color: "var(--fx-red)" }}>
+                Could not write to the clipboard. Copy the password above by hand
+                before closing this panel &mdash; it is not shown again.
+              </p>
+            )}
             <p className="mt-3 text-[11px] text-fx-text3">
               The password is shown only once. Copy it now and hand it over in person; the user must change it at first sign-in.
             </p>

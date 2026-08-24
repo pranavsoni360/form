@@ -109,10 +109,26 @@ export default function OpsErrorsPage() {
   // even if SSE is closed. Errors land in a separate state slice that we
   // merge into the SSE-driven `errors` for display.
   const [fallbackErrors, setFallbackErrors] = React.useState<ErrorEntry[]>([]);
+  // A failed load used to be swallowed: seedErrorsFromDb() returns [] and logs
+  // to the console, so when the error API itself was down this page rendered a
+  // green tick and "everything is quiet". The observability console asserted
+  // system health during an outage. Track the failure and say so instead.
+  const [loadError, setLoadError] = React.useState<string | null>(null);
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
-      const events = await seedErrorsFromDb();
+      const url = `${API_URL}/api/ops/errors?limit=200&_t=${Date.now()}`;
+      let events: any[] = [];
+      try {
+        const res = await opsFetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        events = (data.errors ?? []) as any[];
+        if (!cancelled) setLoadError(null);
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
+        return;
+      }
       if (cancelled) return;
       // Run them through the same reducer to get consistent ErrorEntry shape
       let st: ErrorsState = initialErrorsState;
@@ -373,7 +389,7 @@ export default function OpsErrorsPage() {
           columns={columns}
           rows={filtered}
           rowKey={(e, i) => `${e.correlation_id}-${i}`}
-          empty={<EmptyBox hasSourceFilter={sourceFilter !== "all"} />}
+          empty={<EmptyBox hasSourceFilter={sourceFilter !== "all"} loadError={loadError} />}
         />
       </div>
     </AppShell>
@@ -418,17 +434,30 @@ function CorrIdPill({ cid }: { cid: string }) {
   );
 }
 
-function EmptyBox({ hasSourceFilter }: { hasSourceFilter?: boolean }) {
+// `loadError` matters as much as the emptiness: an unreachable error API must
+// not render as a green all-clear.
+function EmptyBox({ hasSourceFilter, loadError }: { hasSourceFilter?: boolean; loadError?: string | null }) {
+  const failed = Boolean(loadError);
   return (
     <div className="grid place-items-center px-6 py-16 text-center">
-      <div className="grid h-12 w-12 place-items-center rounded-xl bg-success/10 ring-1 ring-success/20">
-        <CheckCircle2 className="h-5 w-5 text-success" />
+      <div className={failed
+        ? "grid h-12 w-12 place-items-center rounded-xl bg-destructive/10 ring-1 ring-destructive/20"
+        : "grid h-12 w-12 place-items-center rounded-xl bg-success/10 ring-1 ring-success/20"}>
+        {failed
+          ? <AlertTriangle className="h-5 w-5 text-destructive" />
+          : <CheckCircle2 className="h-5 w-5 text-success" />}
       </div>
       <div className="mt-3 text-sm font-semibold">
-        {hasSourceFilter ? "No errors for this source" : "No errors right now"}
+        {loadError
+          ? "Could not load errors"
+          : hasSourceFilter
+            ? "No errors for this source"
+            : "No errors right now"}
       </div>
       <div className="mt-1 max-w-sm text-xs text-muted-foreground">
-        {hasSourceFilter
+        {failed
+          ? `The error API did not respond (${loadError}). This is NOT an all-clear - treat the system state as unknown until this loads.`
+          : hasSourceFilter
           ? "Switch source filter back to 'All' to see everything, or wait for an event."
           : "Backend + every wired external service (agent, livekit, sip, docker, postgres) is quiet. New errors will appear here within milliseconds."}
       </div>

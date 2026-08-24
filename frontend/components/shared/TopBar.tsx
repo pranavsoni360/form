@@ -187,67 +187,68 @@ function PasswordField({
   );
 }
 
-/* ─── Notification panel ─────────────────────────────────────────────────── */
+/* ─── Security notification center ───────────────────────────────────────── */
 
-type NotifItem = {
-  id: string;
-  level: string;
-  source: string;
-  message: string;
-  ts: number;
-};
+type SecNotif = { id: number; severity: string; title: string; event_type: string; created_at: string; bank_id: string | null };
 
-function timeAgo(ts: number): string {
-  const diff = Math.floor(Date.now() / 1000 - ts);
+function agoISO(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function NotifIcon({ level }: { level: string }) {
-  if (level === "critical" || level === "error")
-    return <AlertTriangle className="h-3.5 w-3.5 text-red-500" />;
-  if (level === "warning")
-    return <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />;
-  if (level === "info")
-    return <Info className="h-3.5 w-3.5 text-blue-500" />;
-  return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />;
-}
-
-function levelBadgeClass(level: string): string {
-  if (level === "critical" || level === "error") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
-  if (level === "warning") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
-  if (level === "info") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
-  return "bg-muted text-muted-foreground";
-}
+const SEV_BADGE: Record<string, string> = {
+  critical: "bg-red-600 text-white",
+  high: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
+  medium: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+  low: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
+  info: "bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300",
+};
 
 function NotificationBell() {
   const [open, setOpen] = React.useState(false);
-  const [items, setItems] = React.useState<NotifItem[]>([]);
+  const [items, setItems] = React.useState<SecNotif[]>([]);
+  const [count, setCount] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
-  const [hasNew, setHasNew] = React.useState(true);
   const ref = React.useRef<HTMLDivElement>(null);
 
   const fetchNotifs = React.useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/ops/errors?limit=15`);
+      const token = getAccessToken("admin");
+      const res = await fetch(`${API_URL}/api/admin/notifications?limit=15`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: "no-store",
+      });
       if (res.ok) {
         const data = await res.json();
-        setItems((data.errors || []).slice(0, 15));
+        setItems(data.items || []);
+        setCount(data.count || 0);
       }
     } catch {}
     finally { setLoading(false); }
   }, []);
 
-  const handleOpen = () => {
-    const next = !open;
-    setOpen(next);
-    if (next) { setHasNew(false); fetchNotifs(); }
+  // Poll the unread count every 30s so the badge stays live.
+  React.useEffect(() => {
+    fetchNotifs();
+    const t = setInterval(fetchNotifs, 30000);
+    return () => clearInterval(t);
+  }, [fetchNotifs]);
+
+  const acknowledge = async (id: number) => {
+    try {
+      const token = getAccessToken("admin");
+      const res = await fetch(`${API_URL}/api/admin/audit/security/${id}/ack`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) { setItems((p) => p.filter((i) => i.id !== id)); setCount((c) => Math.max(0, c - 1)); }
+    } catch {}
   };
 
-  // Close on outside click
   React.useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -260,74 +261,64 @@ function NotificationBell() {
   return (
     <div ref={ref} className="relative hidden sm:block">
       <button
-        onClick={handleOpen}
-        aria-label="Notifications"
+        onClick={() => { const n = !open; setOpen(n); if (n) fetchNotifs(); }}
+        aria-label="Security notifications"
         aria-expanded={open}
         className="relative grid h-9 w-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <Bell className="h-4 w-4" />
-        {hasNew && (
-          <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-card" aria-hidden />
+        {count > 0 && (
+          <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-destructive px-1 text-[9px] font-bold text-white ring-2 ring-card">
+            {count > 99 ? "99+" : count}
+          </span>
         )}
       </button>
 
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border border-border bg-card shadow-xl ring-1 ring-black/5 overflow-hidden">
-          {/* Header */}
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <Bell className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold text-foreground">Notifications</span>
+              <span className="text-sm font-semibold text-foreground">Security alerts</span>
+              {count > 0 && <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-bold text-destructive">{count}</span>}
             </div>
-            <a href="/ops/errors" className="text-[10px] font-medium text-primary hover:underline">
-              View all errors →
-            </a>
+            <a href="/ops/audit" className="text-[10px] font-medium text-primary hover:underline">View all →</a>
           </div>
 
-          {/* Body */}
           <div className="max-h-[400px] overflow-y-auto divide-y divide-border">
             {loading ? (
-              <div className="flex items-center justify-center py-10 text-muted-foreground text-xs gap-2">
-                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4l-3 3-3-3h4z" />
-                </svg>
-                Loading…
-              </div>
+              <div className="flex items-center justify-center py-10 text-xs text-muted-foreground">Loading…</div>
             ) : items.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
                 <CheckCircle2 className="h-8 w-8 opacity-30" />
-                <p className="text-xs">No recent system errors</p>
+                <p className="text-xs">No unread security alerts</p>
               </div>
             ) : (
               items.map((item) => (
-                <div key={item.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors">
+                <div key={item.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50">
                   <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-muted">
-                    <NotifIcon level={item.level} />
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${levelBadgeClass(item.level)}`}>
-                        {item.level}
+                    <div className="mb-0.5 flex items-center gap-1.5">
+                      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${SEV_BADGE[item.severity] || "bg-muted"}`}>
+                        {item.severity}
                       </span>
-                      <span className="text-[10px] text-muted-foreground">{item.source}</span>
+                      <span className="text-[10px] text-muted-foreground">{agoISO(item.created_at)}</span>
                     </div>
-                    <p className="text-xs text-foreground line-clamp-2 leading-relaxed">{item.message}</p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">{timeAgo(item.ts)}</p>
+                    <p className="text-xs leading-relaxed text-foreground line-clamp-2">{item.title}</p>
+                    <button onClick={() => acknowledge(item.id)} className="mt-1 text-[10px] font-medium text-primary hover:underline">
+                      Mark as read
+                    </button>
                   </div>
                 </div>
               ))
             )}
           </div>
 
-          {/* Footer */}
-          {items.length > 0 && (
-            <div className="border-t border-border px-4 py-2.5 text-center">
-              <a href="/ops/errors" className="text-xs font-medium text-primary hover:underline">
-                Open Errors page →
-              </a>
-            </div>
-          )}
+          <div className="border-t border-border px-4 py-2.5 text-center">
+            <a href="/ops/audit" className="text-xs font-medium text-primary hover:underline">Open Audit &amp; Security →</a>
+          </div>
         </div>
       )}
     </div>

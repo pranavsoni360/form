@@ -46,7 +46,7 @@ function SuccessContent() {
               Application Submitted!
             </h1>
             <p className="text-sm mb-6" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
-              We've received your application and will review it shortly.
+              We&apos;ve received your application and will review it shortly.
             </p>
 
             {/* Loan ID box */}

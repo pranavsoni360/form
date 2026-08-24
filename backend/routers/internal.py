@@ -189,6 +189,21 @@ async def ingest_external_error(
 
 _browser_security = HTTPBearer(auto_error=False)
 
+# Anonymous browser errors are accepted on purpose (a crash on the login page
+# would otherwise be lost), but that also means any internet client can inject
+# arbitrary exc_type / message / trace rows straight into the operator error
+# console - with nothing to stop it drowning out a real incident. Capped per
+# source IP by the shared limiter (bucket "frontend_error", tunable with
+# RATELIMIT_FRONTEND_ERROR). Kept as a named wrapper so the call site reads as
+# intent rather than plumbing.
+
+
+def _anon_rate_ok(ip: str) -> bool:
+    from services import ratelimit as _ratelimit
+
+    return _ratelimit.allow("frontend_error", ip)
+
+
 
 @router.post("/frontend-error")
 async def report_frontend_error(
@@ -207,8 +222,12 @@ async def report_frontend_error(
     # this isn't an anonymous attacker spamming.
     if credentials is None:
         # Unauthenticated browser errors (e.g. error before login) — accept
-        # silently with a relaxed cap so login-page crashes don't go missing.
-        # Could remove this branch if we want strict auth.
+        # silently with a relaxed cap so login-page crashes don't go missing,
+        # but rate-limit per IP (see _anon_rate_ok).
+        from services.audit import get_client_ip
+        peer = get_client_ip(request) or "unknown"
+        if not _anon_rate_ok(peer):
+            raise HTTPException(429, "too many anonymous error reports")
         user_label = "anonymous"
     else:
         try:

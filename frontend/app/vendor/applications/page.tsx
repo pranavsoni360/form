@@ -66,7 +66,7 @@ export default function VendorApplicationsPage() {
         ) : apps.length === 0 ? (
           <div className="py-16 text-center text-sm text-slate-500">
             <div className="font-medium">No applications {filter !== "all" ? `with status "${filter}"` : "yet"}.</div>
-            <div className="mt-1 text-xs">When a bank assigns a loan to your vendor, it'll appear here.</div>
+            <div className="mt-1 text-xs">When a bank assigns a loan to your vendor, it&apos;ll appear here.</div>
           </div>
         ) : (
           <table className="w-full min-w-[760px] text-sm">

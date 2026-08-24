@@ -492,7 +492,7 @@ export default function OpsBatchPage() {
               {!bankId && (
                 <div className="flex items-center text-xs text-muted-foreground">
                   <span className="rounded-md bg-warning/10 px-2 py-1 text-warning ring-1 ring-warning/20">
-                    Pick a bank first — every batch must be assigned to a bank, or its calls won't appear in any portal.
+                    Pick a bank first — every batch must be assigned to a bank, or its calls won&apos;t appear in any portal.
                   </span>
                 </div>
               )}
@@ -624,7 +624,7 @@ export default function OpsBatchPage() {
             Emergency stop?
           </div>
         }
-        description="This will pause all running batches and kill any active call mid-dial. Customer mid-conversation will be cut off."
+        description="PLATFORM-WIDE: this pauses every bank's running batches and kills every active call mid-dial, on every tenant. Customers mid-conversation will be cut off. To stop a single bank, use that bank's own batch screen."
         footer={
           <>
             <Button variant="outline" onClick={() => setConfirmStop(false)}>

@@ -6,7 +6,7 @@ import json
 import uuid
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from typing import Optional, List, Any
 
@@ -52,8 +52,9 @@ async def _mirror(db_pool, row_id, consent):
 
 
 @router.post("/consent")
-async def guarantor_consent(data: ConsentPayload):
+async def guarantor_consent(data: ConsentPayload, request: Request):
     from agent import state as _state
+    from services import audit as _audit
     try:
         row_id = uuid.UUID(data.call_id)
     except ValueError:
@@ -66,6 +67,18 @@ async def guarantor_consent(data: ConsentPayload):
         consent, data.note or None, row_id,
     )
     await _mirror(_state.db_pool, row_id, consent)
+    # DPDP consent audit — record the guarantor consent event (yes/no) against the
+    # application. Best-effort; never fails the webhook.
+    try:
+        app_id = await _state.db_pool.fetchval(
+            "SELECT application_id FROM guarantor_consent_calls WHERE id=$1", row_id)
+        await _audit.record_sensitive_access(
+            _state.db_pool, request, actor={"actor_type": "agent", "actor_id": None},
+            action="guarantor_consent", entity_type="application",
+            entity_id=(str(app_id) if app_id else None),
+            details={"call_id": data.call_id, "consent": consent, "note": data.note})
+    except Exception as e:
+        logger.warning("guarantor consent audit failed: %s", e)
     return {"status": "ok", "consent": consent}
 
 

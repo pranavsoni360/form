@@ -68,6 +68,21 @@ async def _wait_terminal(db_pool, row_id) -> str:
 
 async def dispatch_guarantor_call(db_pool, row: dict) -> None:
     row_id = row["id"]
+
+    # Read config BEFORE claiming the row. These three subscripts used to sit
+    # after _claim() (which sets status='calling' and increments retry_count)
+    # and before the try block, so a missing LIVEKIT_* env raised KeyError with
+    # no cleanup: the row stranded in 'calling', _reclaim_stuck flipped it to
+    # 'failed' 10 minutes later, and after _MAX_ATTEMPTS such cycles the
+    # application was stamped guarantor_consent='no_answer' — recording that
+    # the guarantor declined to answer when no call was ever placed.
+    missing = [k for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+               if not os.getenv(k)]
+    if missing:
+        logger.error("Guarantor dispatch not configured (missing %s) — leaving row %s "
+                     "pending, no retry consumed", ", ".join(missing), row_id)
+        return
+
     if not await _claim(db_pool, row_id):
         return  # another tick took it
 

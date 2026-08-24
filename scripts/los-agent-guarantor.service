@@ -10,6 +10,9 @@ WorkingDirectory=/root/vaani_los_form/agent
 EnvironmentFile=/root/vaani_los_form/agent/.env.local
 ExecStart=/root/vaani_los_form/agent/venv/bin/python guarantor_consent.py start
 Restart=always
+# Default soft limit is 1024; a worker holds LiveKit, STT/TTS/LLM
+# websockets and its own health server.
+LimitNOFILE=65535
 RestartSec=5
 
 [Install]

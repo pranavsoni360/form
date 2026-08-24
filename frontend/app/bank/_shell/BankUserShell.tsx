@@ -14,12 +14,14 @@ import { useRouter } from "next/navigation";
 import { getAccessToken, getCurrentUser, logout } from "@/lib/auth";
 import { getMe } from "@/lib/api/bank";
 import { FinixShell, SessionTimer, type FinixNavItem, type SidebarAction } from "@/components/finix";
+import { BankNotificationBell } from "@/components/audit/BankNotificationBell";
 
 const NAV: FinixNavItem[] = [
   { href: "/bank/dashboard", label: "My queue", glyph: "▤" },
   { href: "/bank/calls", label: "Call logs", glyph: "✆" },
   { href: "/bank/batch", label: "Batch calling", glyph: "◫" },
   { href: "/bank/scorecard", label: "Scorecard", glyph: "▦" },
+  { href: "/bank/audit", label: "Audit trail", glyph: "⚿" },
 ];
 
 function initialsOf(name: string): string {
@@ -110,6 +112,7 @@ export function BankUserShell({
         />
       }
       action={action ?? logoutAction}
+      headerRight={<BankNotificationBell auditHref="/bank/audit" />}
     >
       {children}
     </FinixShell>

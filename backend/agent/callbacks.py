@@ -102,21 +102,42 @@ async def schedule_callback_manual(request: Request, user: dict = Depends(_state
 
     await _ensure_manual_batch()
 
+    # Stamp the caller's bank. The INSERT used to omit bank_id entirely, which
+    # had two consequences: the call never appeared in the originating bank's own
+    # dashboards, and _bill_completed_call short-circuits on a missing bank_id
+    # (transcript.py) — so these outbound PSTN calls were placed and never
+    # billed to anyone. An operator (admin token) has no bank of their own, so
+    # they must say which bank the callback belongs to.
+    bank_uuid = _state._bank_uuid(user)
+    if bank_uuid is None:
+        raw = (data.get("bank_id") or "").strip()
+        if not raw:
+            raise HTTPException(
+                status_code=400,
+                detail="Select a bank for this callback (operators must specify bank_id).",
+            )
+        try:
+            bank_uuid = uuid.UUID(raw)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid bank_id.")
+        if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", bank_uuid):
+            raise HTTPException(status_code=404, detail="Bank not found.")
+
     call_uuid = uuid.uuid4()
     room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
     await _state.db_pool.execute(
         """INSERT INTO agent_calls (
-             id, batch_id, customer_name, phone, language, status, room_name,
+             id, batch_id, bank_id, customer_name, phone, language, status, room_name,
              interested, form_sent, category, transcript, collected_data,
              scheduled_callback_at, callback_reason, created_at, updated_at, agent_type
            ) VALUES (
-             $1, $2, $3, $4, $5, 'Called - Callback Requested', $6,
+             $1, $2, $12, $3, $4, $5, 'Called - Callback Requested', $6,
              false, false, 'Uncategorized', '[]'::jsonb, $7,
              $8, $9, $10, $10, $11
            )""",
         call_uuid, _MANUAL_BATCH_ID, name, phone, language, room_name,
         json.dumps({"gender": (data.get("gender") or "male").lower(), "customer_type": "callback"}),
-        dt_ist, reason, now_local, agent_type,
+        dt_ist, reason, now_local, agent_type, bank_uuid,
     )
 
     logger.info("Manual callback scheduled: %s (%s) at %s reason=%s",
@@ -135,13 +156,28 @@ async def schedule_callback_manual(request: Request, user: dict = Depends(_state
 async def scheduled_callbacks(limit: int = Query(50, ge=1, le=200), user: dict = Depends(_state.get_current_bank_user)):
     """List upcoming scheduled callbacks ordered by callback time.
     Used by the dashboard's 'Upcoming Callbacks' section."""
-    rows = await _state.db_pool.fetch(
-        """SELECT * FROM agent_calls
-           WHERE status IN ('Scheduled', 'Called - Callback Requested')
-             AND scheduled_callback_at IS NOT NULL
-           ORDER BY scheduled_callback_at ASC LIMIT $1""",
-        limit,
-    )
+    # Scope to the caller's bank. _serialize_call flattens collected_data to the
+    # top level (aadhar_number, pan_number, monthly_income, employer_name,
+    # address...), so without the predicate one authenticated officer could read
+    # up to 200 of EVERY bank's callback leads per request, no id to guess.
+    bank_uuid = _state._bank_uuid(user)
+    if bank_uuid is None:
+        rows = await _state.db_pool.fetch(
+            """SELECT * FROM agent_calls
+               WHERE status IN ('Scheduled', 'Called - Callback Requested')
+                 AND scheduled_callback_at IS NOT NULL
+               ORDER BY scheduled_callback_at ASC LIMIT $1""",
+            limit,
+        )
+    else:
+        rows = await _state.db_pool.fetch(
+            """SELECT * FROM agent_calls
+               WHERE status IN ('Scheduled', 'Called - Callback Requested')
+                 AND scheduled_callback_at IS NOT NULL
+                 AND bank_id = $2
+               ORDER BY scheduled_callback_at ASC LIMIT $1""",
+            limit, bank_uuid,
+        )
     payload = [_serialize_call(_row_to_dict(r)) for r in rows]
     return {"scheduled": payload, "count": len(payload)}
 

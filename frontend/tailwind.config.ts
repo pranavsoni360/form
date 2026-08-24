@@ -119,6 +119,9 @@ const config: Config = {
           text2: "var(--fx-text2)",
           text3: "var(--fx-text3)",
           accent: "var(--fx-accent)",
+          // --fx-accent-tint is defined in globals.css but was missing here,
+          // so `bg-fx-accent-tint` (Dropzone drag state) produced no CSS.
+          "accent-tint": "var(--fx-accent-tint)",
           green: "var(--fx-green)",
           amber: "var(--fx-amber)",
           orange: "var(--fx-orange)",

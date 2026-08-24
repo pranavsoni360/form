@@ -23,16 +23,20 @@ AGENT_NAME = os.getenv("GUARANTOR_AGENT_NAME", "guarantor-consent")
 # `OSError 10048: only one usage of each socket address ... is normally permitted`.
 # Union Bank → 8081, Pusad loan agent → 8082, Guarantor consent → 8083.
 AGENT_HTTP_PORT = int(os.getenv("GUARANTOR_AGENT_PORT", "8083"))
+# Loopback-only: the worker dials OUT to LiveKit, nothing dials in. See the
+# note in los_updated.py. Override with AGENT_HTTP_HOST.
+AGENT_HTTP_HOST = os.getenv("AGENT_HTTP_HOST", "127.0.0.1")
 
 if __name__ == "__main__":
     while True:
         try:
             logging.getLogger("loan-enquiry-agent").info(
-                f"Starting Guarantor Consent Agent Worker on :{AGENT_HTTP_PORT}..."
+                f"Starting Guarantor Consent Agent Worker on {AGENT_HTTP_HOST}:{AGENT_HTTP_PORT}..."
             )
             cli.run_app(WorkerOptions(
                 entrypoint_fnc=entrypoint,
                 agent_name=AGENT_NAME,
+                host=AGENT_HTTP_HOST,
                 port=AGENT_HTTP_PORT,
             ))
         except KeyboardInterrupt:

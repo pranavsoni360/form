@@ -243,6 +243,35 @@ class EventBus:
                 """,
                 source, level, exc_type, message, cid, route, method, trace, metadata_json, ts,
             )
+
+            # Surface real errors as a super-admin notification (security_events).
+            # Throttled: skip if an unacknowledged alert for this same source+type
+            # already exists in the last hour, so a recurring error can't flood the
+            # bell. Warnings are not turned into notifications (too noisy).
+            if level == "error":
+                try:
+                    dup = await pool.fetchval(
+                        "SELECT 1 FROM security_events WHERE event_type = 'system_error' "
+                        "AND acknowledged = false AND metadata->>'source' = $1 "
+                        "AND metadata->>'exc_type' = $2 AND created_at > NOW() - interval '60 minutes' LIMIT 1",
+                        source, exc_type,
+                    )
+                    if not dup:
+                        area = "Calling system" if source in ("agent", "livekit", "sip") else (
+                            "Database" if source == "postgres" else "Loan system")
+                        severity = "critical" if source == "postgres" else "high"
+                        await pool.execute(
+                            """INSERT INTO security_events
+                                   (event_type, severity, actor_type, title, description, metadata)
+                               VALUES ('system_error', $1, 'system', $2, $3, $4::jsonb)""",
+                            severity,
+                            f"{area} error: {exc_type}",
+                            message[:500],
+                            _json.dumps({"source": source, "exc_type": exc_type,
+                                         "route": route, "method": method, "correlation_id": cid}),
+                        )
+                except Exception:
+                    logger.exception("event_bus: system_error notification failed")
         except Exception:
             # Never let DB failure break the in-memory broadcast.
             logger.exception("event_bus._persist_error failed (event dropped from DB)")

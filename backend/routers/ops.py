@@ -27,10 +27,10 @@ import asyncio
 import os
 import time
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from agent.state import get_current_bank_user
+from agent.state import get_current_bank_user, _bank_uuid
 
 
 router = APIRouter(tags=["ops"])
@@ -167,6 +167,12 @@ async def phone_pools(user: dict = Depends(get_current_bank_user)):
     if pool is None:
         return JSONResponse({"pools": [], "error": "db pool not ready"}, status_code=503)
 
+    # This is reached by the bank batch screen (caller-ID dropdown) as well as
+    # the /ops console, and the query carried no WHERE clause at all: every bank
+    # user saw every tenant's outbound numbers, LiveKit trunk ids and call
+    # volumes. Scope to the caller's bank; a pool with bank_id NULL is
+    # platform-shared and stays visible. Operators (bank_id None) see all.
+    bank_uuid = _bank_uuid(user)
     try:
         # One round-trip: pools + their numbers, ordered for deterministic UI
         rows = await pool.fetch(
@@ -178,7 +184,9 @@ async def phone_pools(user: dict = Depends(get_current_bank_user)):
                  pn.cooldown_until, pn.status, pn.updated_at
                FROM phone_pools pp
                LEFT JOIN phone_numbers pn ON pn.pool_id = pp.id
-               ORDER BY pp.name ASC, pn.phone_number ASC NULLS LAST"""
+              WHERE $1::uuid IS NULL OR pp.bank_id = $1 OR pp.bank_id IS NULL
+               ORDER BY pp.name ASC, pn.phone_number ASC NULLS LAST""",
+            bank_uuid,
         )
     except Exception as e:
         return JSONResponse(
@@ -247,15 +255,22 @@ async def in_flight_calls(user: dict = Depends(get_current_bank_user)):
     if pool is None:
         return {"calls": [], "note": "db pool not ready"}
 
+    # Unscoped, this streamed other banks' customer names and phone numbers in
+    # real time to any authenticated bank user. Note the OR precedence: the
+    # tenant predicate has to wrap the status/ended_at alternation, not sit
+    # beside it.
+    bank_uuid = _bank_uuid(user)
     try:
         rows = await pool.fetch(
             """SELECT id, customer_name, phone, language, agent_type,
                       batch_id, bank_id, status, started_at, ended_at, created_at
                  FROM agent_calls
-                WHERE status = 'Calling'
-                   OR (ended_at IS NOT NULL AND ended_at > NOW() - INTERVAL '5 minutes')
+                WHERE ($1::uuid IS NULL OR bank_id = $1)
+                  AND (status = 'Calling'
+                       OR (ended_at IS NOT NULL AND ended_at > NOW() - INTERVAL '5 minutes'))
                 ORDER BY COALESCE(ended_at, started_at, created_at) DESC
-                LIMIT 100"""
+                LIMIT 100""",
+            bank_uuid,
         )
     except Exception as e:
         return {"calls": [], "error": f"{type(e).__name__}: {e}"}
@@ -321,6 +336,14 @@ async def list_recent_errors(
         since_ts: Unix epoch float — only rows with ts > this. Useful for
                   pagination ("load older" by passing the oldest seen ts).
     """
+    # system_errors has no tenancy column and the rows carry stack traces,
+    # SQL fragments and request context from every tenant, so there is nothing
+    # to scope by — this is a platform-operator view and is now restricted to
+    # one. The /ops console authenticates with the admin token, which this
+    # dependency maps to operator scope.
+    if user.get("bank_id") is not None:
+        raise HTTPException(status_code=403, detail="Platform operator access required")
+
     pool = _module_db_pool()
     if pool is None:
         return {"errors": [], "note": "db pool not ready"}

@@ -401,9 +401,17 @@ Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}/backend
 EnvironmentFile=${INSTALL_DIR}/backend/.env
-ExecStart=${INSTALL_DIR}/backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port ${BACKEND_PORT} --ssl-keyfile ${SSL_CERT_DIR}/privkey.pem --ssl-certfile ${SSL_CERT_DIR}/fullchain.pem
+# Loopback only. nginx is the sole front door (it terminates :443/:8443 and
+# blocks the auth-less /api/internal/* paths); binding 0.0.0.0 additionally
+# published the API straight to the internet on this port, bypassing those
+# blocks. The running unit was already corrected by hand, so generating
+# 0.0.0.0 here meant the next deploy would silently re-expose it.
+ExecStart=${INSTALL_DIR}/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port ${BACKEND_PORT} --ssl-keyfile ${SSL_CERT_DIR}/privkey.pem --ssl-certfile ${SSL_CERT_DIR}/fullchain.pem
 Restart=always
 RestartSec=3
+# The default soft limit is 1024. This process holds a 40-connection DB
+# pool, a job pool, TLS sockets and one fd per live SSE stream.
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -419,7 +427,10 @@ Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}/frontend
 Environment="PORT=${FRONTEND_PORT}"
+# nginx proxies to this; see HOST in https-server.js.
+Environment="HOST=127.0.0.1"
 ExecStart=/usr/bin/node ${INSTALL_DIR}/frontend/https-server.js
+LimitNOFILE=65535
 Restart=always
 RestartSec=3
 
@@ -470,7 +481,12 @@ if have_cmd docker && [[ -f "${INSTALL_DIR}/scripts/gpu-error-tailer.sh" ]]; the
         mkdir -p /etc/los
         chmod 700 /etc/los
         cat > /etc/los/gpu-tailer.env <<TAIL_ENV
-LOS_BACKEND_URL=http://127.0.0.1:${BACKEND_PORT}
+# https, not http: the backend serves TLS even on loopback. The running
+# /etc/los/gpu-tailer.env was corrected by hand, so generating http here
+# meant the next deploy would silently break the tailer, and with it every
+# LiveKit / SIP / docker error reaching /ops/errors. The tailer's curl
+# already passes -k, which the loopback cert needs.
+LOS_BACKEND_URL=https://127.0.0.1:${BACKEND_PORT}
 LOS_INTERNAL_HMAC_SECRET=${LOS_INTERNAL_HMAC_SECRET}
 TAIL_ENV
         chmod 600 /etc/los/gpu-tailer.env

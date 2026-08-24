@@ -16,10 +16,13 @@ from . import state as _state
 from .state import (
     now_ist, format_ist_time, IST,
     _row_to_dict, _rows_to_list, _serialize_call,
-    get_current_bank_user, _bank_uuid, STATUS_OPTIONS, CATEGORY_OPTIONS,
+    get_current_bank_user, _bank_uuid, _rows_affected, STATUS_OPTIONS, CATEGORY_OPTIONS,
     CallCategorizeRequest, is_within_calling_hours,
     CALL_START_HOUR, CALL_END_HOUR, release_batch_lock,
 )
+
+from services import audit as _audit
+from services import ratelimit as _ratelimit
 
 logger = logging.getLogger("agent-calls")
 router = APIRouter()
@@ -256,7 +259,7 @@ async def get_call_transcript(call_id: str, user: dict = Depends(get_current_ban
 
 
 @router.get("/calls/{call_id}/recording")
-async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank_user)):
+async def get_call_recording(call_id: str, request: Request, user: dict = Depends(get_current_bank_user)):
     """Get recording URL for a call."""
     try:
         call_uuid = uuid.UUID(call_id)
@@ -271,6 +274,10 @@ async def get_call_recording(call_id: str, user: dict = Depends(get_current_bank
     if not row:
         raise HTTPException(status_code=404, detail="Call not found")
     call = _row_to_dict(row)
+    if call.get("recording_url"):
+        await _audit.record_sensitive_access(
+            _state.db_pool, request, actor=_audit.decode_actor(request), action="view_recording",
+            entity_type="agent_call", entity_id=call_id)
     return {
         "call_id": call_id,
         "name": call.get("customer_name"),
@@ -308,13 +315,21 @@ async def categorize_call(
     if data.after_call_remark:
         analysis["after_call_remark"] = data.after_call_remark
 
-    # `bank_id IS NOT DISTINCT FROM $5` matches NULL=NULL (operator) and uuid=uuid (bank user).
-    await _state.db_pool.execute(
+    # `IS NOT DISTINCT FROM` read as "NULL matches NULL, so operators see
+    # everything" — but for an operator ($5 = NULL) it matches ONLY rows whose
+    # bank_id IS NULL, i.e. the exact opposite of cross-bank access. Use the
+    # explicit idiom: NULL means no filter.
+    _u = await _state.db_pool.execute(
         """UPDATE agent_calls
            SET category = $1, call_analysis = $2, updated_at = $3
-           WHERE id = $4 AND bank_id IS NOT DISTINCT FROM $5""",
+           WHERE id = $4 AND ($5::uuid IS NULL OR bank_id = $5)""",
         data.category, json.dumps(analysis), now_ist(), call_uuid, bank_uuid,
     )
+    # The read above is unscoped (it only fetches call_analysis), so without this
+    # check a cross-tenant attempt updated nothing and still returned
+    # {"status": "updated"} — a false success and an existence oracle.
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=404, detail="Call not found")
     return {"status": "updated", "call_id": call_id}
 
 
@@ -469,31 +484,41 @@ async def get_dashboard_stats(
         except ValueError:
             pass
 
-    base = f"SELECT COUNT(*) FROM agent_calls WHERE TRUE{bank_clause}{date_clause}"
+    where = f"WHERE TRUE{bank_clause}{date_clause}"
 
-    total = await _state.db_pool.fetchval(base, *params)
-    whatsapp_forms_sent = await _state.db_pool.fetchval(f"{base} AND form_sent = true", *params)
-    hot_leads = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'hot'", *params)
-    warm_leads = await _state.db_pool.fetchval(f"{base} AND call_analysis->>'lead_quality' = 'warm'", *params)
-    pending_calls = await _state.db_pool.fetchval(f"{base} AND status = 'Pending'", *params)
-    not_answered = await _state.db_pool.fetchval(
-        f"{base} AND status IN ('Not Answered', 'Failed', 'Invalid Phone', 'Call Not Connected')", *params
+    # One pass for every headline counter. This used to be nine separate
+    # COUNT(*) round-trips over the same rows with the same WHERE, and the two
+    # breakdowns below added one more per status and per category — about 29
+    # scans of agent_calls per dashboard load. Under load that was the slowest
+    # endpoint in the API by a wide margin (p99 ~1.9s at 60 concurrent).
+    # COUNT(*) FILTER gives identical numbers from a single scan.
+    agg = await _state.db_pool.fetchrow(
+        f"""SELECT
+              COUNT(*)                                                        AS total,
+              COUNT(*) FILTER (WHERE form_sent = true)                        AS forms_sent,
+              COUNT(*) FILTER (WHERE call_analysis->>'lead_quality' = 'hot')  AS hot,
+              COUNT(*) FILTER (WHERE call_analysis->>'lead_quality' = 'warm') AS warm,
+              COUNT(*) FILTER (WHERE status = 'Pending')                      AS pending,
+              COUNT(*) FILTER (WHERE status IN ('Not Answered', 'Failed',
+                                                'Invalid Phone', 'Call Not Connected')) AS not_answered,
+              COUNT(*) FILTER (WHERE loan_type = 'education')                 AS education,
+              COUNT(*) FILTER (WHERE loan_type = 'business')                  AS business,
+              COUNT(*) FILTER (WHERE loan_type = 'personal')                  AS personal
+            FROM agent_calls {where}""",
+        *params,
     )
-    education_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'education'", *params)
-    business_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'business'", *params)
-    personal_loans = await _state.db_pool.fetchval(f"{base} AND loan_type = 'personal'", *params)
 
     stats = {
-        "total_calls": total,
-        "whatsapp_forms_sent": whatsapp_forms_sent,
-        "hot_leads": hot_leads,
-        "warm_leads": warm_leads,
-        "pending_calls": pending_calls,
-        "not_answered": not_answered,
+        "total_calls": agg["total"],
+        "whatsapp_forms_sent": agg["forms_sent"],
+        "hot_leads": agg["hot"],
+        "warm_leads": agg["warm"],
+        "pending_calls": agg["pending"],
+        "not_answered": agg["not_answered"],
         "loan_interests": {
-            "education": education_loans,
-            "business": business_loans,
-            "personal": personal_loans,
+            "education": agg["education"],
+            "business": agg["business"],
+            "personal": agg["personal"],
         },
         "calling_hours": {
             "start": f"{CALL_START_HOUR}:00 IST",
@@ -503,14 +528,22 @@ async def get_dashboard_stats(
     }
 
     # Breakdowns
-    by_status = {}
-    for s in STATUS_OPTIONS:
-        by_status[s] = await _state.db_pool.fetchval(f"{base} AND status = ${idx}", *params, s)
+    # Two GROUP BY queries instead of one COUNT per option. Every configured
+    # option keeps a key (zero when absent), so the response shape is unchanged.
+    by_status = {opt: 0 for opt in STATUS_OPTIONS}
+    for r in await _state.db_pool.fetch(
+        f"SELECT status, COUNT(*) AS n FROM agent_calls {where} GROUP BY status", *params
+    ):
+        if r["status"] in by_status:
+            by_status[r["status"]] = r["n"]
     stats["by_status"] = by_status
 
-    by_category = {}
-    for c in CATEGORY_OPTIONS:
-        by_category[c] = await _state.db_pool.fetchval(f"{base} AND category = ${idx}", *params, c)
+    by_category = {opt: 0 for opt in CATEGORY_OPTIONS}
+    for r in await _state.db_pool.fetch(
+        f"SELECT category, COUNT(*) AS n FROM agent_calls {where} GROUP BY category", *params
+    ):
+        if r["category"] in by_category:
+            by_category[r["category"]] = r["n"]
     stats["by_category"] = by_category
 
     return {"date": date or now_ist().strftime("%Y-%m-%d"), **stats}
@@ -649,11 +682,18 @@ async def get_analytics(user: dict = Depends(get_current_bank_user)):
 
 @router.get("/export/daily-report")
 async def export_daily_report(
+    request: Request,
     date: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
     """Export daily report as Excel."""
+    # A full export of the bank's call records in one request - throttle
+    # repeated pulls per user.
+    _ratelimit.check("export", str(user.get("user_id") or "unknown"))
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
+    await _audit.record_sensitive_access(
+        _state.db_pool, request, actor=_audit.decode_actor(request), action="export_daily_report",
+        entity_type="agent_calls", details={"date": date, "bank_id": (str(bank_uuid) if bank_uuid else None)})
     if not date:
         date = now_ist().strftime("%Y-%m-%d")
     try:
@@ -707,6 +747,7 @@ async def export_daily_report(
 
 @router.get("/export/all-calls")
 async def export_all_calls(
+    request: Request,
     status: Optional[str] = None,
     category: Optional[str] = None,
     date_from: Optional[str] = None,
@@ -714,10 +755,18 @@ async def export_all_calls(
     user: dict = Depends(get_current_bank_user),
 ):
     """Comprehensive Excel export with all call data (bank-scoped for bank users)."""
+    # A full export of the bank's call records in one request - throttle
+    # repeated pulls per user.
+    _ratelimit.check("export", str(user.get("user_id") or "unknown"))
     conditions: list = []
     params: list = []
     idx = 1
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
+    await _audit.record_sensitive_access(
+        _state.db_pool, request, actor=_audit.decode_actor(request), action="export_all_calls",
+        entity_type="agent_calls",
+        details={"bank_id": (str(bank_uuid) if bank_uuid else None), "status": status,
+                 "category": category, "date_from": date_from, "date_to": date_to})
     if bank_uuid:
         conditions.append(f"bank_id = ${idx}")
         params.append(bank_uuid)
@@ -836,10 +885,12 @@ async def export_all_calls(
 async def get_live_status(user: dict = Depends(get_current_bank_user)):
     """Get current calling status -- which customer is being called right now."""
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
-    # `bank_id IS NOT DISTINCT FROM $1` matches NULL=NULL (operator) and uuid=uuid (bank user).
+    # NULL = no filter (operator sees every bank). `IS NOT DISTINCT FROM` used
+    # to be here and did the opposite: for an operator it matched only rows with
+    # bank_id IS NULL, so /live-status showed them nothing but orphaned calls.
     row = await _state.db_pool.fetchrow(
         """SELECT id, customer_name, phone, started_at FROM agent_calls
-           WHERE status = 'Calling' AND bank_id IS NOT DISTINCT FROM $1 LIMIT 1""",
+           WHERE status = 'Calling' AND ($1::uuid IS NULL OR bank_id = $1) LIMIT 1""",
         bank_uuid,
     )
 
@@ -879,31 +930,50 @@ async def get_live_status(user: dict = Depends(get_current_bank_user)):
 async def stale_cleanup(user: dict = Depends(get_current_bank_user)):
     """Clean up calls stuck in 'Calling' status.
 
-    Operator action (no auth) — matches /emergency-stop, /resume-calling,
-    /batch-call and the other recovery endpoints in this file. The function
-    body already ignores bank scoping (`bank_uuid = None`), so requiring a
-    bank-user JWT was an inconsistency: /ops/batch is admin-context and
-    the button was silently failing.
+    Recovery action for /ops/batch. The body used to ignore bank scoping
+    entirely while the dependency admits any bank officer, so one officer at one
+    bank could hard-DELETE in-flight call rows and fail live calls for EVERY
+    tenant — destructive and unrecoverable. Both statements are now scoped to
+    the caller's bank; a platform operator (admin token) stays cross-bank, which
+    is what the /ops console needs.
     """
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
 
     # 1. Delete broken calls (no room_name)
-    del_result = await _state.db_pool.execute(
-        """DELETE FROM agent_calls
-           WHERE status = 'Calling'
-                 AND (room_name IS NULL OR room_name = '')""",
-    )
+    if bank_uuid is None:
+        del_result = await _state.db_pool.execute(
+            """DELETE FROM agent_calls
+               WHERE status = 'Calling'
+                     AND (room_name IS NULL OR room_name = '')""",
+        )
+    else:
+        del_result = await _state.db_pool.execute(
+            """DELETE FROM agent_calls
+               WHERE status = 'Calling'
+                     AND (room_name IS NULL OR room_name = '')
+                     AND bank_id = $1""",
+            bank_uuid,
+        )
     deleted = int(del_result.split()[-1]) if del_result else 0
 
     # 2. Fail old stuck calls (>10 min)
     ten_min_ago = now_ist() - timedelta(minutes=10)
-    upd_result = await _state.db_pool.execute(
-        """UPDATE agent_calls
-           SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
-               ended_at = $1, updated_at = $1
-           WHERE status = 'Calling' AND started_at < $2""",
-        now_ist(), ten_min_ago,
-    )
+    if bank_uuid is None:
+        upd_result = await _state.db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
+                   ended_at = $1, updated_at = $1
+               WHERE status = 'Calling' AND started_at < $2""",
+            now_ist(), ten_min_ago,
+        )
+    else:
+        upd_result = await _state.db_pool.execute(
+            """UPDATE agent_calls
+               SET status = 'Failed', error_message = 'Manual cleanup - stuck call',
+                   ended_at = $1, updated_at = $1
+               WHERE status = 'Calling' AND started_at < $2 AND bank_id = $3""",
+            now_ist(), ten_min_ago, bank_uuid,
+        )
     cleaned = int(upd_result.split()[-1]) if upd_result else 0
 
     await release_batch_lock()

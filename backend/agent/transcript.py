@@ -7,14 +7,34 @@ from decimal import Decimal
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from asyncpg.exceptions import UniqueViolationError
 
 from . import state as _state
 from .state import (
     now_ist, RECORDING_BASE_URL, _row_to_dict,
     TranscriptPayload, IST,
 )
+from services import audit as _audit
 
 logger = logging.getLogger("agent-transcript")
+
+
+def safe_recording_url(recording_path):
+    """Absolute URL for a call recording, or None if the path is not acceptable.
+
+    `recording_path` arrives from the agent webhook and is stored, then rendered
+    to officers as a link. Nothing validated it, so a traversing or absolute
+    value would be persisted verbatim. The webhook is loopback-only, which is
+    what keeps this low severity - but a stored bad URL is cheap to prevent.
+    """
+    rp = (recording_path or "").strip()
+    if not rp or not RECORDING_BASE_URL:
+        return None
+    if ".." in rp or "://" in rp or rp.startswith("//") or "\\" in rp:
+        logger.warning("transcript webhook: rejected recording_path %r", rp[:120])
+        return None
+    return f"{RECORDING_BASE_URL}{rp}"
+
 router = APIRouter()
 
 # Both status names indicate a callback was already scheduled during this call.
@@ -57,19 +77,37 @@ async def _bill_completed_call(call: dict, billable_seconds: int) -> None:
         minutes = max(1, math.ceil(billable_seconds / 60))  # per-minute, rounded up, min 1
         amount = Decimal(minutes) * rate  # positive cost
 
-        await _state.db_pool.execute(
-            """INSERT INTO usage_records
-                   (bank_id, call_id, billable_seconds, billable_minutes,
-                    rate_per_minute, amount, currency, billing_period)
-               VALUES ($1,$2,$3,$4,$5,$6,'INR', CURRENT_DATE)""",
-            bank_uuid, call_uuid, billable_seconds, minutes, rate, amount,
-        )
-        await _state.db_pool.execute(
-            """INSERT INTO credit_ledger
-                   (bank_id, entry_type, amount, currency, related_call_id, actor_type, note)
-               VALUES ($1,'debit',$2,'INR',$3,'system',$4)""",
-            bank_uuid, -amount, call_uuid, f"Call {call_id}: {minutes} min @ {rate}/min",
-        )
+        # ONE transaction for both writes. They used to be separate autocommit
+        # statements, and fn_credit_ledger_before() takes `SELECT ... FROM banks
+        # ... FOR UPDATE`, so the ledger insert genuinely can fail on lock wait
+        # or a statement timeout under concurrent billing for the same bank.
+        # When it did: usage_records was already committed, the outer handler
+        # logged a warning, and the bank was never debited — and because the
+        # idempotency guard above reads usage_records, every webhook retry
+        # returned early. The debit was lost permanently and silently, with the
+        # wallet balance overstated.
+        try:
+            async with _state.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """INSERT INTO usage_records
+                               (bank_id, call_id, billable_seconds, billable_minutes,
+                                rate_per_minute, amount, currency, billing_period)
+                           VALUES ($1,$2,$3,$4,$5,$6,'INR', CURRENT_DATE)""",
+                        bank_uuid, call_uuid, billable_seconds, minutes, rate, amount,
+                    )
+                    await conn.execute(
+                        """INSERT INTO credit_ledger
+                               (bank_id, entry_type, amount, currency, related_call_id, actor_type, note)
+                           VALUES ($1,'debit',$2,'INR',$3,'system',$4)""",
+                        bank_uuid, -amount, call_uuid,
+                        f"Call {call_id}: {minutes} min @ {rate}/min",
+                    )
+        except UniqueViolationError:
+            # A concurrent webhook for the same call won the race and
+            # uq_usage_records_call held. Already billed exactly once.
+            logger.info("Billing: call %s already billed concurrently", call_id)
+            return
         logger.info("Billed bank %s ₹%s for call %s (%s min)", bank_id, amount, call_id, minutes)
     except Exception as e:
         logger.warning("Billing skipped for call %s: %s", call.get("id"), e)
@@ -125,7 +163,7 @@ async def save_transcript(data: TranscriptPayload):
     else:
         status = "Not Answered"
 
-    recording_url = f"{RECORDING_BASE_URL}{data.recording_path}" if data.recording_path and RECORDING_BASE_URL else None
+    recording_url = safe_recording_url(data.recording_path)
 
     # Calculate duration
     duration_seconds = 0
@@ -231,6 +269,18 @@ async def save_transcript(data: TranscriptPayload):
     # means the call was answered). Best-effort + idempotent; never blocks the webhook.
     if transcript:
         await _bill_completed_call(call, duration_seconds)
+
+    # Audit: call completed (call-end webhook). Best-effort; never blocks.
+    try:
+        await _audit.record_sensitive_access(
+            _state.db_pool, None, actor={"actor_type": "agent", "actor_id": None},
+            action="call_completed", entity_type="agent_call", entity_id=call.get("id"),
+            phone=call.get("phone"),
+            details={"outcome": status, "category": category, "duration_seconds": duration_seconds,
+                     "interested": bool(data.customer_interested),
+                     "bank_id": (str(call.get("bank_id")) if call.get("bank_id") else None)})
+    except Exception as e:
+        logger.warning("call_completed audit failed for %s: %s", call.get("id"), e)
 
     # ── If a loan_application was created from this call, backfill with collected data ──
     try:

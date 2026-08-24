@@ -6,6 +6,7 @@ const fs = require("fs");
 const app = next({ dev: false });
 const handle = app.getRequestHandler();
 const port = parseInt(process.env.PORT, 10) || 3001;
+const host = process.env.HOST || "127.0.0.1";
 
 const httpsOptions = {
   key: fs.readFileSync("/etc/letsencrypt/live/virtualvaani.vgipl.com-0002/privkey.pem"),
@@ -30,7 +31,10 @@ app.prepare().then(() => {
     }
     const parsedUrl = parse(req.url, true);
     handle(req, res, parsedUrl);
-  }).listen(port, "0.0.0.0", () => {
-    console.log(`> HTTPS server running on https://0.0.0.0:${port}`);
+  // nginx is the front door; binding 0.0.0.0 also published this server
+  // directly, letting a caller reach the app bypassing every nginx rule.
+  // Override with HOST if a setup ever needs a different interface.
+  }).listen(port, host, () => {
+    console.log(`> HTTPS server running on https://${host}:${port}`);
   });
 });

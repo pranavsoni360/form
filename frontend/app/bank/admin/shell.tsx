@@ -9,10 +9,12 @@ import { useRouter } from "next/navigation";
 import { getAccessToken, logout } from "@/lib/auth";
 import { getMe } from "@/lib/api/bank";
 import { FinixShell, SessionTimer, type FinixNavItem, type SidebarAction } from "@/components/finix";
+import { BankNotificationBell } from "@/components/audit/BankNotificationBell";
 
 const NAV: FinixNavItem[] = [
   { href: "/bank/admin/users", label: "Users", glyph: "◎" },
   { href: "/bank/admin/usage", label: "Usage & call statistics", glyph: "∿" },
+  { href: "/bank/admin/audit", label: "Audit trail", glyph: "⚿" },
   { href: "/bank/admin/settings", label: "Settings", glyph: "⚙" },
   { href: "/bank/scorecard", label: "Scorecard", glyph: "▦" },
 ];
@@ -86,6 +88,7 @@ export function BankAdminShell({
         />
       }
       action={action}
+      headerRight={<BankNotificationBell auditHref="/bank/admin/audit" />}
     >
       {children}
     </FinixShell>

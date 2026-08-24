@@ -33,6 +33,29 @@ def _row_to_payload(row) -> dict:
     return d
 
 
+async def _assert_app_in_scope(db_pool, app_uuid, user) -> None:
+    """404 unless the application belongs to the caller's bank.
+
+    `lrs_scores` has no bank_id column, so tenancy can only come from the parent
+    `loan_applications` row — which these handlers never consulted. A bank
+    officer holding any application UUID could therefore read (and re-score)
+    another bank's credit file, including `raw_provider_data`, the raw bureau /
+    KYC response. Operators (admin token, bank_id=None) still see every bank.
+
+    Missing and out-of-scope both return the same 404 so this is not an
+    existence oracle.
+    """
+    bank_id = user.get("bank_id")
+    if not bank_id:
+        return
+    owner = await db_pool.fetchval(
+        "SELECT bank_id FROM loan_applications WHERE id = $1", app_uuid
+    )
+    if owner is None or str(owner) != str(bank_id):
+        raise HTTPException(status_code=404, detail="application not found")
+
+
+
 @router.get("/score/{application_id}")
 async def get_score(application_id: str, user: dict = Depends(get_current_bank_user)):
     """Return the stored LRS score for an application (or 404 if not scored yet)."""
@@ -42,6 +65,7 @@ async def get_score(application_id: str, user: dict = Depends(get_current_bank_u
         app_uuid = uuid.UUID(application_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid application_id")
+    await _assert_app_in_scope(db_pool, app_uuid, user)
     row = await db_pool.fetchrow(
         "SELECT * FROM lrs_scores WHERE application_id = $1", app_uuid
     )
@@ -59,6 +83,7 @@ async def rescore(application_id: str, user: dict = Depends(get_current_bank_use
         app_uuid = uuid.UUID(application_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid application_id")
+    await _assert_app_in_scope(db_pool, app_uuid, user)
     from lrs.handlers import run_and_persist
     try:
         result = await run_and_persist(db_pool, app_uuid, force=True)
@@ -84,15 +109,33 @@ async def rescore_pending(user: dict = Depends(get_current_bank_user)):
     from agent import state as _state
     from services.job_worker import enqueue_job
     db_pool = _state.db_pool
-    rows = await db_pool.fetch(
-        """SELECT la.id
-             FROM loan_applications la
-             JOIN lrs_scores l ON l.application_id = la.id
-            WHERE la.status = ANY($1::text[])
-            ORDER BY la.created_at DESC
-            LIMIT 500""",
-        list(_RESCORABLE_STATUSES),
-    )
+    # Scope to the caller's bank. Without the predicate one officer at one bank
+    # could force-rescore up to 500 of EVERY tenant's in-flight applications,
+    # overwriting the system_score/system_suggestion their officers see and
+    # re-firing paid bureau lookups against those borrowers.
+    bank_id = user.get("bank_id")
+    if bank_id:
+        rows = await db_pool.fetch(
+            """SELECT la.id
+                 FROM loan_applications la
+                 JOIN lrs_scores l ON l.application_id = la.id
+                WHERE la.status = ANY($1::text[])
+                  AND la.bank_id = $2
+                ORDER BY la.created_at DESC
+                LIMIT 500""",
+            list(_RESCORABLE_STATUSES), uuid.UUID(str(bank_id)),
+        )
+    else:
+        # Platform operator — deliberately cross-bank.
+        rows = await db_pool.fetch(
+            """SELECT la.id
+                 FROM loan_applications la
+                 JOIN lrs_scores l ON l.application_id = la.id
+                WHERE la.status = ANY($1::text[])
+                ORDER BY la.created_at DESC
+                LIMIT 500""",
+            list(_RESCORABLE_STATUSES),
+        )
     for r in rows:
         await enqueue_job(
             db_pool, job_type="lrs_score",
@@ -123,6 +166,17 @@ async def put_config(request: Request, user: dict = Depends(get_current_bank_use
     """Validate and persist a new scorecard config. Takes effect immediately."""
     from agent import state as _state
     from lrs import scorecard as sc_module
+    # Publishing a scorecard sets the weights and cut-offs behind every
+    # subsequent credit decision for the whole bank. The dependency admits
+    # bank_officer, so the bank's most junior role could publish a config and
+    # then re-score their own file into "approve". Restrict writes to the senior
+    # bank role (and platform operators, who edit the global default template);
+    # reads via GET /config stay open to officers so the editor still loads.
+    if user.get("bank_id") and user.get("role") != "bank_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only a bank admin can publish the scorecard",
+        )
     try:
         body: dict[str, Any] = await request.json()
     except Exception:
@@ -136,4 +190,11 @@ async def put_config(request: Request, user: dict = Depends(get_current_bank_use
             await sc_module.save_db_config(_state.db_pool, body)
     except sc_module.ScorecardConfigError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    # Scorecard publish is a high-privilege config change → platform_audit_log.
+    from services import audit as _audit
+    await _audit.record_platform_audit(
+        _state.db_pool, request, actor=_audit.decode_actor(request), action="scorecard.publish",
+        entity_type="scorecard_config", target_bank_id=user.get("bank_id"),
+        after={"config_version": body.get("config_version", ""),
+               "scope": ("bank" if user.get("bank_id") else "global_default")})
     return {"ok": True, "config_version": body.get("config_version", "")}

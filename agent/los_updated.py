@@ -23,16 +23,22 @@ AGENT_NAME = os.getenv("AGENT_NAME", "pusad-bank-loan-enquiry-enhanced")
 # `OSError 10048: only one usage of each socket address ... is normally permitted`.
 # Pusad loan agent → 8082, Union Bank → 8081 (see union_bank_los.py).
 AGENT_HTTP_PORT = int(os.getenv("PUSAD_AGENT_PORT", "8082"))
+# Bind that health server to loopback. LiveKit never dials it — the worker
+# dials OUT to the LiveKit server — so the only thing reaching it on 0.0.0.0
+# (WorkerOptions' default) was internet scanners, whose malformed requests
+# filled /ops/errors with aiohttp tracebacks. Override with AGENT_HTTP_HOST.
+AGENT_HTTP_HOST = os.getenv("AGENT_HTTP_HOST", "127.0.0.1")
 
 if __name__ == "__main__":
     while True:
         try:
             logging.getLogger("loan-enquiry-agent").info(
-                f"Starting Loan Enquiry Agent Worker on :{AGENT_HTTP_PORT}..."
+                f"Starting Loan Enquiry Agent Worker on {AGENT_HTTP_HOST}:{AGENT_HTTP_PORT}..."
             )
             cli.run_app(WorkerOptions(
                 entrypoint_fnc=entrypoint,
                 agent_name=AGENT_NAME,
+                host=AGENT_HTTP_HOST,
                 port=AGENT_HTTP_PORT,
             ))
         except KeyboardInterrupt:

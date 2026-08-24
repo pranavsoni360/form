@@ -167,10 +167,15 @@ async def restrict_internal_paths(request: Request, call_next):
         peer = request.client.host if request.client else ""
         if peer not in _LOOPBACK or request.headers.get("x-forwarded-for"):
             from fastapi.responses import JSONResponse
+            _origin = request.headers.get("x-forwarded-for") or peer
             logger.warning(
                 "Blocked external call to internal-only path %s from %s",
-                request.url.path, request.headers.get("x-forwarded-for") or peer,
+                request.url.path, _origin,
             )
+            try:
+                await _secev.record_blocked_path(db_pool, request, path=request.url.path, peer=_origin)
+            except Exception:
+                pass
             return JSONResponse({"detail": "Not Found"}, status_code=404)
     return await call_next(request)
 
@@ -181,6 +186,8 @@ async def restrict_internal_paths(request: Request, call_next):
 # duration. Auth/webhook/health paths are excluded (auth is in login_audit).
 # Best-effort: a logging failure never affects the response.
 from services import audit as _audit  # noqa: E402
+from services import security_events as _secev  # noqa: E402
+from services import ratelimit as _ratelimit  # noqa: E402
 
 
 @app.middleware("http")
@@ -247,6 +254,19 @@ from routers.bank_admin import router as bank_admin_router  # noqa: E402
 app.include_router(bank_admin_router)
 
 
+# Exception types that mean "the caller went away", not "we broke". Matched by
+# name so we do not import uvicorn/starlette internals that move between
+# versions. ConnectionResetError/BrokenPipeError are checked by isinstance.
+_CLIENT_GONE = frozenset({
+    "ClientDisconnect",      # starlette.requests
+    "ClientDisconnected",    # uvicorn.protocols.utils (an OSError)
+    "ConnectionResetError",
+    "BrokenPipeError",
+    "EndOfStream",
+    "IncompleteRead",
+})
+
+
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
     """Catch-all for unhandled exceptions. Logs with correlation_id and
@@ -258,6 +278,19 @@ async def _global_exception_handler(request: Request, exc: Exception):
     """
     from fastapi.responses import JSONResponse
     cid = correlation_id_var.get() or "-"
+
+    # A client that hangs up mid-request is not a server fault. These used to
+    # take the full error path: a logger.exception traceback, a row in
+    # system_errors, and a "Loan system error: ClientDisconnect" notification in
+    # the super-admin bell. Log and move on.
+    if type(exc).__name__ in _CLIENT_GONE or isinstance(exc, (ConnectionResetError, BrokenPipeError)):
+        logger.info(
+            "client_disconnected",
+            extra={"route": str(request.url.path), "method": request.method,
+                   "exc_type": type(exc).__name__},
+        )
+        return JSONResponse(status_code=499, content={"error": "client_disconnected"})
+
     logger.exception(
         "unhandled_exception",
         extra={
@@ -346,6 +379,25 @@ AISENSY_DISBURSEMENT_CAMPAIGN = os.getenv("AISENSY_DISBURSEMENT_CAMPAIGN", "loan
 _DEFAULT_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR") or _DEFAULT_UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Uploaded-file naming. `document_type` and the uploaded filename both arrive
+# straight from the customer's browser and both used to reach the path unfiltered:
+# document_type="../../../../etc/cron.d/x" escaped UPLOAD_DIR entirely (this
+# process runs as root), and an .html/.svg extension declared as image/png was
+# served straight back from the public /uploads mount with that content type —
+# stored XSS on our own origin. Reduce the label to a safe alphabet and the
+# extension to the three types these endpoints already claim to accept.
+_SAFE_UPLOAD_EXTS = frozenset({"jpg", "jpeg", "png", "pdf"})
+
+
+def safe_upload_filename(document_type: str, original_name: str | None) -> str:
+    """Filename that cannot escape its directory or change the served type."""
+    label = re.sub(r"[^A-Za-z0-9_-]", "_", (document_type or "").strip())[:40] or "document"
+    name = original_name or ""
+    raw_ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    ext = raw_ext if raw_ext in _SAFE_UPLOAD_EXTS else "bin"
+    return f"{label}_{int(now_utc().timestamp())}.{ext}"
+
 
 FORM_BASE_URL = os.getenv("FORM_BASE_URL", "https://virtualvaani.vgipl.com:3001")
 
@@ -1078,12 +1130,14 @@ class BankUserCreate(BaseModel):
     email: str
     full_name: str
     role: str  # bank_officer or bank_supervisor
+    branch_id: Optional[str] = None  # assign the user to a branch (audit scoping)
 
 class BankUserUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    branch_id: Optional[str] = None
 
 class OfficerReviewRequest(BaseModel):
     notes: Optional[str] = None
@@ -1249,6 +1303,14 @@ async def get_current_admin(credentials: HTTPAuthorizationCredentials = Depends(
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # A refresh token carries exactly the same claims as an access token and
+    # differs only by "type". Nothing here checked it, so a refresh token was a
+    # valid API credential for its full REFRESH_TOKEN_HOURS life AND survived
+    # logout: /api/auth/logout deletes the refresh_tokens row, but the JWT
+    # itself still verifies. Deny "refresh" explicitly rather than requiring
+    # "access", so legacy tokens minted without a "type" claim keep working.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
     if payload.get("user_type") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE id = $1 AND is_active = true", uuid.UUID(payload["user_id"]))
@@ -1264,6 +1326,9 @@ async def get_current_bank_user(credentials: HTTPAuthorizationCredentials = Depe
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # Not an API credential — see get_current_admin.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
     if payload.get("user_type") != "bank_user":
         raise HTTPException(status_code=403, detail="Bank user access required")
     row = await db_pool.fetchrow("SELECT * FROM bank_users WHERE id = $1 AND is_active = true", uuid.UUID(payload["user_id"]))
@@ -1577,6 +1642,9 @@ async def _record_login_audit(*, actor_type, actor_id, username, role, success,
 @app.post("/api/auth/admin-login")
 async def auth_admin_login(payload: AdminLogin, request: Request):
     """Super admin login. Sets httpOnly refresh cookie. Rejects bank users."""
+    # Per-IP cap alongside the per-username lockout: credential stuffing
+    # across many usernames from one host was otherwise unbounded.
+    _ratelimit.check_request("login_ip", request)
     await _check_lockout(payload.email)
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
@@ -1587,6 +1655,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
                                   failure_reason=("account_locked" if locked else "invalid_credentials"),
                                   request=request)
         if locked:
+            await _secev.record_failed_login_burst(db_pool, request, username=payload.email,
+                                                   actor_id=(row["id"] if row else None),
+                                                   actor_type="platform_admin", attempts=attempts)
             raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
         if attempts >= WARN_AFTER_ATTEMPTS:
@@ -1605,6 +1676,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
     await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
                               role=row["role"], success=True, jti=jti, request=request)
+    await _secev.check_login_anomalies(db_pool, request, actor_id=str(row["id"]),
+                                       actor_type="platform_admin", actor_username=payload.email,
+                                       actor_role=row["role"])
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1618,6 +1692,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
 @app.post("/api/auth/bank-login")
 async def auth_bank_login(payload: BankLogin, request: Request):
     """Bank user login. Sets httpOnly refresh cookie. Rejects admin users."""
+    # Per-IP cap alongside the per-username lockout: credential stuffing
+    # across many usernames from one host was otherwise unbounded.
+    _ratelimit.check_request("login_ip", request)
     await _check_lockout(payload.username)
     row = await db_pool.fetchrow("SELECT * FROM bank_users WHERE username = $1", payload.username)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
@@ -1629,6 +1706,10 @@ async def auth_bank_login(payload: BankLogin, request: Request):
                                   failure_reason=("account_locked" if locked else "invalid_credentials"),
                                   request=request)
         if locked:
+            await _secev.record_failed_login_burst(db_pool, request, username=payload.username,
+                                                   actor_id=(row["id"] if row else None), actor_type="bank_user",
+                                                   bank_id=(str(row["bank_id"]) if row and row["bank_id"] else None),
+                                                   attempts=attempts)
             raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         remaining = MAX_LOGIN_ATTEMPTS - attempts
         if attempts >= WARN_AFTER_ATTEMPTS:
@@ -1653,6 +1734,9 @@ async def auth_bank_login(payload: BankLogin, request: Request):
     await db_pool.execute("UPDATE bank_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
     await _record_login_audit(actor_type="bank_user", actor_id=row["id"], username=payload.username,
                               role=row["role"], success=True, jti=jti, bank_id=bank_id, request=request)
+    await _secev.check_login_anomalies(db_pool, request, actor_id=user_id, actor_type="bank_user",
+                                       actor_username=payload.username, actor_role=row["role"],
+                                       bank_id=bank_id, branch_id=_branch_id)
     resp = JSONResponse({
         "token": access_token,
         "user": {
@@ -1732,10 +1816,20 @@ async def auth_logout(request: Request):
         try:
             payload = jwt.decode(refresh_jwt, JWT_SECRET, algorithms=["HS256"])
             await db_pool.execute("DELETE FROM refresh_tokens WHERE jti = $1", payload.get("jti"))
+            _uid = payload.get("user_id") or payload.get("sub")
+            _uname = payload.get("email") or payload.get("username")
+            _is_admin = payload.get("user_type") == "admin"
+            if not _uname and _uid:
+                try:
+                    if _is_admin:
+                        _uname = await db_pool.fetchval("SELECT email FROM admin_users WHERE id = $1", uuid.UUID(_uid))
+                    else:
+                        _uname = await db_pool.fetchval("SELECT username FROM bank_users WHERE id = $1", uuid.UUID(_uid))
+                except Exception:
+                    pass
             await _record_login_audit(
-                actor_type=("platform_admin" if payload.get("user_type") == "admin" else "bank_user"),
-                actor_id=payload.get("user_id") or payload.get("sub"),
-                username=payload.get("email") or payload.get("username") or "",
+                actor_type=("platform_admin" if _is_admin else "bank_user"),
+                actor_id=_uid, username=_uname or "",
                 role=payload.get("role"), bank_id=payload.get("bank_id"),
                 success=True, event="logout", jti=payload.get("jti"), request=request)
         except Exception:
@@ -1754,6 +1848,9 @@ async def auth_me(credentials: HTTPAuthorizationCredentials = Depends(security))
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # Not an API credential — see get_current_admin.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
 
     user_type = payload.get("user_type")
     if user_type == "admin":
@@ -1889,24 +1986,257 @@ async def admin_audit_logins(
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
+# ── Generic reader for the semantic audit stores ────────────────────────────
+_AUDIT_JSON_COLS = {"location", "geolocation", "before_data", "after_data", "metadata", "details"}
+
+
+# How far back an audit list looks by default. The audit stores are append-only
+# and are never pruned below this, so without a bound both the page query and its
+# count(*) degrade into a full table scan as the logs grow - and Postgres cannot
+# answer count(*) from an index alone. A year is well past any review window and
+# it makes the existing (bank_id, created_at DESC) indexes usable for both.
+AUDIT_DEFAULT_WINDOW_DAYS = int(os.getenv("AUDIT_DEFAULT_WINDOW_DAYS", "365"))
+
+
+async def _audit_page(table, cols, filters, limit, offset, order="created_at",
+                      since_days=None):
+    """filters: list of (sql_col, value); None values are skipped. Serializes
+    UUIDs to str and parses JSON columns. Returns {items, total, limit, offset}.
+
+    `since_days` bounds both the page and its count. None uses
+    AUDIT_DEFAULT_WINDOW_DAYS; 0 removes the bound (use sparingly)."""
+    limit = max(1, min(int(limit), 200)); offset = max(0, int(offset))
+    conds, params = [], []
+    for col, val in filters:
+        if val is not None:
+            params.append(val); conds.append(f"{col} = ${len(params)}")
+    window = AUDIT_DEFAULT_WINDOW_DAYS if since_days is None else int(since_days)
+    if window > 0:
+        params.append(now_utc() - timedelta(days=window))
+        conds.append(f"{order} >= ${len(params)}")
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    total = await db_pool.fetchval(f"SELECT count(*) FROM {table} {where}", *params)
+    rows = await db_pool.fetch(
+        f"SELECT {cols} FROM {table} {where} ORDER BY {order} DESC LIMIT {limit} OFFSET {offset}", *params)
+    items = []
+    for r in rows:
+        d = dict(r)
+        for k, v in list(d.items()):
+            if isinstance(v, uuid.UUID):
+                d[k] = str(v)
+            elif k in _AUDIT_JSON_COLS:
+                d[k] = _parse_geo(v)
+        items.append(d)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+_PLATFORM_COLS = ("id, created_at, actor_email, actor_role, action, entity_type, entity_id, "
+                  "target_bank_id, before_data, after_data, ip_address::text AS ip_address, "
+                  "machine_ip::text AS machine_ip, machine_name, location, remark")
+_OFFICER_COLS = ("id, created_at, application_id, bank_id, branch_id, officer_username, officer_role, "
+                 "action, decision_level, from_status, to_status, decided_amount, decided_roi, "
+                 "lrs_score_at_decision, ip_address::text AS ip_address, machine_ip::text AS machine_ip, "
+                 "machine_name, location, reason_text, notes")
+_STATUS_COLS = ("id, created_at, application_id, bank_id, branch_id, from_status, to_status, actor_type, "
+                "actor_username, actor_role, source, ip_address::text AS ip_address, "
+                "machine_ip::text AS machine_ip, machine_name, location, notes")
+_SENSITIVE_COLS = ("id, timestamp, user_type, user_id, phone, action, entity_type, entity_id, details, "
+                   "ip_address::text AS ip_address, geolocation")
+_SECURITY_COLS = ("id, created_at, event_type, severity, actor_type, actor_username, actor_role, "
+                  "bank_id, branch_id, title, description, entity_type, entity_id, "
+                  "ip_address::text AS ip_address, machine_ip::text AS machine_ip, machine_name, "
+                  "location, metadata, acknowledged, acknowledged_at")
+
+
+@app.get("/api/admin/audit/platform")
+async def admin_audit_platform(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                               action: Optional[str] = None, limit: int = 50, offset: int = 0):
+    """Super-admin cross-bank action log (platform_audit_log)."""
+    return await _audit_page("platform_audit_log", _PLATFORM_COLS,
+                             [("target_bank_id", uuid.UUID(bank_id) if bank_id else None), ("action", action)],
+                             limit, offset)
+
+
+@app.get("/api/admin/audit/officer-actions")
+async def admin_audit_officer(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                              branch_id: Optional[str] = None, action: Optional[str] = None,
+                              limit: int = 50, offset: int = 0):
+    return await _audit_page("officer_action_log", _OFFICER_COLS,
+                             [("bank_id", uuid.UUID(bank_id) if bank_id else None),
+                              ("branch_id", uuid.UUID(branch_id) if branch_id else None), ("action", action)],
+                             limit, offset)
+
+
+@app.get("/api/admin/audit/status-changes")
+async def admin_audit_status(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                             limit: int = 50, offset: int = 0):
+    return await _audit_page("application_status_log", _STATUS_COLS,
+                             [("bank_id", uuid.UUID(bank_id) if bank_id else None)], limit, offset)
+
+
+@app.get("/api/admin/audit/sensitive")
+async def admin_audit_sensitive(_a: dict = Depends(get_current_admin), action: Optional[str] = None,
+                                limit: int = 50, offset: int = 0):
+    return await _audit_page("audit_logs", _SENSITIVE_COLS, [("action", action)], limit, offset, order="timestamp")
+
+
+@app.get("/api/admin/audit/security")
+async def admin_audit_security(_a: dict = Depends(get_current_admin), bank_id: Optional[str] = None,
+                               severity: Optional[str] = None, event_type: Optional[str] = None,
+                               acknowledged: Optional[bool] = None, limit: int = 50, offset: int = 0):
+    """Security-events feed (platform: all banks + platform-level events)."""
+    return await _audit_page("security_events", _SECURITY_COLS,
+                             [("bank_id", uuid.UUID(bank_id) if bank_id else None),
+                              ("severity", severity), ("event_type", event_type),
+                              ("acknowledged", acknowledged)], limit, offset)
+
+
+@app.post("/api/admin/audit/security/{event_id}/ack")
+async def admin_ack_security(event_id: int, _a: dict = Depends(get_current_admin),
+                             request: Request = None):
+    """Acknowledge a security event (platform admin)."""
+    actor = _audit.decode_actor(request)
+    r = await db_pool.execute(
+        "UPDATE security_events SET acknowledged=true, acknowledged_by=$1, acknowledged_at=NOW() WHERE id=$2 AND acknowledged=false",
+        actor.get("actor_id"), event_id)
+    return {"acknowledged": _rows_affected(r) > 0}
+
+
+def _notif_items(rows):
+    return [{"id": r["id"], "created_at": r["created_at"], "event_type": r["event_type"],
+             "severity": r["severity"], "title": r["title"],
+             "bank_id": str(r["bank_id"]) if r["bank_id"] else None} for r in rows]
+
+
+@app.get("/api/admin/notifications")
+async def admin_notifications(_a: dict = Depends(get_current_admin), limit: int = 15):
+    """Unread (unacknowledged) security alerts across all banks — the platform
+    super-admin notification feed."""
+    limit = max(1, min(int(limit), 50))
+    count = await db_pool.fetchval("SELECT count(*) FROM security_events WHERE acknowledged = false")
+    rows = await db_pool.fetch(
+        "SELECT id, created_at, event_type, severity, title, bank_id FROM security_events "
+        "WHERE acknowledged = false ORDER BY created_at DESC LIMIT $1", limit)
+    return {"count": count or 0, "items": _notif_items(rows)}
+
+
+@app.get("/api/bank/notifications")
+async def bank_notifications(user: dict = Depends(get_current_bank_user), limit: int = 15):
+    """Unread security alerts scoped to the caller's bank (and branch if the caller
+    is branch-scoped)."""
+    limit = max(1, min(int(limit), 50))
+    bank_id = uuid.UUID(user["bank_id"])
+    branch_id = uuid.UUID(user["branch_id"]) if user.get("branch_id") else None
+    if branch_id is not None:
+        where = "acknowledged = false AND bank_id = $1 AND branch_id = $2"
+        args = (bank_id, branch_id)
+    else:
+        where = "acknowledged = false AND bank_id = $1"
+        args = (bank_id,)
+    count = await db_pool.fetchval(f"SELECT count(*) FROM security_events WHERE {where}", *args)
+    rows = await db_pool.fetch(
+        f"SELECT id, created_at, event_type, severity, title, bank_id FROM security_events "
+        f"WHERE {where} ORDER BY created_at DESC LIMIT ${len(args)+1}", *args, limit)
+    return {"count": count or 0, "items": _notif_items(rows)}
+
+
+# ── Bank-scoped audit (bank admin sees their bank; branch officer sees their branch) ──
+@app.get("/api/bank/audit")
+async def bank_audit(stream: str = "status-changes", user: dict = Depends(get_current_bank_user),
+                     limit: int = 50, offset: int = 0):
+    """Bank-scoped audit. Auto-filters to the caller's bank_id, and to their
+    branch_id when the caller is branch-scoped (bank admins have no branch → whole bank)."""
+    bank_id = uuid.UUID(user["bank_id"])
+    branch_id = uuid.UUID(user["branch_id"]) if user.get("branch_id") else None
+    if stream == "officer-actions":
+        return await _audit_page("officer_action_log", _OFFICER_COLS,
+                                 [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    if stream == "activity":
+        return await _audit_page(
+            "activity_log",
+            "id, created_at, actor_type, actor_username, actor_role, bank_id, branch_id, action, "
+            "module, endpoint, http_method, http_status, result, ip_address::text AS ip_address, "
+            "machine_ip::text AS machine_ip, machine_name, location, duration_ms",
+            [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    if stream == "security":
+        return await _audit_page("security_events", _SECURITY_COLS,
+                                 [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+    if stream == "logins":
+        return await _audit_page(
+            "login_audit",
+            "id, created_at, event, actor_type, actor_username, username_tried, actor_role, "
+            "bank_id, success, failure_reason, ip_address::text AS ip_address, "
+            "machine_ip::text AS machine_ip, machine_name, location, device_fingerprint",
+            [("bank_id", bank_id)], limit, offset)
+    return await _audit_page("application_status_log", _STATUS_COLS,
+                             [("bank_id", bank_id), ("branch_id", branch_id)], limit, offset)
+
+
+@app.post("/api/bank/audit/security/{event_id}/ack")
+async def bank_ack_security(event_id: int, user: dict = Depends(get_current_bank_user),
+                            request: Request = None):
+    """Acknowledge a security event within the caller's bank (and branch if scoped)."""
+    bank_id = uuid.UUID(user["bank_id"])
+    branch_id = uuid.UUID(user["branch_id"]) if user.get("branch_id") else None
+    actor = _audit.decode_actor(request)
+    if branch_id is not None:
+        r = await db_pool.execute(
+            "UPDATE security_events SET acknowledged=true, acknowledged_by=$1, acknowledged_at=NOW() "
+            "WHERE id=$2 AND bank_id=$3 AND branch_id=$4 AND acknowledged=false",
+            actor.get("actor_id"), event_id, bank_id, branch_id)
+    else:
+        r = await db_pool.execute(
+            "UPDATE security_events SET acknowledged=true, acknowledged_by=$1, acknowledged_at=NOW() "
+            "WHERE id=$2 AND bank_id=$3 AND acknowledged=false",
+            actor.get("actor_id"), event_id, bank_id)
+    return {"acknowledged": _rows_affected(r) > 0}
+
+
 # Keep old admin login for backward compatibility
 @app.post("/api/admin/login")
-async def admin_login(payload: AdminLogin):
+async def admin_login(payload: AdminLogin, request: Request):
+    """Legacy super-admin login, superseded by POST /api/auth/admin-login.
+
+    Nothing in the product calls this any more (the frontend uses
+    /api/auth/admin-login), but while the route exists it must enforce the same
+    controls: it was missing BOTH the account lockout and the failed-attempt
+    counter, so choosing this URL instead of the other one bypassed the lockout
+    entirely and allowed unlimited password guessing against platform
+    super-admin accounts. It also minted a 7-day token with no refresh_tokens
+    row, which no logout or admin action could revoke; it now issues the same
+    30-minute access token as the primary path.
+
+    Recommended follow-up: delete this route once the doc examples are updated.
+    """
+    # Same per-IP cap as the primary login path.
+    _ratelimit.check_request("login_ip", request)
+    await _check_lockout(payload.email)
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
-    if not row:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    if not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
+    if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
+        attempts, locked = await _record_failed_login(payload.email)
+        await _record_login_audit(actor_type="platform_admin", actor_id=(row["id"] if row else None),
+                                  username=payload.email, role=(row["role"] if row else None),
+                                  success=False, event="login_failure",
+                                  failure_reason=("account_locked" if locked else "invalid_credentials"),
+                                  request=request)
+        if locked:
+            await _secev.record_failed_login_burst(db_pool, request, username=payload.email,
+                                                   actor_id=(row["id"] if row else None),
+                                                   actor_type="platform_admin", attempts=attempts)
+            raise HTTPException(423, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not row["is_active"]:
+        await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                                  role=row["role"], success=False, event="login_failure",
+                                  failure_reason="account_deactivated", request=request)
         raise HTTPException(status_code=403, detail="Account deactivated")
-    token = jwt.encode({
-        "user_id": str(row["id"]),
-        "email": row["email"],
-        "role": row["role"],
-        "user_type": "admin",
-        "exp": now_utc() + timedelta(days=7)
-    }, JWT_SECRET, algorithm="HS256")
+    await _clear_failed_logins(payload.email)
+    token = create_access_token(
+        user_id=str(row["id"]), role=row["role"], user_type="admin", email=row["email"],
+    )
     await db_pool.execute("UPDATE admin_users SET last_login_at = $1 WHERE id = $2", now_utc(), row["id"])
+    await _record_login_audit(actor_type="platform_admin", actor_id=row["id"], username=payload.email,
+                              role=row["role"], success=True, event="login_success", request=request)
     return {
         "token": token,
         "user": {
@@ -1928,7 +2258,7 @@ async def admin_list_banks(admin: dict = Depends(get_current_admin)):
     return {"banks": _rows_to_list(rows)}
 
 @app.post("/api/admin/banks")
-async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_admin)):
+async def admin_create_bank(bank: BankCreate, request: Request, admin: dict = Depends(get_current_admin)):
     """Create a new bank."""
     # Trim fields
     name = bank.name.strip()
@@ -1960,10 +2290,14 @@ async def admin_create_bank(bank: BankCreate, admin: dict = Depends(get_current_
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
         name, code, contact_email, contact_phone, bank.address, bank.logo_url
     )
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank.create",
+        entity_type="bank", entity_id=str(row["id"]), target_bank_id=str(row["id"]),
+        after={"name": name, "code": code, "contact_email": contact_email})
     return {"bank": _row_to_dict(row)}
 
 @app.put("/api/admin/banks/{bank_id}")
-async def admin_update_bank(bank_id: str, bank: BankUpdate, admin: dict = Depends(get_current_admin)):
+async def admin_update_bank(bank_id: str, bank: BankUpdate, request: Request, admin: dict = Depends(get_current_admin)):
     """Update a bank."""
     existing = await db_pool.fetchrow("SELECT * FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not existing:
@@ -2000,6 +2334,13 @@ async def admin_update_bank(bank_id: str, bank: BankUpdate, admin: dict = Depend
     vals.append(uuid.UUID(bank_id))
     await db_pool.execute(f"UPDATE banks SET {sets} WHERE id = ${len(updates)+1}", *vals)
     row = await db_pool.fetchrow("SELECT * FROM banks WHERE id = $1", uuid.UUID(bank_id))
+    _changed = [k for k in updates if k != "updated_at"]
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request),
+        action=("bank.suspend" if updates.get("status") == "inactive" else "bank.update"),
+        entity_type="bank", entity_id=bank_id, target_bank_id=bank_id,
+        before={k: (str(existing[k]) if existing[k] is not None else None) for k in _changed},
+        after={k: (str(updates[k]) if updates[k] is not None else None) for k in _changed})
     return {"bank": _row_to_dict(row)}
 
 @app.get("/api/admin/banks/{bank_id}")
@@ -2018,8 +2359,23 @@ async def admin_get_bank(bank_id: str, admin: dict = Depends(get_current_admin))
     bank_dict["application_count"] = app_count
     return {"bank": bank_dict}
 
+async def _validate_branch(branch_id, bank_id):
+    """Return the branch UUID if it belongs to the bank, else raise 400. None → None."""
+    if not branch_id:
+        return None
+    try:
+        buid = uuid.UUID(branch_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid branch_id")
+    ok = await db_pool.fetchval("SELECT 1 FROM bank_branches WHERE id = $1 AND bank_id = $2 AND COALESCE(is_deleted,false)=false",
+                                buid, uuid.UUID(bank_id))
+    if not ok:
+        raise HTTPException(status_code=400, detail="Branch not found in this bank")
+    return buid
+
+
 @app.post("/api/admin/banks/{bank_id}/users")
-async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict = Depends(get_current_admin)):
+async def admin_create_bank_user(bank_id: str, user: BankUserCreate, request: Request, admin: dict = Depends(get_current_admin)):
     """Create a bank user (auto-generate password, return it once)."""
     bank = await db_pool.fetchrow("SELECT id FROM banks WHERE id = $1", uuid.UUID(bank_id))
     if not bank:
@@ -2050,19 +2406,25 @@ async def admin_create_bank_user(bank_id: str, user: BankUserCreate, admin: dict
     existing_email = await db_pool.fetchrow("SELECT id FROM bank_users WHERE email = $1 AND bank_id = $2", email, uuid.UUID(bank_id))
     if existing_email:
         raise HTTPException(status_code=400, detail=f"Email '{email}' already exists in this bank")
+    branch_uuid = await _validate_branch(user.branch_id, bank_id)
     password = generate_random_password()
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     row = await db_pool.fetchrow(
-        """INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, bank_id, username, email, full_name, role, is_active, created_at""",
-        uuid.UUID(bank_id), username, email, password_hash, full_name, user.role
+        """INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role, branch_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, bank_id, username, email, full_name, role, branch_id, is_active, created_at""",
+        uuid.UUID(bank_id), username, email, password_hash, full_name, user.role, branch_uuid
     )
     user_dict = _row_to_dict(row)
     user_dict["generated_password"] = password  # Show only once
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank_user.create",
+        entity_type="bank_user", entity_id=str(row["id"]), target_bank_id=bank_id,
+        after={"username": username, "role": user.role, "full_name": full_name,
+               "branch_id": (str(branch_uuid) if branch_uuid else None)})
     return {"user": user_dict}
 
 @app.put("/api/admin/banks/{bank_id}/users/{user_id}")
-async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdate, admin: dict = Depends(get_current_admin)):
+async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdate, request: Request, admin: dict = Depends(get_current_admin)):
     """Update a bank user."""
     existing = await db_pool.fetchrow("SELECT * FROM bank_users WHERE id = $1 AND bank_id = $2", uuid.UUID(user_id), uuid.UUID(bank_id))
     if not existing:
@@ -2078,6 +2440,8 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
         updates["role"] = user.role
     if user.is_active is not None:
         updates["is_active"] = user.is_active
+    if user.branch_id is not None:
+        updates["branch_id"] = await _validate_branch(user.branch_id, bank_id)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     sets = ", ".join(f"{k} = ${i+1}" for i, k in enumerate(updates.keys()))
@@ -2088,15 +2452,32 @@ async def admin_update_bank_user(bank_id: str, user_id: str, user: BankUserUpdat
         "SELECT id, bank_id, username, email, full_name, role, is_active, created_at, last_login_at FROM bank_users WHERE id = $1",
         uuid.UUID(user_id)
     )
+    _changed = list(updates.keys())
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank_user.update",
+        entity_type="bank_user", entity_id=user_id, target_bank_id=bank_id,
+        before={k: (str(existing[k]) if existing[k] is not None else None) for k in _changed},
+        after={k: (str(updates[k]) if updates[k] is not None else None) for k in _changed})
+    # Security event on privilege change (role escalation risk).
+    if "role" in updates and str(updates["role"]) != str(existing["role"]):
+        await _secev.record_privilege_change(
+            db_pool, request, actor=_audit.decode_actor(request), target_user_id=user_id,
+            bank_id=bank_id, branch_id=(str(existing["branch_id"]) if existing.get("branch_id") else None),
+            change={"role": {"from": existing["role"], "to": updates["role"]}, "username": existing["username"]})
     return {"user": _row_to_dict(row)}
 
 @app.delete("/api/admin/banks/{bank_id}/users/{user_id}")
-async def admin_deactivate_bank_user(bank_id: str, user_id: str, admin: dict = Depends(get_current_admin)):
+async def admin_deactivate_bank_user(bank_id: str, user_id: str, request: Request, admin: dict = Depends(get_current_admin)):
     """Deactivate a bank user (set is_active=false)."""
     existing = await db_pool.fetchrow("SELECT * FROM bank_users WHERE id = $1 AND bank_id = $2", uuid.UUID(user_id), uuid.UUID(bank_id))
     if not existing:
         raise HTTPException(status_code=404, detail="Bank user not found")
     await db_pool.execute("UPDATE bank_users SET is_active = false WHERE id = $1", uuid.UUID(user_id))
+    await _audit.record_platform_audit(
+        db_pool, request, actor=_audit.decode_actor(request), action="bank_user.deactivate",
+        entity_type="bank_user", entity_id=user_id, target_bank_id=bank_id,
+        before={"is_active": "True"}, after={"is_active": "False"},
+        remark=f"deactivated {existing['username']}")
     return {"status": "deactivated", "message": f"User {existing['username']} has been deactivated"}
 
 @app.get("/api/admin/stats")
@@ -2164,7 +2545,7 @@ async def admin_get_applications(
     return {"applications": _rows_to_list(rows)}
 
 @app.get("/api/admin/applications/{app_id}")
-async def admin_get_application(app_id: str, admin: dict = Depends(get_current_admin)):
+async def admin_get_application(app_id: str, request: Request, admin: dict = Depends(get_current_admin)):
     """Admin: full application detail (read-only, any bank)."""
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", uuid.UUID(app_id))
     if not app_row:
@@ -2172,6 +2553,11 @@ async def admin_get_application(app_id: str, admin: dict = Depends(get_current_a
     app_dict = _row_to_dict(app_row)
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
+        # Sensitive read — decrypted Aadhaar was surfaced to an admin.
+        await _audit.record_sensitive_access(
+            db_pool, request, actor=_audit.decode_actor(request), action="view_aadhaar",
+            entity_type="application", entity_id=app_id, phone=app_row.get("phone"),
+            details={"loan_id": app_row.get("loan_id"), "bank_id": (str(app_row["bank_id"]) if app_row.get("bank_id") else None)})
     _attach_code_labels(app_dict)
     transitions = await db_pool.fetch(
         "SELECT * FROM status_transitions WHERE application_id = $1 ORDER BY created_at ASC", uuid.UUID(app_id)
@@ -2282,8 +2668,82 @@ async def _record_approval(app_id, bank_id, approver_type, approver, decision, n
         logger.warning("application_approvals write failed for %s: %s", app_id, e)
 
 
+async def _record_decision(request, app_row, actor_dict, *, action, from_status, to_status,
+                           decision_level, reason_code=None, reason_text=None, notes=None,
+                           decided_amount=None, decided_tenure_m=None, decided_roi=None):
+    """Rich officer-decision audit: officer_action_log + application_status_log,
+    with LRS-score-at-decision, branch, and the full IP/machine/geo envelope.
+    Best-effort — never breaks the decision."""
+    try:
+        app_id = app_row["id"]; bank_id = app_row["bank_id"]
+        # Branch attribution for the AUDIT ROWS ONLY: the loan's branch if set,
+        # else the acting officer's branch. Logging-only — never writes back to
+        # loan_applications (keeps the audit system strictly additive).
+        branch_id = app_row.get("branch_id") or actor_dict.get("branch_id")
+        lrs = None
+        try:
+            lrs = await db_pool.fetchval(
+                "SELECT total_score FROM lrs_scores WHERE application_id = $1 ORDER BY created_at DESC LIMIT 1",
+                app_id)
+        except Exception:
+            pass
+        uname = actor_dict.get("full_name") or actor_dict.get("username")
+        await _audit.record_officer_action(
+            db_pool, request, application_id=app_id, bank_id=bank_id, branch_id=branch_id,
+            officer_id=actor_dict.get("id"), officer_username=uname, officer_role=actor_dict.get("role"),
+            action=action, decision_level=decision_level, from_status=from_status, to_status=to_status,
+            reason_code=reason_code, reason_text=reason_text, notes=notes, decided_amount=decided_amount,
+            decided_tenure_m=decided_tenure_m, decided_roi=decided_roi, lrs_score=lrs)
+        await _audit.record_status_change(
+            db_pool, request, application_id=app_id, bank_id=bank_id, branch_id=branch_id,
+            from_status=from_status, to_status=to_status,
+            actor={"actor_type": "bank_user", "actor_id": actor_dict.get("id"),
+                   "actor_username": uname, "actor_role": actor_dict.get("role")},
+            reason_code=reason_code, reason_text=reason_text, notes=notes,
+            decided_amount=decided_amount, decided_tenure_m=decided_tenure_m, decided_roi=decided_roi)
+    except Exception as e:
+        logger.warning("decision audit write failed for %s: %s", app_row.get("id"), e)
+
+
+_SNAPSHOT_FIELDS = [
+    ("customer_name", "Customer Name"), ("date_of_birth", "Date of Birth"),
+    ("employment_type", "Employment Type"), ("monthly_income", "Monthly Income"),
+    ("loan_purpose", "Loan Purpose"), ("loan_amount_requested", "Loan Amount Requested"),
+    ("pan_number", "PAN"),
+]
+
+
+def _snapshot_fields(app_data: dict) -> list:
+    """Curated field snapshot for application_field_history at submit. PAN is
+    masked to last-4 (audit trail must not become a second PII store)."""
+    changes = []
+    for key, label in _SNAPSHOT_FIELDS:
+        val = app_data.get(key)
+        if val is None:
+            continue
+        if key == "pan_number":
+            s = str(val)
+            val = ("XXXXXX" + s[-4:]) if len(s) >= 4 else "****"
+        changes.append({"field_key": key, "field_label": label, "old_value": None, "new_value": val})
+    return changes
+
+
+async def _record_submission_audit(request, app_data, app_uuid):
+    """Rich status-change + field snapshot for a customer form submission."""
+    actor = {"actor_type": "customer", "actor_id": None,
+             "actor_username": app_data.get("customer_name"), "actor_role": None}
+    await _audit.record_status_change(
+        db_pool, request, application_id=app_uuid, bank_id=app_data.get("bank_id"),
+        branch_id=app_data.get("branch_id"), from_status="draft", to_status="submitted",
+        actor=actor, source="app", notes="Form submitted by customer")
+    await _audit.record_field_history(
+        db_pool, request, application_id=app_uuid, bank_id=app_data.get("bank_id"),
+        branch_id=app_data.get("branch_id"), actor=actor, value_source="customer_submit",
+        changes=_snapshot_fields(app_data))
+
+
 @app.post("/api/bank/applications/{app_id}/officer-approve")
-async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict = Depends(get_bank_officer)):
+async def officer_approve(app_id: str, body: OfficerReviewRequest, request: Request, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_approved, record officer_id, officer_reviewed_at, officer_notes."""
     await _require_perm(officer, "application.officer_approve")
     bank_id = uuid.UUID(officer["bank_id"])
@@ -2307,10 +2767,12 @@ async def officer_approve(app_id: str, body: OfficerReviewRequest, officer: dict
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "officer_approved", "bank_officer", officer_id, body.notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "approved", body.notes)
+    await _record_decision(request, app_row, officer, action="approve", from_status=current_status,
+                           to_status="officer_approved", decision_level="officer", notes=body.notes)
     return {"status": "success", "message": "Application approved by officer", "new_status": "officer_approved"}
 
 @app.post("/api/bank/applications/{app_id}/officer-reject")
-async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict = Depends(get_bank_officer)):
+async def officer_reject(app_id: str, body: OfficerRejectRequest, request: Request, officer: dict = Depends(get_bank_officer)):
     """Set status=officer_rejected, record officer_id, notes, rejection_reason."""
     await _require_perm(officer, "application.officer_reject")
     bank_id = uuid.UUID(officer["bank_id"])
@@ -2337,6 +2799,9 @@ async def officer_reject(app_id: str, body: OfficerRejectRequest, officer: dict 
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "officer_rejected", "bank_officer", officer_id, rejection_notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "officer", officer, "rejected", rejection_notes)
+    await _record_decision(request, app_row, officer, action="reject", from_status=current_status,
+                           to_status="officer_rejected", decision_level="officer",
+                           reason_code=body.rejection_reason, reason_text=rejection_notes)
     # Send WhatsApp notification
     if app_row["phone"]:
         message = (
@@ -2363,7 +2828,7 @@ async def supervisor_list_applications(supervisor: dict = Depends(get_bank_super
     return {"applications": _rows_to_list(rows)}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-approve")
-async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def supervisor_approve(app_id: str, body: OfficerReviewRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=approved."""
     await _require_perm(supervisor, "application.supervisor_approve")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2409,10 +2874,12 @@ async def supervisor_approve(app_id: str, body: OfficerReviewRequest, supervisor
             except Exception as e:
                 print(f"[AiSensy Approval] ERROR: {e}", flush=True)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", body.notes)
+    await _record_decision(request, app_row, supervisor, action="approve", from_status=current_status,
+                           to_status="approved", decision_level="supervisor", notes=body.notes)
     return {"status": "success", "message": "Application approved by supervisor", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/supervisor-reject")
-async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def supervisor_reject(app_id: str, body: OfficerRejectRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=supervisor_rejected."""
     await _require_perm(supervisor, "application.supervisor_reject")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2426,6 +2893,9 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
     current_status = app_row["status"]
     if current_status != "officer_approved":
         raise HTTPException(status_code=400, detail=f"Cannot supervisor-reject application with status '{current_status}'. Must be 'officer_approved'.")
+    # Same maker-checker rule as supervisor-approve (see the v38 CHECK).
+    if app_row.get("officer_id") is not None and app_row["officer_id"] == supervisor_id:
+        raise HTTPException(status_code=403, detail="Maker-checker: you reviewed this as the officer and cannot also reject it as supervisor.")
     rejection_notes = body.notes or ""
     if body.rejection_reason:
         rejection_notes = f"[Reason: {body.rejection_reason}] {rejection_notes}".strip()
@@ -2439,6 +2909,9 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "supervisor_rejected", "bank_supervisor", supervisor_id, rejection_notes)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "rejected", rejection_notes)
+    await _record_decision(request, app_row, supervisor, action="reject", from_status=current_status,
+                           to_status="supervisor_rejected", decision_level="supervisor",
+                           reason_code=body.rejection_reason, reason_text=rejection_notes)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2450,7 +2923,7 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, supervisor:
     return {"status": "success", "message": "Application rejected by supervisor", "new_status": "supervisor_rejected"}
 
 @app.post("/api/bank/applications/{app_id}/request-documents")
-async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def request_documents(app_id: str, body: OfficerReviewRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=documents_requested, documents_requested_at."""
     await _require_perm(supervisor, "application.request_documents")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2473,6 +2946,8 @@ async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor:
     if _rows_affected(_u) == 0:
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "documents_requested", "bank_supervisor", supervisor_id, body.notes)
+    await _record_decision(request, app_row, supervisor, action="request_documents", from_status=current_status,
+                           to_status="documents_requested", decision_level="supervisor", notes=body.notes)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2484,7 +2959,7 @@ async def request_documents(app_id: str, body: OfficerReviewRequest, supervisor:
     return {"status": "success", "message": "Documents requested", "new_status": "documents_requested"}
 
 @app.post("/api/bank/applications/{app_id}/disburse")
-async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervisor: dict = Depends(get_bank_supervisor)):
+async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, request: Request, supervisor: dict = Depends(get_bank_supervisor)):
     """Set status=approved, approved_at."""
     await _require_perm(supervisor, "application.disburse")
     bank_id = uuid.UUID(supervisor["bank_id"])
@@ -2498,6 +2973,13 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
     current_status = app_row["status"]
     if current_status not in ("officer_approved", "approved", "documents_submitted"):
         raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'officer_approved', 'approved' or 'documents_submitted'.")
+    # Maker-checker. get_bank_officer admits bank_supervisor, so one supervisor
+    # could officer-approve and then land here on the same file. The v38 CHECK
+    # (officer_id <> supervisor_id) does stop the write, but as an unhandled
+    # CheckViolationError -> HTTP 500. Fail with the same clear 403 the
+    # supervisor-approve path already gives.
+    if app_row.get("officer_id") is not None and app_row["officer_id"] == supervisor_id:
+        raise HTTPException(status_code=403, detail="Maker-checker: you reviewed this as the officer and cannot also disburse it as supervisor.")
     _u = await db_pool.execute(
         """UPDATE loan_applications
            SET status = 'approved', approved_at = $1, supervisor_id = $2, supervisor_notes = $3
@@ -2529,10 +3011,13 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, supervi
             except Exception as e:
                 print(f"[AiSensy Disburse] ERROR: {e}", flush=True)
     await _record_approval(uuid.UUID(app_id), bank_id, "supervisor", supervisor, "approved", (body.notes or "") + " [disbursement initiated]")
+    await _record_decision(request, app_row, supervisor, action="disburse", from_status=current_status,
+                           to_status="approved", decision_level="supervisor",
+                           notes=(body.notes or "") + " [disbursement initiated]")
     return {"status": "success", "message": "Disbursement initiated", "new_status": "approved"}
 
 @app.post("/api/bank/applications/{app_id}/cancel")
-async def cancel_application(app_id: str, body: CancelApplicationRequest, user: dict = Depends(get_bank_officer)):
+async def cancel_application(app_id: str, body: CancelApplicationRequest, request: Request, user: dict = Depends(get_bank_officer)):
     """Staff-initiated cancel: void an application (duplicate, data error, customer
     request over phone, etc.). Allowed at ANY stage before money is out.
 
@@ -2573,6 +3058,9 @@ async def cancel_application(app_id: str, body: CancelApplicationRequest, user: 
     if _rows_affected(_u) == 0:
         raise HTTPException(status_code=409, detail="Cannot cancel — the application was disbursed or its status changed. Refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "cancelled", changed_by_type, actor_id, body.reason)
+    await _record_decision(request, app_row, user, action="cancel", from_status=current_status,
+                           to_status="cancelled", decision_level=user.get("role", "bank_officer"),
+                           reason_text=body.reason)
     if app_row["phone"]:
         message = (
             f"Dear {app_row['customer_name']},\n\n"
@@ -2786,6 +3274,11 @@ async def autosave_form(payload: FormStepData, request: Request):
 
 @app.post("/api/verify-pan")
 async def verify_pan(token: str, pan_number: str, request: Request):
+    # PAN verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("pan_ip", request)
+    _ratelimit.check("pan", token)
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
@@ -2831,6 +3324,11 @@ async def verify_pan(token: str, pan_number: str, request: Request):
 
 @app.post("/api/verify-aadhaar")
 async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
+    # AADHAAR verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("aadhaar_ip", request)
+    _ratelimit.check("aadhaar", token)
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
@@ -2860,6 +3358,9 @@ async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
 @app.post("/api/aadhaar-link")
 async def generate_aadhaar_link(request: Request):
     """Step 1: Generate DigiLocker OAuth link. User clicks this to authenticate with Aadhaar."""
+    # Paid DigiLocker call. IP-only: the body (and so the token) is not
+    # parsed yet at this point.
+    _ratelimit.check_request("aadhaar_ip", request)
     data = await request.json()
     token = data.get('token') or data.get('session_token')
     aadhaar_number = data.get('aadhaar_number', '')
@@ -2915,6 +3416,9 @@ async def generate_aadhaar_link(request: Request):
 @app.post("/api/aadhaar-documents")
 async def fetch_aadhaar_documents(request: Request):
     """Step 2: After customer completes DigiLocker auth, fetch available documents."""
+    # Paid DigiLocker call. IP-only: the body (and so the token) is not
+    # parsed yet at this point.
+    _ratelimit.check_request("aadhaar_ip", request)
     data = await request.json()
     token = data.get('token') or data.get('session_token')
     request_id = data.get('request_id')
@@ -2954,6 +3458,9 @@ async def fetch_aadhaar_documents(request: Request):
 @app.post("/api/aadhaar-download")
 async def download_aadhaar(request: Request):
     """Step 3: Download and parse Aadhaar from DigiLocker. Auto-fills form fields."""
+    # Paid DigiLocker call. IP-only: the body (and so the token) is not
+    # parsed yet at this point.
+    _ratelimit.check_request("aadhaar_ip", request)
     data = await request.json()
     token = data.get('token') or data.get('session_token')
     request_id = data.get('request_id')
@@ -3185,10 +3692,9 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
-    ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
     loan_dir = UPLOAD_DIR / token_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{document_type}_{int(now_utc().timestamp())}.{ext}"
+    filename = safe_upload_filename(document_type, file.filename)
     filepath = loan_dir / filename
     async with aiofiles.open(filepath, 'wb') as f:
         await f.write(file_content)
@@ -3305,6 +3811,7 @@ async def submit_form(token: str, request: Request):
     await db_pool.execute("UPDATE form_tokens SET is_used = true, form_status = 'submitted' WHERE id = $1", token_row["id"])
     # Record status transition
     await record_transition(app_uuid, "draft", "submitted", "customer", app_uuid, "Form submitted by customer")
+    await _record_submission_audit(request, app_data, app_uuid)
     # Guarantor consent call (additive, best-effort — never block submission)
     try:
         from guarantor.trigger import enqueue_guarantor_consent_call
@@ -3327,6 +3834,11 @@ async def submit_form(token: str, request: Request):
 # LEGACY ADMIN REVIEW ENDPOINT (kept for backward compat)
 # ============================================
 
+# Statuses that /api/admin/review must refuse. Terminal states (money has
+# moved, or the customer walked away) and 'draft' (never submitted).
+_ADMIN_REVIEW_BLOCKED = frozenset({"cancelled", "withdrawn", "disbursed", "draft"})
+
+
 @app.post("/api/admin/review")
 async def review_application(payload: ReviewAction, request: Request, admin: dict = Depends(get_current_admin)):
     app_id = uuid.UUID(payload.application_id)
@@ -3341,16 +3853,42 @@ async def review_application(payload: ReviewAction, request: Request, admin: dic
     new_status = _review_status.get(payload.action)
     if new_status is None:
         raise HTTPException(status_code=400, detail=f"Invalid action '{payload.action}'. Must be 'approve' or 'reject'.")
+
+    # Unlike every bank-side decision endpoint, this one had no status
+    # precondition at all — so a stale admin tab could move a cancelled,
+    # withdrawn, already-disbursed or never-submitted application straight to
+    # 'approved' and then WhatsApp the customer "Congratulations ... APPROVED".
+    # Admin override on a live application stays allowed; terminal and
+    # not-yet-submitted states do not.
+    if current_status in _ADMIN_REVIEW_BLOCKED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot {payload.action} an application in status '{current_status}'.",
+        )
+    if app_row.get("disbursed_at") is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot review a disbursed loan — funds have already been released.",
+        )
+
     if payload.action == "reject":
-        await db_pool.execute(
-            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 WHERE id=$6",
-            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, payload.rejection_reason, app_id
+        _u = await db_pool.execute(
+            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 "
+            "WHERE id=$6 AND status=$7",
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, payload.rejection_reason,
+            app_id, current_status
         )
     else:
-        await db_pool.execute(
-            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4 WHERE id=$5",
-            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, app_id
+        _u = await db_pool.execute(
+            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4 "
+            "WHERE id=$5 AND status=$6",
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, app_id, current_status
         )
+    # Optimistic concurrency, the same guard the bank endpoints use: if someone
+    # else moved the application between our read and our write, do not send the
+    # customer a WhatsApp about a decision that did not land.
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(app_id, current_status, new_status, "admin", uuid.UUID(admin["id"]), payload.notes)
     if payload.action == "approve":
         message = f"Congratulations {app_row['customer_name']}!\n\nYour loan application has been APPROVED.\n\nLoan ID: {app_row['loan_id']}\n\nOur team will contact you within 24 hours.\n\n- Your Bank Name"
@@ -3372,6 +3910,10 @@ async def send_campaign(request: Request):
     if not phone:
         raise HTTPException(status_code=400, detail="Phone number required")
     result = await send_whatsapp_aisensy(phone, customer_name, template_params)
+    await _audit.record_sensitive_access(
+        db_pool, request, actor=_audit.decode_actor(request), action="whatsapp_campaign_sent",
+        entity_type="customer", phone=phone,
+        details={"customer_name": customer_name, "recipients": 1})
     return {"status": "sent", "phone": phone, "aisensy_response": result}
 
 @app.post("/api/send-campaign-bulk")
@@ -3390,6 +3932,10 @@ async def send_campaign_bulk(request: Request):
     for r in rows:
         result = await send_whatsapp_aisensy(phone=r["phone"], customer_name=r["customer_name"], template_params=[r["customer_name"]])
         results.append({"phone": r["phone"], "customer_name": r["customer_name"], "loan_id": r["loan_id"], "status": "sent", "response": result})
+    await _audit.record_sensitive_access(
+        db_pool, request, actor=_audit.decode_actor(request), action="whatsapp_campaign_bulk",
+        entity_type="campaign",
+        details={"recipients": len(results), "loan_ids_filter": len(loan_ids) if loan_ids else "all_drafts"})
     return {"status": "completed", "total_sent": len(results), "results": results}
 
 # ============================================
@@ -4056,10 +4602,9 @@ async def upload_document_session(
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
-    ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
     loan_dir = UPLOAD_DIR / app_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{document_type}_{int(now_utc().timestamp())}.{ext}"
+    filename = safe_upload_filename(document_type, file.filename)
     filepath = loan_dir / filename
     async with aiofiles.open(filepath, 'wb') as f:
         await f.write(file_content)
@@ -4098,6 +4643,11 @@ async def upload_document_session(
 
 @app.post("/api/verify-pan-session")
 async def verify_pan_session(session_token: str, pan_number: str, request: Request):
+    # PAN verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-session_token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("pan_ip", request)
+    _ratelimit.check("pan", session_token)
     session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
     if not session or not session["otp_verified"]:
         raise HTTPException(status_code=401, detail="Invalid or unverified session")
@@ -4230,6 +4780,11 @@ async def report_pan_mismatch(session_token: str, request: Request):
 
 @app.post("/api/verify-aadhaar-session")
 async def verify_aadhaar_session(session_token: str, aadhaar_number: str, request: Request):
+    # AADHAAR verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-session_token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("aadhaar_ip", request)
+    _ratelimit.check("aadhaar", session_token)
     session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
     if not session or not session["otp_verified"]:
         raise HTTPException(status_code=401, detail="Invalid or unverified session")
@@ -4276,6 +4831,7 @@ async def submit_form_session(session_token: str, request: Request):
                 app_row["id"], "draft", "submitted", "customer", app_row["id"],
                 "Form submitted by customer via session", conn=conn
             )
+    await _record_submission_audit(request, dict(app_row), app_row["id"])
     # Guarantor consent call (additive, best-effort — never block submission)
     try:
         from guarantor.trigger import enqueue_guarantor_consent_call

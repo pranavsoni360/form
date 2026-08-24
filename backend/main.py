@@ -1276,6 +1276,14 @@ async def get_current_admin(credentials: HTTPAuthorizationCredentials = Depends(
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # A refresh token carries exactly the same claims as an access token and
+    # differs only by "type". Nothing here checked it, so a refresh token was a
+    # valid API credential for its full REFRESH_TOKEN_HOURS life AND survived
+    # logout: /api/auth/logout deletes the refresh_tokens row, but the JWT
+    # itself still verifies. Deny "refresh" explicitly rather than requiring
+    # "access", so legacy tokens minted without a "type" claim keep working.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
     if payload.get("user_type") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE id = $1 AND is_active = true", uuid.UUID(payload["user_id"]))
@@ -1291,6 +1299,9 @@ async def get_current_bank_user(credentials: HTTPAuthorizationCredentials = Depe
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # Not an API credential — see get_current_admin.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
     if payload.get("user_type") != "bank_user":
         raise HTTPException(status_code=403, detail="Bank user access required")
     row = await db_pool.fetchrow("SELECT * FROM bank_users WHERE id = $1 AND is_active = true", uuid.UUID(payload["user_id"]))
@@ -1804,6 +1815,9 @@ async def auth_me(credentials: HTTPAuthorizationCredentials = Depends(security))
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    # Not an API credential — see get_current_admin.
+    if payload.get("type") == "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token cannot be used for API access")
 
     user_type = payload.get("user_type")
     if user_type == "admin":

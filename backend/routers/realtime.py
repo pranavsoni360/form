@@ -84,6 +84,9 @@ async def issue_stream_token(
         raise HTTPException(401, "access token expired")
     except Exception:
         raise HTTPException(401, "invalid access token")
+    # A refresh token would otherwise be exchangeable for an SSE stream token.
+    if access.get("type") == "refresh":
+        raise HTTPException(401, "refresh token cannot be exchanged for a stream token")
 
     user_id = access.get("user_id")
     user_type = access.get("user_type")

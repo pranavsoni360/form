@@ -109,6 +109,9 @@ async def get_bank_admin(
         raise HTTPException(401, "Token expired")
     except Exception:
         raise HTTPException(401, "Invalid token")
+    # Not an API credential — see main.get_current_admin.
+    if payload.get("type") == "refresh":
+        raise HTTPException(401, "Refresh token cannot be used for API access")
     if payload.get("user_type") != "bank_user":
         raise HTTPException(403, "Bank user access required")
     row = await _db().fetchrow(

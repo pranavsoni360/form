@@ -1140,6 +1140,9 @@ async def usage_export(
     admin: dict = Depends(get_bank_admin),
 ):
     """CSV export of the bank's calls for the period (stdlib csv, no pandas)."""
+    # A full usage CSV for the bank - throttle repeated pulls per admin.
+    from services import ratelimit as _ratelimit
+    _ratelimit.check("export", str(admin.get("id") or "unknown"))
     import csv
     import io
     from fastapi.responses import StreamingResponse

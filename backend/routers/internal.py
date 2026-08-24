@@ -42,7 +42,6 @@ import logging
 import os
 import time
 import uuid
-from collections import deque
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -193,25 +192,16 @@ _browser_security = HTTPBearer(auto_error=False)
 # Anonymous browser errors are accepted on purpose (a crash on the login page
 # would otherwise be lost), but that also means any internet client can inject
 # arbitrary exc_type / message / trace rows straight into the operator error
-# console — with nothing to stop it drowning out a real incident. Cap the
-# anonymous path per source IP with a small in-process bucket: no dependency,
-# no schema, and losing the counters on restart is fine for an abuse guard.
-_ANON_MAX_PER_MIN = int(os.getenv("FRONTEND_ERROR_ANON_PER_MIN", "10"))
-_ANON_TRACKED_IPS = 5000
-_anon_hits: dict[str, deque] = {}
+# console - with nothing to stop it drowning out a real incident. Capped per
+# source IP by the shared limiter (bucket "frontend_error", tunable with
+# RATELIMIT_FRONTEND_ERROR). Kept as a named wrapper so the call site reads as
+# intent rather than plumbing.
 
 
 def _anon_rate_ok(ip: str) -> bool:
-    now = time.time()
-    if len(_anon_hits) > _ANON_TRACKED_IPS:
-        _anon_hits.clear()  # crude, but keeps the dict bounded
-    q = _anon_hits.setdefault(ip, deque())
-    while q and q[0] < now - 60:
-        q.popleft()
-    if len(q) >= _ANON_MAX_PER_MIN:
-        return False
-    q.append(now)
-    return True
+    from services import ratelimit as _ratelimit
+
+    return _ratelimit.allow("frontend_error", ip)
 
 
 

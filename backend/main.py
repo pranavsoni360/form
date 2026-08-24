@@ -187,6 +187,7 @@ async def restrict_internal_paths(request: Request, call_next):
 # Best-effort: a logging failure never affects the response.
 from services import audit as _audit  # noqa: E402
 from services import security_events as _secev  # noqa: E402
+from services import ratelimit as _ratelimit  # noqa: E402
 
 
 @app.middleware("http")
@@ -1641,6 +1642,9 @@ async def _record_login_audit(*, actor_type, actor_id, username, role, success,
 @app.post("/api/auth/admin-login")
 async def auth_admin_login(payload: AdminLogin, request: Request):
     """Super admin login. Sets httpOnly refresh cookie. Rejects bank users."""
+    # Per-IP cap alongside the per-username lockout: credential stuffing
+    # across many usernames from one host was otherwise unbounded.
+    _ratelimit.check_request("login_ip", request)
     await _check_lockout(payload.email)
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
@@ -1688,6 +1692,9 @@ async def auth_admin_login(payload: AdminLogin, request: Request):
 @app.post("/api/auth/bank-login")
 async def auth_bank_login(payload: BankLogin, request: Request):
     """Bank user login. Sets httpOnly refresh cookie. Rejects admin users."""
+    # Per-IP cap alongside the per-username lockout: credential stuffing
+    # across many usernames from one host was otherwise unbounded.
+    _ratelimit.check_request("login_ip", request)
     await _check_lockout(payload.username)
     row = await db_pool.fetchrow("SELECT * FROM bank_users WHERE username = $1", payload.username)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
@@ -2185,6 +2192,8 @@ async def admin_login(payload: AdminLogin, request: Request):
 
     Recommended follow-up: delete this route once the doc examples are updated.
     """
+    # Same per-IP cap as the primary login path.
+    _ratelimit.check_request("login_ip", request)
     await _check_lockout(payload.email)
     row = await db_pool.fetchrow("SELECT * FROM admin_users WHERE email = $1", payload.email)
     if not row or not bcrypt.checkpw(payload.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
@@ -3249,6 +3258,11 @@ async def autosave_form(payload: FormStepData, request: Request):
 
 @app.post("/api/verify-pan")
 async def verify_pan(token: str, pan_number: str, request: Request):
+    # PAN verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("pan_ip", request)
+    _ratelimit.check("pan", token)
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
@@ -3294,6 +3308,11 @@ async def verify_pan(token: str, pan_number: str, request: Request):
 
 @app.post("/api/verify-aadhaar")
 async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
+    # AADHAAR verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("aadhaar_ip", request)
+    _ratelimit.check("aadhaar", token)
     token_row = await db_pool.fetchrow("SELECT * FROM form_tokens WHERE token = $1", token)
     if not token_row:
         raise HTTPException(status_code=404, detail="Invalid token")
@@ -3323,6 +3342,9 @@ async def verify_aadhaar(token: str, aadhaar_number: str, request: Request):
 @app.post("/api/aadhaar-link")
 async def generate_aadhaar_link(request: Request):
     """Step 1: Generate DigiLocker OAuth link. User clicks this to authenticate with Aadhaar."""
+    # Paid DigiLocker call. IP-only: the body (and so the token) is not
+    # parsed yet at this point.
+    _ratelimit.check_request("aadhaar_ip", request)
     data = await request.json()
     token = data.get('token') or data.get('session_token')
     aadhaar_number = data.get('aadhaar_number', '')
@@ -3378,6 +3400,9 @@ async def generate_aadhaar_link(request: Request):
 @app.post("/api/aadhaar-documents")
 async def fetch_aadhaar_documents(request: Request):
     """Step 2: After customer completes DigiLocker auth, fetch available documents."""
+    # Paid DigiLocker call. IP-only: the body (and so the token) is not
+    # parsed yet at this point.
+    _ratelimit.check_request("aadhaar_ip", request)
     data = await request.json()
     token = data.get('token') or data.get('session_token')
     request_id = data.get('request_id')
@@ -3417,6 +3442,9 @@ async def fetch_aadhaar_documents(request: Request):
 @app.post("/api/aadhaar-download")
 async def download_aadhaar(request: Request):
     """Step 3: Download and parse Aadhaar from DigiLocker. Auto-fills form fields."""
+    # Paid DigiLocker call. IP-only: the body (and so the token) is not
+    # parsed yet at this point.
+    _ratelimit.check_request("aadhaar_ip", request)
     data = await request.json()
     token = data.get('token') or data.get('session_token')
     request_id = data.get('request_id')
@@ -4599,6 +4627,11 @@ async def upload_document_session(
 
 @app.post("/api/verify-pan-session")
 async def verify_pan_session(session_token: str, pan_number: str, request: Request):
+    # PAN verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-session_token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("pan_ip", request)
+    _ratelimit.check("pan", session_token)
     session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
     if not session or not session["otp_verified"]:
         raise HTTPException(status_code=401, detail="Invalid or unverified session")
@@ -4731,6 +4764,11 @@ async def report_pan_mismatch(session_token: str, request: Request):
 
 @app.post("/api/verify-aadhaar-session")
 async def verify_aadhaar_session(session_token: str, aadhaar_number: str, request: Request):
+    # AADHAAR verification is a paid vendor call. Loose per-IP cap
+    # (CGNAT shares addresses) plus a tight per-session_token cap, which is the
+    # dimension an abuse loop cannot spread across.
+    _ratelimit.check_request("aadhaar_ip", request)
+    _ratelimit.check("aadhaar", session_token)
     session = await db_pool.fetchrow("SELECT * FROM loan_sessions WHERE session_token = $1", session_token)
     if not session or not session["otp_verified"]:
         raise HTTPException(status_code=401, detail="Invalid or unverified session")

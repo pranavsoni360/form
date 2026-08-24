@@ -22,6 +22,7 @@ from .state import (
 )
 
 from services import audit as _audit
+from services import ratelimit as _ratelimit
 
 logger = logging.getLogger("agent-calls")
 router = APIRouter()
@@ -686,6 +687,9 @@ async def export_daily_report(
     user: dict = Depends(get_current_bank_user),
 ):
     """Export daily report as Excel."""
+    # A full export of the bank's call records in one request - throttle
+    # repeated pulls per user.
+    _ratelimit.check("export", str(user.get("user_id") or "unknown"))
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
     await _audit.record_sensitive_access(
         _state.db_pool, request, actor=_audit.decode_actor(request), action="export_daily_report",
@@ -751,6 +755,9 @@ async def export_all_calls(
     user: dict = Depends(get_current_bank_user),
 ):
     """Comprehensive Excel export with all call data (bank-scoped for bank users)."""
+    # A full export of the bank's call records in one request - throttle
+    # repeated pulls per user.
+    _ratelimit.check("export", str(user.get("user_id") or "unknown"))
     conditions: list = []
     params: list = []
     idx = 1

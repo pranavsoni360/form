@@ -32,52 +32,59 @@ from routers import internal as internal_mod  # noqa: E402
 
 
 # -- anonymous ingest rate limit -------------------------------------------
+# The ad-hoc counter that used to live in internal.py now delegates to
+# services/ratelimit.py, so these assert the wiring; the limiter's own
+# behaviour is covered in tests/test_ratelimit.py.
+
+from services import ratelimit as ratelimit_mod  # noqa: E402
+
 
 @pytest.fixture(autouse=True)
 def clean_buckets():
-    internal_mod._anon_hits.clear()
+    ratelimit_mod.reset()
     yield
-    internal_mod._anon_hits.clear()
+    ratelimit_mod.reset()
+
+
+def _cap():
+    return ratelimit_mod._limit_for("frontend_error")[0]
 
 
 def test_first_reports_from_an_ip_are_accepted():
-    for _ in range(internal_mod._ANON_MAX_PER_MIN):
+    for _ in range(_cap()):
         assert internal_mod._anon_rate_ok("203.0.113.7") is True
 
 
 def test_the_next_report_from_that_ip_is_refused():
     ip = "203.0.113.7"
-    for _ in range(internal_mod._ANON_MAX_PER_MIN):
+    for _ in range(_cap()):
         internal_mod._anon_rate_ok(ip)
     assert internal_mod._anon_rate_ok(ip) is False
 
 
 def test_one_noisy_ip_does_not_block_another():
     noisy, quiet = "203.0.113.7", "198.51.100.4"
-    for _ in range(internal_mod._ANON_MAX_PER_MIN + 5):
+    for _ in range(_cap() + 5):
         internal_mod._anon_rate_ok(noisy)
     assert internal_mod._anon_rate_ok(quiet) is True
 
 
-def test_the_window_slides(monkeypatch):
-    ip = "203.0.113.7"
-    t = [1_000_000.0]
-    monkeypatch.setattr(internal_mod.time, "time", lambda: t[0])
-    for _ in range(internal_mod._ANON_MAX_PER_MIN):
-        internal_mod._anon_rate_ok(ip)
-    assert internal_mod._anon_rate_ok(ip) is False
-    t[0] += 61  # past the 60s window
-    assert internal_mod._anon_rate_ok(ip) is True
+def test_the_wrapper_really_delegates(monkeypatch):
+    """A second private counter inside internal.py would silently diverge from
+    the shared limits, so pin that the wrapper is a pass-through."""
+    seen = []
 
+    def _fake(bucket, key):
+        seen.append((bucket, key))
+        return False
 
-def test_the_tracking_dict_stays_bounded():
-    for i in range(internal_mod._ANON_TRACKED_IPS + 50):
-        internal_mod._anon_rate_ok(f"10.0.{i // 256}.{i % 256}")
-    assert len(internal_mod._anon_hits) <= internal_mod._ANON_TRACKED_IPS + 1
+    monkeypatch.setattr(ratelimit_mod, "allow", _fake)
+    assert internal_mod._anon_rate_ok("1.1.1.1") is False
+    assert seen == [("frontend_error", "1.1.1.1")]
 
 
 def test_the_hmac_ingest_is_unaffected():
-    """/api/internal/errors keeps its own signed path — no anonymous branch."""
+    """/api/internal/errors keeps its own signed path - no anonymous branch."""
     assert "agent" in internal_mod.VALID_SOURCES
     assert internal_mod.VALID_LEVELS == frozenset({"error", "warning"})
 

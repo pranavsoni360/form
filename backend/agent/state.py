@@ -151,6 +151,19 @@ def _coerce_bank_uuid(bank_id):
         return None
 
 
+def _rows_affected(result: str) -> int:
+    """Row count out of an asyncpg command tag ("UPDATE 3" -> 3).
+
+    main.py has its own copy; the agent modules deliberately do not import main
+    (circular). Used to turn a no-op UPDATE into a 404 instead of a false
+    "updated" response.
+    """
+    try:
+        return int((result or "").split()[-1])
+    except (ValueError, IndexError, AttributeError):
+        return 0
+
+
 async def set_emergency_stop(active: bool, bank_id=None, actor: str = None,
                              reason: str = None):
     """Set or clear an emergency stop.
@@ -165,7 +178,6 @@ async def set_emergency_stop(active: bool, bank_id=None, actor: str = None,
     """
     if bank_id is None:
         global _emergency_stop
-        _emergency_stop = active
         try:
             await db_pool.execute(
                 """INSERT INTO agent_system_config (key, value, updated_at)
@@ -173,26 +185,41 @@ async def set_emergency_stop(active: bool, bank_id=None, actor: str = None,
                    ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = $2""",
                 "true" if active else "false", now_ist(),
             )
-        except Exception as e:
-            logger.error(f"Failed to persist platform emergency_stop: {e}")
+        except Exception:
+            # RAISE, do not log-and-continue. A kill switch that reports success
+            # while failing to persist is worse than no kill switch: the operator
+            # believes calling stopped and it did not. The caller turns this into
+            # a 503 that says so.
+            logger.exception("Failed to persist the platform emergency_stop")
+            raise
+        _emergency_stop = active
         return
 
     bank_uuid = _coerce_bank_uuid(bank_id)
     if bank_uuid is None:
-        logger.error("set_emergency_stop: unusable bank_id %r", bank_id)
-        return
+        raise ValueError(f"set_emergency_stop: unusable bank_id {bank_id!r}")
     try:
-        await db_pool.execute(
+        # The ::casts are load-bearing. Inside `CASE WHEN $1 THEN $2 ELSE NULL
+        # END` Postgres has no column to infer $2/$4 from and defaults them to
+        # text, so the write failed with "column emergency_stopped_at is of type
+        # timestamp with time zone but expression is of type text" — and while
+        # this block swallowed it, the endpoint still answered 200 "stopped".
+        res = await db_pool.execute(
             """UPDATE banks
                   SET calling_emergency_stopped = $1,
-                      emergency_stopped_at      = CASE WHEN $1 THEN $2 ELSE NULL END,
-                      emergency_stopped_by      = $3,
-                      emergency_stop_reason     = CASE WHEN $1 THEN $4 ELSE NULL END
+                      emergency_stopped_at      = CASE WHEN $1 THEN $2::timestamptz ELSE NULL END,
+                      emergency_stopped_by      = $3::varchar,
+                      emergency_stop_reason     = CASE WHEN $1 THEN $4::text ELSE NULL END
                 WHERE id = $5""",
             active, now_ist(), actor, reason, bank_uuid,
         )
-    except Exception as e:
-        logger.error(f"Failed to persist emergency_stop for bank {bank_uuid}: {e}")
+    except Exception:
+        logger.exception("Failed to persist emergency_stop for bank %s", bank_uuid)
+        raise
+    if _rows_affected(res) == 0:
+        # No such bank. Silently doing nothing here would report a stop that is
+        # not in force anywhere.
+        raise ValueError(f"set_emergency_stop: no bank {bank_uuid}")
 
 
 async def is_emergency_stop_active(bank_id=None) -> bool:
@@ -587,19 +614,6 @@ async def get_current_bank_user(
         }
 
     raise HTTPException(status_code=403, detail="Bank user or operator access required")
-
-
-def _rows_affected(result: str) -> int:
-    """Row count out of an asyncpg command tag ("UPDATE 3" -> 3).
-
-    main.py has its own copy; the agent modules deliberately do not import main
-    (circular). Used to turn a no-op UPDATE into a 404 instead of a false
-    "updated" response.
-    """
-    try:
-        return int((result or "").split()[-1])
-    except (ValueError, IndexError, AttributeError):
-        return 0
 
 
 def _bank_uuid(user: dict):

@@ -185,9 +185,12 @@ def test_clearing_a_bank_wipes_the_reason(monkeypatch):
     assert args[0] is False
 
 
-def test_an_unusable_bank_id_writes_nothing(monkeypatch):
+def test_an_unusable_bank_id_writes_nothing_and_raises(monkeypatch):
+    """It used to log and return, so the endpoint answered 200 "stopped" while
+    nothing had been written anywhere."""
     pool = _install(monkeypatch, _Pool())
-    asyncio.run(state_mod.set_emergency_stop(True, bank_id="nope"))
+    with pytest.raises(ValueError):
+        asyncio.run(state_mod.set_emergency_stop(True, bank_id="nope"))
     assert pool.statements == []
 
 
@@ -373,3 +376,87 @@ def test_status_reports_outside_hours_when_nothing_is_stopped(monkeypatch):
     monkeypatch.setattr(batch_mod, "is_within_calling_hours", lambda: False)
     out = asyncio.run(batch_mod.batch_status(user=_officer(BANK_A)))
     assert out["blocked_reason"] == "outside_calling_hours"
+
+# =====================================================================
+# A failed persist must never be reported as a stop
+# =====================================================================
+# The first live run of this feature returned 200 {"scope":"bank"} while the
+# UPDATE was failing every time: inside `CASE WHEN $1 THEN $2 ELSE NULL END`
+# Postgres has no column to infer $2 from and defaults it to text, so it raised
+# "column emergency_stopped_at is of type timestamp with time zone but
+# expression is of type text" - and the except block logged and continued. A
+# kill switch that reports success without persisting is worse than none.
+# The fake pool here cannot type-check SQL, which is exactly why these tests
+# assert the SHAPE of the statement and the failure behaviour instead.
+
+
+class _BoomOnUpdate(_Pool):
+    async def execute(self, sql, *args):
+        self.statements.append((sql, args))
+        if "UPDATE banks" in sql or "agent_system_config" in sql:
+            raise RuntimeError("column ... is of type timestamp ... expression is of type text")
+        return "UPDATE 0"
+
+
+class _NoSuchBank(_Pool):
+    async def execute(self, sql, *args):
+        self.statements.append((sql, args))
+        return "UPDATE 0"
+
+
+def test_the_timestamp_parameter_is_cast(monkeypatch):
+    """Without ::timestamptz Postgres infers text and the write fails."""
+    pool = _install(monkeypatch, _Pool())
+    asyncio.run(state_mod.set_emergency_stop(True, bank_id=BANK_A, actor="u", reason="r"))
+    sql = [s for s, _ in pool.statements if "UPDATE banks" in s][0]
+    assert "$2::timestamptz" in sql, "the CASE timestamp parameter is uncast again"
+    assert "$4::text" in sql, "the CASE reason parameter is uncast again"
+
+
+def test_a_failed_bank_persist_raises(monkeypatch):
+    _install(monkeypatch, _BoomOnUpdate())
+    with pytest.raises(Exception):
+        asyncio.run(state_mod.set_emergency_stop(True, bank_id=BANK_A))
+
+
+def test_a_failed_platform_persist_raises(monkeypatch):
+    _install(monkeypatch, _BoomOnUpdate())
+    with pytest.raises(Exception):
+        asyncio.run(state_mod.set_emergency_stop(True))
+
+
+def test_a_failed_platform_persist_leaves_the_cached_flag_alone(monkeypatch):
+    """Setting the in-memory flag before the write succeeded would make the
+    process believe it had stopped."""
+    _install(monkeypatch, _BoomOnUpdate())
+    monkeypatch.setattr(state_mod, "_emergency_stop", False)
+    with pytest.raises(Exception):
+        asyncio.run(state_mod.set_emergency_stop(True))
+    assert state_mod._emergency_stop is False
+
+
+def test_an_unknown_bank_raises_rather_than_silently_doing_nothing(monkeypatch):
+    _install(monkeypatch, _NoSuchBank())
+    with pytest.raises(ValueError):
+        asyncio.run(state_mod.set_emergency_stop(True, bank_id=BANK_A))
+
+
+def test_an_unusable_bank_id_raises(monkeypatch):
+    _install(monkeypatch, _Pool())
+    with pytest.raises(ValueError):
+        asyncio.run(state_mod.set_emergency_stop(True, bank_id="nope"))
+
+
+def test_the_stop_endpoint_reports_503_when_the_switch_did_not_persist(monkeypatch, no_livekit):
+    _install(monkeypatch, _BoomOnUpdate())
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(batch_mod.emergency_stop(reason=None, user=_officer(BANK_A)))
+    assert e.value.status_code == 503
+    assert "NOT stopped" in str(e.value.detail)
+
+
+def test_the_resume_endpoint_reports_503_when_it_could_not_clear(monkeypatch):
+    _install(monkeypatch, _BoomOnUpdate())
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(batch_mod.resume_calling(bank_id=None, user=_officer(BANK_A)))
+    assert e.value.status_code == 503

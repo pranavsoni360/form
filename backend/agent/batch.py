@@ -998,8 +998,16 @@ async def trigger_batch(
                        "resumed from a bank account.",
             )
         if _stop_state["bank_stopped"]:
-            await set_emergency_stop(False, bank_id=bank_uuid,
-                                     actor=str(user.get("user_id") or ""))
+            try:
+                await set_emergency_stop(False, bank_id=bank_uuid,
+                                         actor=str(user.get("user_id") or ""))
+            except Exception:
+                logger.exception("batch-call could not clear the stop for bank %s", bank_uuid)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Could not clear this bank's emergency stop — the batch would not "
+                           "dial. Please retry.",
+                )
 
     batch_row = await _fetch_batch_scoped(
         batch_id, bank_uuid, statuses=("pending", "running", "paused"),
@@ -1229,7 +1237,17 @@ async def emergency_stop(
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (platform scope)
     actor = str(user.get("user_id") or "")
     scope = "PLATFORM" if bank_uuid is None else f"bank {bank_uuid}"
-    await set_emergency_stop(True, bank_id=bank_uuid, actor=actor, reason=reason)
+    try:
+        await set_emergency_stop(True, bank_id=bank_uuid, actor=actor, reason=reason)
+    except Exception:
+        # Tell the caller plainly. Returning success here would leave someone
+        # believing calling had stopped when the switch never persisted.
+        logger.exception("emergency-stop could not be persisted (%s)", scope)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not record the emergency stop — calling was NOT stopped. "
+                   "Please retry; if it keeps failing, stop the affected batches individually.",
+        )
     logger.warning("EMERGENCY STOP activated (%s) by %s reason=%r", scope, actor, reason)
 
     # 2. Signal in-flight dispatchers to stop picking up / waiting for work.
@@ -1333,7 +1351,12 @@ async def resume_calling(
                 raise HTTPException(status_code=400, detail="Invalid bank_id.")
             if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", target):
                 raise HTTPException(status_code=404, detail="Bank not found.")
-        await set_emergency_stop(False, bank_id=target, actor=actor)
+        try:
+            await set_emergency_stop(False, bank_id=target, actor=actor)
+        except Exception:
+            logger.exception("resume could not be persisted (operator)")
+            raise HTTPException(status_code=503,
+                                detail="Could not clear the emergency stop — calling is still stopped. Please retry.")
         if target is None:
             res = await _state.db_pool.execute(
                 "UPDATE agent_batches SET status = 'running' WHERE status = 'paused'")
@@ -1351,7 +1374,12 @@ async def resume_calling(
                 detail="Calling is stopped platform-wide by the operator. It cannot be "
                        "resumed from a bank account.",
             )
-        await set_emergency_stop(False, bank_id=caller_bank, actor=actor)
+        try:
+            await set_emergency_stop(False, bank_id=caller_bank, actor=actor)
+        except Exception:
+            logger.exception("resume could not be persisted (bank %s)", caller_bank)
+            raise HTTPException(status_code=503,
+                                detail="Could not clear the emergency stop — calling is still stopped. Please retry.")
         res = await _state.db_pool.execute(
             "UPDATE agent_batches SET status = 'running' WHERE status = 'paused' AND bank_id = $1",
             caller_bank)

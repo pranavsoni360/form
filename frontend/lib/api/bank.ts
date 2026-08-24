@@ -149,3 +149,17 @@ export async function rescoreLRS(token: string, appId: string) {
     headers: authHeaders(token),
   });
 }
+
+// ── Account Aggregator / Statement Upload ──────────
+export async function initiateAAUpload(token: string, appId: string) {
+  return apiFetch(`/api/aa/initiate/${appId}`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+}
+
+export async function checkAAStatus(token: string, appId: string) {
+  return apiFetch(`/api/aa/status/${appId}`, {
+    headers: authHeaders(token),
+  });
+}

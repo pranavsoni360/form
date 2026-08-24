@@ -539,14 +539,29 @@ def _public_record_type(result: dict) -> str:
     return "none"
 
 
+class AcAggregatorBankStmtProvider:
+    """Banking-behaviour pillar, backed by pre-mapped AA / statement-upload inputs.
+
+    The heavy lifting (Generateurl → statuscheck → retrievereport → field mapping)
+    is done by the /api/aa/status route, which stores the result in
+    loan_applications.aa_lrs_inputs (JSONB). This provider simply reads that column
+    and returns it — no API call during scoring, so LRS latency is unaffected.
+    Returns {} when no statement has been collected yet (pillar re-weights).
+    """
+    name = "bankstmt"
+    pillar = "bank_statement"
+
+    async def fetch(self, ctx: FetchContext) -> dict[str, Any]:
+        return dict((ctx.app or {}).get("aa_lrs_inputs") or {})
+
+
 def get_vg_providers() -> list:
     """Real-mode provider bundle. Keeps the 4-provider / 4-pillar shape unchanged:
-    VG adapters where a live endpoint exists; mock for banking_behaviour (no live
-    API in this vendor set yet)."""
-    from lrs.providers.mock import MockBankStmtProvider
+    VG adapters where a live endpoint exists; mock for banking_behaviour replaced
+    by AcAggregatorBankStmtProvider once the customer completes statement upload."""
     return [
-        ExperianBureauProvider(),   # credit_bureau  — Experian Report
-        ITRIncomeProvider(),        # income         — ITR Advance (partial)
-        MockBankStmtProvider(),     # bank_statement — NO live endpoint yet (mock)
-        PanKycProvider(),           # personal_profile — PAN Auth (+DigiLocker later)
+        ExperianBureauProvider(),           # credit_bureau   — Experian Report
+        ITRIncomeProvider(),                # income          — ITR Advance (partial)
+        AcAggregatorBankStmtProvider(),     # bank_statement  — AA/statement upload
+        PanKycProvider(),                   # personal_profile — PAN Auth
     ]

@@ -200,6 +200,28 @@ export default function LoanApplication() {
   };
 
   const [digilockerStep, setDigilockerStep] = useState<'idle' | 'linking' | 'waiting' | 'fetching' | 'done'>('idle');
+  const [aaUploadState, setAaUploadState] = useState<'idle' | 'initiating' | 'polling' | 'complete' | 'failed'>('idle');
+  const [aaUploadError, setAaUploadError] = useState('');
+
+  const handleAAStatementInitiate = async () => {
+    setAaUploadState('initiating');
+    setAaUploadError('');
+    try {
+      const session = getSession();
+      const res = await fetch(`${API_URL}/api/aa-statement-initiate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_token: session }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Could not generate upload link');
+      localStorage.setItem('aa_session_backup', session || '');
+      window.location.href = data.url;
+    } catch (err: any) {
+      setAaUploadError(err.message || 'Could not generate upload link. Please try again.');
+      setAaUploadState('idle');
+    }
+  };
 
   const handleVerifyAadhaar = async () => {
     setAadhaarVerifying(true);
@@ -312,6 +334,13 @@ export default function LoanApplication() {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('digilocker') === 'success') {
         const backup = localStorage.getItem('digilocker_session_backup');
+        if (backup) {
+          sessionStorage.setItem('loan_session', backup);
+          session = backup;
+        }
+      }
+      if (!session && urlParams.get('aa_complete') === '1') {
+        const backup = localStorage.getItem('aa_session_backup');
         if (backup) {
           sessionStorage.setItem('loan_session', backup);
           session = backup;
@@ -493,6 +522,39 @@ export default function LoanApplication() {
         setDigilockerStep('idle');
       } finally {
         setAadhaarVerifying(false);
+      }
+    })();
+  }, [appData]);
+
+  // Detect return from AA statement upload redirect
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('aa_complete') !== '1' || !appData) return;
+    const session = getSession();
+    if (!session) return;
+
+    localStorage.removeItem('aa_session_backup');
+
+    setAaUploadState('polling');
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/aa-statement-status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_token: session }),
+        });
+        const data = await res.json();
+        if (data.status === 'complete') {
+          onChange('bank_statements_url', 'verified_via_aa');
+          setAaUploadState('complete');
+        } else if (data.status === 'failed') {
+          setAaUploadState('failed');
+          setAaUploadError('Bank statement processing failed. Please try again.');
+        } else {
+          setAaUploadState('idle');
+        }
+      } catch {
+        setAaUploadState('idle');
       }
     })();
   }, [appData]);
@@ -1834,12 +1896,63 @@ export default function LoanApplication() {
               <SectionTitle icon="DOC" color="#DC2626" title="Document Upload" />
               <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · PDF / JPG / PNG accepted</p>
               <div className="space-y-3">
+                {/* ── Bank Statement via Account Aggregator ─────────────────────────── */}
+                <div>
+                  <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${(formData.bank_statements_url === 'verified_via_aa' || aaUploadState === 'complete') ? 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section' : 'border-blue-200 dark:border-blue-800/40 bg-blue-50/30 dark:bg-dark-section'}`}>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                        Bank Statements (Last 6 months) <span className="text-red-500">*</span>
+                      </p>
+                      {(formData.bank_statements_url === 'verified_via_aa' || aaUploadState === 'complete') ? (
+                        <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
+                          <CheckCircle2 className="w-3 h-3" />Verified via Account Aggregator
+                        </p>
+                      ) : aaUploadState === 'polling' ? (
+                        <p className="text-xs text-blue-500 mt-1">Processing your bank statement…</p>
+                      ) : aaUploadState === 'initiating' ? (
+                        <p className="text-xs text-blue-500 mt-1">Generating secure upload link…</p>
+                      ) : (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Upload securely via Account Aggregator — last 6 months fetched automatically
+                        </p>
+                      )}
+                      {aaUploadError && (
+                        <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />{aaUploadError}
+                        </p>
+                      )}
+                    </div>
+                    {(formData.bank_statements_url === 'verified_via_aa' || aaUploadState === 'complete') ? (
+                      <button
+                        type="button"
+                        onClick={() => { onChange('bank_statements_url', ''); setAaUploadState('idle'); setAaUploadError(''); }}
+                        className="ml-3 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition"
+                      >
+                        Re-upload
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleAAStatementInitiate}
+                        disabled={aaUploadState === 'initiating' || aaUploadState === 'polling'}
+                        className="ml-3 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition"
+                      >
+                        {aaUploadState === 'initiating' ? 'Connecting…' : aaUploadState === 'polling' ? 'Processing…' : 'Upload via AA'}
+                      </button>
+                    )}
+                  </div>
+                  {errors.bank_statements_url && (
+                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />{errors.bank_statements_url}
+                    </p>
+                  )}
+                </div>
+
                 {[
                   { key: 'aadhaar_front_url', label: 'Aadhaar Document', required: true },
                   { key: 'photo_url', label: 'Passport Size Photo', required: true },
                   { key: 'salary_slips_url', label: 'Salary Slips (Last 3 months)', required: true },
                   { key: 'itr_form16_url', label: 'ITR / Form 16', required: false },
-                  { key: 'bank_statements_url', label: 'Bank Statements (Last 6 months)', required: true },
                   { key: 'proof_of_identification_url', label: 'Proof of Identification', required: false },
                   { key: 'proof_of_residence_url', label: 'Proof of Residence', required: false },
                   ...((formData.consumer_loan_type || 'personal') === 'consumer_durable'

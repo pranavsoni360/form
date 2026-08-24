@@ -47,6 +47,7 @@ import {
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
 import { AssignVendorPanel } from '@/components/bank/AssignVendorPanel';
 import { LRSScorePanel } from '@/components/bank/LRSScorePanel';
+import { BankStatementPanel } from '@/components/bank/BankStatementPanel';
 import { BankUserShell } from '../../_shell/BankUserShell';
 import {
   Toolbar,
@@ -520,6 +521,12 @@ export default function ApplicationDetailPage() {
             <Card>
               <CardHeader title="Documents" qualifier={`${docsUploaded} of ${docs.length} uploaded`} />
               {docs.map(d => <DocRow key={d.label} label={d.label} url={d.url} />)}
+              <BankStatementPanel
+                token={token}
+                applicationId={appId}
+                app={app}
+                onRefresh={fetchDetail}
+              />
             </Card>
           </div>
         )}

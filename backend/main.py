@@ -247,6 +247,10 @@ app.include_router(guarantor_router, prefix="/api/guarantor", tags=["guarantor"]
 from lrs.routes import router as lrs_router  # noqa: E402
 app.include_router(lrs_router, prefix="/api/lrs", tags=["lrs"])
 
+# AA / bank statement upload endpoints
+from lrs.aa_routes import router as aa_router  # noqa: E402
+app.include_router(aa_router, prefix="/api/aa", tags=["aa"])
+
 # Bank admin portal — self-serve, bank-scoped (design_handoff_finix Job 1).
 # Schema in migration_v26_bank_admin.sql; JWTs are the standard bank_user token
 # and the local get_bank_admin dependency requires role='bank_admin'.
@@ -3678,6 +3682,190 @@ async def download_aadhaar(request: Request):
         raise HTTPException(status_code=504, detail="DigiLocker download timed out. Please try again.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DigiLocker Download Error: {repr(e)}")
+
+
+# ── Account Aggregator / Bank Statement Upload (customer-facing) ──────────────
+# Same session-token auth pattern as DigiLocker above. The AA base URL is
+# derived from VG_API_BASE by swapping VGKVerify.asmx → AcAggregator.asmx.
+
+def _aa_base_url() -> str:
+    return VG_API_BASE.replace("VGKVerify.asmx", "AcAggregator.asmx")
+
+
+async def _aa_post(endpoint: str, obj: dict) -> dict:
+    """POST to AcAggregator.asmx/<endpoint> and return parsed JSON.
+
+    Uses _parse_lenient_json (raw_decode) instead of parse_vg_response (split on }{)
+    because the retrievereport payload may contain }{ inside string values.
+    """
+    from lrs.providers.vg_docverify import _parse_lenient_json as _aa_parse
+    url = f"{_aa_base_url()}/{endpoint}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, json={"obj": obj})
+    resp.raise_for_status()
+    return _aa_parse(resp.text)
+
+
+@app.post("/api/aa-statement-initiate")
+async def aa_statement_initiate(request: Request):
+    """Generate a bank-statement upload link for the customer (statementupload flow).
+
+    Called during form Step 5 (Documents). Returns the VG-hosted upload URL
+    so the customer can complete the upload on their own device.
+    """
+    data = await request.json()
+    token = data.get("session_token") or data.get("token")
+    if not token:
+        raise HTTPException(status_code=400, detail="session_token required")
+
+    row, application_id = await resolve_token_or_session(token)
+    if not application_id:
+        raise HTTPException(status_code=400, detail="Invalid session")
+
+    today = datetime.now()
+    y, m = today.year, today.month
+    sm = m - 6
+    sy = y
+    if sm <= 0:
+        sm += 12
+        sy -= 1
+    start_month = f"{sy:04d}-{sm:02d}"
+    end_month = f"{y:04d}-{m:02d}"
+
+    return_url = f"{FORM_BASE_URL}/loan-form/application?aa_complete=1"
+    callback_url = os.getenv(
+        "AA_CALLBACK_URL",
+        "http://galaxypay.in:9002/VGDocverify/VGIL_TxnCallback.aspx",
+    )
+
+    if VG_MOCK_MODE:
+        mock_req_id = "mock_aa_req"
+        await db_pool.execute(
+            "UPDATE loan_applications SET aa_request_id = $1, aa_initiated_at = NOW() WHERE id = $2",
+            mock_req_id, application_id,
+        )
+        return {"url": return_url, "request_id": mock_req_id, "mock": True}
+
+    try:
+        result = await _aa_post("Generateurl", {
+            "txn_completed_cburl": callback_url,
+            "start_month": start_month,
+            "end_month": end_month,
+            "institution_id": "",
+            "destination": "statementupload",
+            "return_url": return_url,
+            "acceptance_policy": "atLeastOneTransactionInRange",
+            "relaxation_days": "0",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach statement service: {e}")
+
+    if result.get("status") != "success":
+        raise HTTPException(status_code=502, detail="Statement service error")
+
+    request_id = str(result["request_id"])
+    await db_pool.execute(
+        "UPDATE loan_applications SET aa_request_id = $1, aa_initiated_at = NOW() WHERE id = $2",
+        request_id, application_id,
+    )
+
+    return {"url": result["url"], "request_id": request_id, "expires": result.get("expires")}
+
+
+@app.post("/api/aa-statement-status")
+async def aa_statement_status_check(request: Request):
+    """Poll statement upload status and, if complete, retrieve + store the analysis.
+
+    Called after the customer returns from the VG upload portal. Maps
+    analysis_data.Overall → aa_lrs_inputs and marks bank_statements_url as verified.
+    """
+    data = await request.json()
+    token = data.get("session_token") or data.get("token")
+    if not token:
+        raise HTTPException(status_code=400, detail="session_token required")
+
+    row, application_id = await resolve_token_or_session(token)
+    if not application_id:
+        raise HTTPException(status_code=400, detail="Invalid session")
+
+    app_row = await db_pool.fetchrow(
+        "SELECT aa_request_id, aa_txn_id, aa_completed_at, monthly_net_income, monthly_gross_income "
+        "FROM loan_applications WHERE id = $1",
+        application_id,
+    )
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # Already processed
+    if app_row["aa_txn_id"] and app_row["aa_completed_at"]:
+        return {"status": "complete"}
+
+    if not app_row["aa_request_id"]:
+        return {"status": "not_initiated"}
+
+    if VG_MOCK_MODE:
+        mock_mapped = {
+            "net_monthly_income": float(app_row["monthly_net_income"] or 0),
+            "amb_pct_of_nmi": 75.0,
+            "net_cash_flow": 15000.0,
+            "surplus_income_ratio": 30.0,
+            "otp_ratio_pct": 95.0,
+            "missed_payment_ratio": 0.05,
+            "penalty_count": 0,
+            "employment_type": "salaried_private_small",
+        }
+        await db_pool.execute(
+            """UPDATE loan_applications
+               SET aa_txn_id = $1, aa_completed_at = NOW(), aa_lrs_inputs = $2::jsonb,
+                   bank_statements_url = 'verified_via_aa'
+             WHERE id = $3""",
+            "mock_txn_id", json.dumps(mock_mapped), application_id,
+        )
+        return {"status": "complete"}
+
+    # Poll statuscheck
+    try:
+        status_data = await _aa_post("statuscheck", {"request_id": app_row["aa_request_id"]})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not check status: {e}")
+
+    txn_statuses = status_data.get("txn_status") or []
+    success_txn = next((t for t in txn_statuses if t.get("status") == "Success"), None)
+
+    if not success_txn:
+        all_failed = bool(txn_statuses) and all(t.get("status") == "Failure" for t in txn_statuses)
+        return {"status": "failed" if all_failed else "pending"}
+
+    txn_id = success_txn["txn_id"]
+
+    # Retrieve and map the report
+    try:
+        report = await _aa_post("retrievereport", {
+            "txn_id": txn_id,
+            "report_type": "json",
+            "report_subtype": "type3",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not retrieve report: {e}")
+
+    from lrs.aa_routes import _map_aa_report
+    mapped = _map_aa_report(report, {
+        "monthly_net_income": app_row["monthly_net_income"],
+        "monthly_gross_income": app_row["monthly_gross_income"],
+    })
+
+    await db_pool.execute(
+        """UPDATE loan_applications
+           SET aa_txn_id       = $1,
+               aa_completed_at = NOW(),
+               aa_lrs_inputs   = $2::jsonb,
+               bank_statements_url = 'verified_via_aa'
+         WHERE id = $3""",
+        txn_id, json.dumps(mapped), application_id,
+    )
+
+    return {"status": "complete"}
+
 
 @app.post("/api/upload-document")
 async def upload_document(token: str = Form(...), document_type: str = Form(...), file: UploadFile = File(...), request: Request = None):

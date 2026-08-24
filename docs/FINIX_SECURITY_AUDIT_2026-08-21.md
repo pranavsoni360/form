@@ -344,6 +344,20 @@ bank-scoped file handler, and a short-lived single-use token for the form.
   A compliance gap once a second bank is live.
 * Branch isolation is enforced only by the audit endpoints. A branch-scoped
   officer still sees the whole bank's pipeline, calls, recordings and exports.
+* **Backend fd limit is the systemd default: soft 1024.** Neither
+  `los-backend` nor `los-backend-qa` sets `LimitNOFILE`. The process holds a
+  40-connection DB pool, a job pool, TLS sockets and one fd per live SSE
+  stream. 1024 is not a lot of headroom. Recommend `LimitNOFILE=65535`.
+* **Postgres `max_connections` is 100, and the two envs can want 96.** Each
+  backend takes a main pool of 40 plus a job pool of 8; prod and QA together
+  are 96 before the web consoles, `psql` sessions and the `qa_tester` role.
+  Under simultaneous load on both, Postgres starts refusing connections.
+  Either raise `max_connections` or lower `DB_POOL_MAX` per env.
+* **One uvicorn process, no `--workers`.** Throughput ceilings at ~220 req/s
+  and a single blocking call stalls every tenant (which is what made the
+  smtplib fix matter). `--workers` cannot simply be switched on: `agent/state.py`
+  keeps the batch and analytics locks as in-process globals, so two workers
+  would dispatch the same batch. Move those locks to the DB first.
 * ~90 ESLint warnings, now that the linter actually runs. The substantive ones:
   a stale-closure in `RealtimeProvider` tears down a healthy SSE connection on
   every tab refocus; `bank/admin/users` fires `navigator.clipboard.writeText`
@@ -353,6 +367,75 @@ bank-scoped file handler, and a short-lived single-use token for the form.
   `admin/dashboard`) swallow fetch failures into an empty state, so an outage
   renders as "no data" — `/ops/errors` in particular shows "everything is quiet"
   during one.
+
+## 7. Verified live on QA
+
+Everything in §2 is deployed to QA and exercised against the running system.
+Commits: `0cc4de8` `30cd25b` `b87ce38` `5bbd273` `8734c6c` `a66e222` `0553d39`
+`f705cde`. **Production is still on the old code.**
+
+### 7.1 Security — 37 live checks, 0 failures
+
+Two temporary officers in two different banks (BUCB, NRCB), removed afterwards.
+
+| Check | Result |
+|---|---|
+| Refresh token as bearer on `/api/auth/me`, `/api/bank/applications`, `/api/agent/calls`, `/api/lrs/config`, `POST /api/realtime/stream-token` | 401 on all five; access token still 200 |
+| BUCB officer reads/rescores an NRCB credit file | 404 both ways, both directions |
+| `rescore-pending` as a BUCB officer | queued **1** = own bank's eligible count, against **8** platform-wide |
+| `/api/ops/errors` as a bank officer | 403 |
+| `/api/ops/phone-pools` as an NRCB officer | 0 of the 2 pools visible (both belong elsewhere), 0 foreign |
+| `/api/ops/in-flight-calls`, `/api/agent/scheduled-callbacks` | 0 foreign rows |
+| `batch-status` as an NRCB officer | reports 0, not the platform's 139 |
+| `PUT /api/lrs/config` as an officer / `GET` as an officer | 403 / 200 |
+| Deactivate a user, reuse the same token | 401 on the agent layer AND the main layer; 200 again after reactivating |
+| Forged token: BUCB user, `bank_id` claim = NRCB | 50 rows returned, **all BUCB**, 0 NRCB — the DB row wins |
+| Legacy `/api/admin/login`, 7 bad attempts | 423 with a `login_attempts` row; previously unlimited |
+| 14 anonymous `/api/internal/frontend-error` posts | 429 |
+| Upload `document_type=../../../../tmp/zz_pwn_<ts>` | nothing outside `UPLOAD_DIR`; stored as `____________tmp_zz_pwn_..._<ts>.jpg` inside the loan dir |
+| Upload `payload.html` declared `image/png` | stored as `pan_card_<ts>.bin` |
+| Normal upload (`aadhaar_front`, `.jpg`) | 200, label and extension preserved |
+
+### 7.2 Load — production watched throughout, never touched
+
+`/api/bank/applications`, `/api/agent/calls`, `dashboard-stats`, `batch-status`,
+`/api/lrs/config`, `/api/admin/applications`, `/api/ops/errors`, `/readyz`.
+
+| | 15 concurrent | 60 concurrent (before) | 60 concurrent (after) |
+|---|---|---|---|
+| throughput | 199 req/s | 182 req/s | **222 req/s** |
+| non-2xx | 0 | 0 | 0 |
+| dashboard-stats p50 / p99 | 65 / 384 ms | 842 / 1935 ms | **323 / 592 ms** |
+| batch-status p50 | 27 ms | 611 ms | **264 ms** |
+| peak QA DB connections | 21 | 47 (pool cap 48) | 47 |
+| new `system_errors` | 0 | 0 | 0 |
+| **production `/readyz`** | 200 ×28, p50 2 ms | 200 ×47, p50 2 ms | 200 ×47, p50 3 ms |
+
+`dashboard-stats` was issuing ~29 `COUNT(*)` round trips per request and
+`batch-status` 8; they are now 3 and 1. Responses are byte-identical, checked by
+capturing the old output and diffing after deploy.
+
+SSE fan-out: 20 concurrent streams all opened, all 20 received a published
+event, `/readyz` answered in 8 ms while they were held.
+
+One artefact worth recording so it is not mistaken for a product fault: a run
+showed ~30k `ClientConnectorError`s. The server's listen backlog was empty
+(Recv-Q 0 against a 2048 backlog), TIME_WAIT was 136, and there were zero
+server-side errors — it was the **load generator** hitting its own 1024 fd
+limit. Raised, re-run, zero errors.
+
+### 7.3 Found by watching what the testing itself produced
+
+Two noise sources were reaching the super-admin bell, both fixed in `f705cde`:
+
+* `ClientDisconnect` — a browser navigating away mid-request, or an EventSource
+  closing, took the full error path and raised "Loan system error:
+  ClientDisconnect". It fired on ordinary user behaviour.
+* The agent reporter forwarded LiveKit worker lifecycle lines, which are logged
+  at ERROR on every restart — so **every QA deploy** raised "Calling system
+  error: AgentLog / process exited with non-zero exit code 255". The
+  gpu-error-tailer already skipped those phrases; the in-process reporter now
+  agrees. The following deploy produced zero rows.
 
 ## 6. Recommended order
 

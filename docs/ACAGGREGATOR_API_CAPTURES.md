@@ -452,3 +452,88 @@ unrecognised `status` as still-working remains the right default.
 **Error 088 vs 065:** 065 (wrong bank format) fires inside Digitap's UI and never
 reaches statuscheck. 088 (expired) does reach it. So the fallback sweep is still
 required for 065 — some journeys fail with no server-side signal at all.
+
+---
+
+# Addendum 3 — ProteanCredit / experianreport (credit report), 2026-08-21
+
+The credit-report call is the highest-value unblock in the LRS: **8 scoring
+inputs** across the two heaviest pillars, with **every input already on the
+application form** — no customer action, no consent journey, one call.
+
+## Confirmed request shape (from the live WSDL, not inferred)
+
+`ProteanCredit.asmx?WSDL` declares exactly one method, `experianreport`, taking a
+single `obj` of type `PCrdBo` whose children ARE the parameters:
+
+```xml
+<experianreport xmlns="http://tempuri.org/">
+  <obj>
+    <UserId>33</UserId><VerificationKey>...</VerificationKey>
+    <pan/><firstName/><lastName/><dateOfBirth/><phoneNumber/><pincode/>
+    <APICode/><Bank_Name/><Bank_short_code/><Enter_User_Id/><Enter_Desc/>
+    <Enter_User_Type/><App_Mode/><Request_From/><Device_Id/>
+    <Longitude/><Latitude/><Accuracy/>
+  </obj>
+</experianreport>
+```
+
+Applicant fields (6), all form-sourced: `pan`, `firstName`, `lastName`,
+`dateOfBirth`, `phoneNumber`, `pincode`. `UserId` is typed `s:long` here, unlike
+the JSON endpoints which take it as a string.
+
+## Two bugs this found in our code
+
+**1. The inner element was wrong — twice over.** `_EXPERIAN_ELEM` defaulted to
+`"experian"`, producing `<obj><experian>…</experian></obj>` — an element the
+schema does not define. Correcting it to `"obj"` is the *other* wrong answer,
+because `_soap_envelope()` already hardcodes the `<obj>` wrapper, giving
+`<obj><obj>…</obj></obj>`. The right value is **empty**: parameters must be
+direct children of `<obj>`. `_soap_envelope` now supports that.
+
+**2. Credentials must follow the host.** The file hardcoded the PRODUCTION pair
+(user 25 / VPAY) while pointing at `vpays.in`, so every UAT call returned
+`"For given User 25 API Rights Not Assigned"` — which reads as a provisioning gap
+but is an environment mismatch. Credentials are now derived from the base URL:
+
+| host | UserId | key | bank code |
+|---|---|---|---|
+| `10.200.10.43`, `galaxypay.in` | 33 | `CONV27032026` | VGIL |
+| `vpays.in` | 25 | `COVAI27032026` | VPAY |
+
+An unrecognised host yields empty credentials and a warning, so a new production
+endpoint fails loudly rather than silently using the wrong pair.
+
+## Live result: the call now reaches Experian
+
+```
+HTTP 200
+{"message":"API rate limit exceeded"}<?xml version="1.0"...
+  <experianreportResponse xmlns="http://tempuri.org/" /></soap:Body></soap:Envelope>
+```
+
+This is **progress, not failure** — a schema error would say "Root element is
+missing" and a rights error would name the user. Rate-limiting means the envelope
+was accepted and forwarded to the bureau.
+
+Two things it tells us:
+
+**The double-JSON quirk applies to the SOAP endpoints too.** The rate-limit JSON
+is emitted BEFORE the SOAP envelope, so the body is
+`{...json...}<?xml...?><soap:Envelope>`. `_extract_soap_payload` looks for the
+JSON inside `<...Response>`, which here is EMPTY — so the error is silently
+swallowed and the provider returns `None`, i.e. "applicant has no record". A
+rate-limited call is therefore indistinguishable from a clean miss, and the
+pillar re-weights as if the applicant genuinely has no credit history. **That
+needs fixing before this goes live** — a transient vendor error must raise so the
+job retries, never look like an empty bureau file.
+
+**Experian is rate-limited per account.** Real-PAN testing needs to be
+deliberate, and production needs to handle 429-equivalents.
+
+## Still unconfirmed
+
+The response FIELD NAMES. `_public_record_type()` still carries
+`TODO: confirm exact flag field names from the vendor sample response`, and
+`BureauProvider` digs for `credit_score` / `creditScore` / `score` speculatively.
+One successful real-PAN call would confirm all 8 mappings at once.

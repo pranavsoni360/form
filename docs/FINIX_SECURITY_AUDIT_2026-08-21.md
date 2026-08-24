@@ -512,6 +512,58 @@ succeeds. Zero new backend errors. Spoof proof: a request carrying
 `X-Real-IP: 203.0.113.222` through :8445 now records the real peer.
 
 Backend tests: 138 at the start of this work, **369** now.
+## 9. A3 - per-bank calling isolation (2026-08-24)
+
+Built and verified on QA. Migration **v43** adds
+`banks.calling_emergency_stopped` + `emergency_stopped_at/_by/_reason`.
+
+| Switch | Owner | Scope |
+|---|---|---|
+| `agent_system_config.emergency_stop` | platform operator only | every tenant |
+| `banks.calling_emergency_stopped` | that bank (or an operator on its behalf) | that bank |
+
+A call is blocked if either is set. `banks.calling_paused` is deliberately not
+reused - the billing trigger owns it (`credit_balance <= 0`), and clearing it
+here would let a bank with no credit dial.
+
+What was wrong before: any bank user could set the single global flag, killing
+every tenant's live calls and pausing their batches; `/resume-calling` restarted
+every paused batch including ones another bank had deliberately stopped; and
+`/batch-call` cleared the flag unconditionally, so merely starting a batch
+un-stopped the whole platform.
+
+Scoped end to end: the dispatcher's per-call gate is bound to the batch's bank
+(it already took an injected callable, so the dispatcher itself needed no
+change), the manager gained `stop_bank()`, the batch runner checks the platform
+switch up front and the bank's own once the batch is loaded, the cron auto-chain
+excludes stopped banks from its due-work count, and the guarantor runner skips
+their rows.
+
+### The bug the live test caught
+
+The first live run returned `200 {"scope":"bank"}` while the flag stayed false.
+Inside `CASE WHEN $1 THEN $2 ELSE NULL END` Postgres has no column to infer `$2`
+from and defaults it to text, so every write failed with *column
+emergency_stopped_at is of type timestamp with time zone but expression is of
+type text* - and `set_emergency_stop` logged it and carried on. **A kill switch
+that reports success without persisting is worse than no kill switch.** Fixed
+with explicit `::timestamptz` / `::text` casts, and by raising instead of
+swallowing so every caller turns it into a 503 that says calling was NOT
+stopped. The unit tests passed throughout, because a fake pool cannot type-check
+SQL; they now assert the statement shape and the failure behaviour instead.
+
+### Verified live (35 checks)
+
+The dial gate itself, read straight from the deployed module: `GATE bucb=True`,
+`GATE nrcb=False` with only BUCB stopped. BUCB's flag set, NRCB's untouched, the
+platform switch untouched, `calling_paused` untouched, no other bank's batch
+paused. Resume is scoped the same way. A bank gets a 409 both for resuming past
+the platform switch and for starting a batch while it is on; an operator can
+resume the platform or one named bank. `/batch-status` reports
+`blocked_reason=None` / `bank_emergency_stop` / `platform_emergency_stop` across
+the three states.
+
+Backend tests: **430**.
 ## 6. Recommended order
 
 1. Firewall allowlist (§5.1) — planned, with rollback.

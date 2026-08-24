@@ -734,7 +734,11 @@ function CreateUserModal({
   const [busy, setBusy] = React.useState(false);
   const [serverErr, setServerErr] = React.useState<string | null>(null);
   const [created, setCreated] = React.useState<CreatedUser | null>(null);
-  const [copied, setCopied] = React.useState(false);
+  // Tri-state, not a boolean: the clipboard write can genuinely fail (an
+  // insecure context leaves navigator.clipboard undefined, and the permission
+  // can be denied). It used to flip to "Copied" regardless, so an admin would
+  // dismiss the one-time credential panel believing the password was saved.
+  const [copied, setCopied] = React.useState<"idle" | "done" | "failed">("idle");
 
   const errs = {
     fullName: NAME_RE.test(fullName.trim()) ? null : "Letters and spaces only, no digits or symbols.",
@@ -761,7 +765,7 @@ function CreateUserModal({
 
   function reset() {
     setCreated(null);
-    setFullName(""); setUsername(""); setEmail(""); setBranch(""); setTouched(false); setCopied(false);
+    setFullName(""); setUsername(""); setEmail(""); setBranch(""); setTouched(false); setCopied("idle");
   }
 
   return (
@@ -785,15 +789,27 @@ function CreateUserModal({
             </div>
             <button
               type="button"
-              onClick={() => {
-                navigator.clipboard?.writeText(`Username: ${created.username}\nPassword: ${created.generated_password}`);
-                setCopied(true);
+              onClick={async () => {
+                const text = `Username: ${created.username}\nPassword: ${created.generated_password}`;
+                try {
+                  if (!navigator.clipboard) throw new Error("clipboard unavailable");
+                  await navigator.clipboard.writeText(text);
+                  setCopied("done");
+                } catch {
+                  setCopied("failed");
+                }
               }}
               className="mt-3 inline-flex h-[30px] items-center rounded-[10px] px-3 text-[13px] font-medium"
               style={{ background: "var(--fx-green-tint)", color: "var(--fx-green)" }}
             >
-              {copied ? "Copied" : "Copy credentials"}
+              {copied === "done" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy credentials"}
             </button>
+            {copied === "failed" && (
+              <p className="mt-2 text-[11px]" style={{ color: "var(--fx-red)" }}>
+                Could not write to the clipboard. Copy the password above by hand
+                before closing this panel &mdash; it is not shown again.
+              </p>
+            )}
             <p className="mt-3 text-[11px] text-fx-text3">
               The password is shown only once. Copy it now and hand it over in person; the user must change it at first sign-in.
             </p>

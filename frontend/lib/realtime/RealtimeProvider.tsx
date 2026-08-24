@@ -64,6 +64,11 @@ export function RealtimeProvider({
   topics = ALL_TOPICS,
 }: RealtimeProviderProps) {
   const [state, setState] = React.useState<ConnectionState>("closed");
+  // The visibility handler below is installed by an effect keyed on
+  // [topicsKey], so a `state` read inside it is frozen at the value from that
+  // render. Keep the live value in a ref for handlers that outlive a render.
+  const stateRef = React.useRef<ConnectionState>("closed");
+  stateRef.current = state;
   const [allowedTopics, setAllowedTopics] = React.useState<ReadonlyArray<string>>([]);
   // lastEventAt is mutated on every event → use a ref + a setter that updates
   // a tiny React state only when consumers actually need to re-render.
@@ -219,7 +224,13 @@ export function RealtimeProvider({
     // Reconnect when the tab regains focus after sleep — desktops do this
     // routinely and EventSource often won't recover on its own.
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && (state === "closed" || state === "error")) {
+      // stateRef, not `state`: this closure is created once per [topicsKey] and
+      // captured `state` as "closed" forever, so the guard was always true and
+      // EVERY tab refocus tore down a perfectly healthy EventSource, minted a
+      // fresh stream token and reconnected — losing in-flight live-call state
+      // and flickering the connection indicator.
+      const current = stateRef.current;
+      if (document.visibilityState === "visible" && (current === "closed" || current === "error")) {
         connect();
       }
     };

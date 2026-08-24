@@ -151,23 +151,40 @@ export default function BatchPage() {
       }).catch(() => {});
   }, []);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
   const fetchBatches = useCallback(async (tok = token) => {
     if (!tok) return;
     setLoading(true);
     try {
       const res  = await fetch(`${API_URL}/api/agent/uploads${dateQS()}`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setBatches(data.uploads || []);
-    } catch { } finally { setLoading(false); }
+      setLoadError(null);
+    } catch (e) {
+      // Without this the list said 'No batches uploaded yet' to a bank that
+      // has hundreds.
+      setLoadError(e instanceof Error ? e.message : 'Could not load batches');
+    } finally { setLoading(false); }
   }, [token, dateQS]);
 
   const fetchStatus = useCallback(async (tok = token) => {
     if (!tok) return;
     try {
       const res = await fetch(`${API_URL}/api/agent/batch-status${dateQS()}`, { headers: { Authorization: `Bearer ${tok}` }, credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setBatchStatus(await res.json());
       setLastUpdated(new Date());
-    } catch { }
+      setStatusError(null);
+    } catch (e) {
+      // The whole live-status card is gated on `batchStatus`, so a swallowed
+      // failure took the six counters, the emergency-stop banner and the
+      // outside-calling-hours banner off screen with no message - an operator
+      // could not tell a hung batch from a failed poll.
+      setStatusError(e instanceof Error ? e.message : 'Could not load batch status');
+    }
   }, [token, dateQS]);
 
   const fetchBatchCalls = async (batchId: string) => {
@@ -360,6 +377,18 @@ export default function BatchPage() {
       )}
 
       {/* ── LIVE STATUS ─────────────────────────────────────────────────── */}
+      {statusError && (
+        <div className="rounded-[12px] border px-3 py-2 text-[13px]"
+          style={{ borderColor: "var(--fx-red)", color: "var(--fx-red)", background: "var(--fx-red-tint)" }}>
+          {statusError} — live counters are stale. Do not read this as ‘no calls running’.
+        </div>
+      )}
+      {loadError && (
+        <div className="rounded-[12px] border px-3 py-2 text-[13px]"
+          style={{ borderColor: "var(--fx-red)", color: "var(--fx-red)", background: "var(--fx-red-tint)" }}>
+          {loadError} — the batch list could not be loaded.
+        </div>
+      )}
       {batchStatus && (
         <Card>
           <CardHeader

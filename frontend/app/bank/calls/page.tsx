@@ -83,6 +83,7 @@ const FILTERS: { key: string; label: string }[] = [
 
 export default function CallsPage() {
   const router = useRouter();
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [allCalls, setAllCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -99,8 +100,12 @@ export default function CallsPage() {
   // Re-fetch whenever the token or the selected date range changes.
   useEffect(() => { if (token) fetchCalls(); }, [token, dateRange.from, dateRange.to]);
 
+  // A bare `catch { }` with no res.ok check meant a 401/500 body was parsed,
+  // data.calls came back undefined, and the screen rendered 'No calls found'
+  // with every filter pill at 0. A dead API looked like a quiet call day.
   const fetchCalls = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const params = new URLSearchParams({ page_size: '200' });
       if (dateRange.from) params.set('date_from', dateRange.from);
@@ -108,9 +113,13 @@ export default function CallsPage() {
       const res = await fetch(`${API_URL}/api/agent/calls?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }, credentials: 'include',
       });
+      if (!res.ok) throw new Error(res.status === 401 ? 'Session expired - sign in again' : `Could not load calls (HTTP ${res.status})`);
       const data = await res.json();
       setAllCalls(data.calls || []);
-    } catch { } finally { setLoading(false); }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Could not load calls');
+      setAllCalls([]);
+    } finally { setLoading(false); }
   };
 
   const filtered = allCalls.filter(c => {
@@ -158,6 +167,12 @@ export default function CallsPage() {
         left={<><PeriodChip>{dateRange.from && dateRange.to ? `${dateRange.from} – ${dateRange.to}` : 'All dates'}</PeriodChip><Breadcrumb>call logs</Breadcrumb></>}
       />
       <PageTitle title="Call logs" subtitle={`${filtered.length} of ${allCalls.length} calls`} />
+      {loadError && (
+        <div className="rounded-[12px] border px-3 py-2 text-[13px]"
+          style={{ borderColor: "var(--fx-red)", color: "var(--fx-red)", background: "var(--fx-red-tint)" }}>
+          {loadError} — this is not an empty day; the list could not be loaded.
+        </div>
+      )}
 
       {/* Search + date range */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

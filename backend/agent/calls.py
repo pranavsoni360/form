@@ -16,7 +16,7 @@ from . import state as _state
 from .state import (
     now_ist, format_ist_time, IST,
     _row_to_dict, _rows_to_list, _serialize_call,
-    get_current_bank_user, _bank_uuid, STATUS_OPTIONS, CATEGORY_OPTIONS,
+    get_current_bank_user, _bank_uuid, _rows_affected, STATUS_OPTIONS, CATEGORY_OPTIONS,
     CallCategorizeRequest, is_within_calling_hours,
     CALL_START_HOUR, CALL_END_HOUR, release_batch_lock,
 )
@@ -314,13 +314,21 @@ async def categorize_call(
     if data.after_call_remark:
         analysis["after_call_remark"] = data.after_call_remark
 
-    # `bank_id IS NOT DISTINCT FROM $5` matches NULL=NULL (operator) and uuid=uuid (bank user).
-    await _state.db_pool.execute(
+    # `IS NOT DISTINCT FROM` read as "NULL matches NULL, so operators see
+    # everything" — but for an operator ($5 = NULL) it matches ONLY rows whose
+    # bank_id IS NULL, i.e. the exact opposite of cross-bank access. Use the
+    # explicit idiom: NULL means no filter.
+    _u = await _state.db_pool.execute(
         """UPDATE agent_calls
            SET category = $1, call_analysis = $2, updated_at = $3
-           WHERE id = $4 AND bank_id IS NOT DISTINCT FROM $5""",
+           WHERE id = $4 AND ($5::uuid IS NULL OR bank_id = $5)""",
         data.category, json.dumps(analysis), now_ist(), call_uuid, bank_uuid,
     )
+    # The read above is unscoped (it only fetches call_analysis), so without this
+    # check a cross-tenant attempt updated nothing and still returned
+    # {"status": "updated"} — a false success and an existence oracle.
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=404, detail="Call not found")
     return {"status": "updated", "call_id": call_id}
 
 
@@ -870,10 +878,12 @@ async def export_all_calls(
 async def get_live_status(user: dict = Depends(get_current_bank_user)):
     """Get current calling status -- which customer is being called right now."""
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks); bank_user -> their bank
-    # `bank_id IS NOT DISTINCT FROM $1` matches NULL=NULL (operator) and uuid=uuid (bank user).
+    # NULL = no filter (operator sees every bank). `IS NOT DISTINCT FROM` used
+    # to be here and did the opposite: for an operator it matched only rows with
+    # bank_id IS NULL, so /live-status showed them nothing but orphaned calls.
     row = await _state.db_pool.fetchrow(
         """SELECT id, customer_name, phone, started_at FROM agent_calls
-           WHERE status = 'Calling' AND bank_id IS NOT DISTINCT FROM $1 LIMIT 1""",
+           WHERE status = 'Calling' AND ($1::uuid IS NULL OR bank_id = $1) LIMIT 1""",
         bank_uuid,
     )
 

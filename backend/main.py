@@ -3790,6 +3790,11 @@ async def submit_form(token: str, request: Request):
 # LEGACY ADMIN REVIEW ENDPOINT (kept for backward compat)
 # ============================================
 
+# Statuses that /api/admin/review must refuse. Terminal states (money has
+# moved, or the customer walked away) and 'draft' (never submitted).
+_ADMIN_REVIEW_BLOCKED = frozenset({"cancelled", "withdrawn", "disbursed", "draft"})
+
+
 @app.post("/api/admin/review")
 async def review_application(payload: ReviewAction, request: Request, admin: dict = Depends(get_current_admin)):
     app_id = uuid.UUID(payload.application_id)
@@ -3804,16 +3809,42 @@ async def review_application(payload: ReviewAction, request: Request, admin: dic
     new_status = _review_status.get(payload.action)
     if new_status is None:
         raise HTTPException(status_code=400, detail=f"Invalid action '{payload.action}'. Must be 'approve' or 'reject'.")
+
+    # Unlike every bank-side decision endpoint, this one had no status
+    # precondition at all — so a stale admin tab could move a cancelled,
+    # withdrawn, already-disbursed or never-submitted application straight to
+    # 'approved' and then WhatsApp the customer "Congratulations ... APPROVED".
+    # Admin override on a live application stays allowed; terminal and
+    # not-yet-submitted states do not.
+    if current_status in _ADMIN_REVIEW_BLOCKED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot {payload.action} an application in status '{current_status}'.",
+        )
+    if app_row.get("disbursed_at") is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot review a disbursed loan — funds have already been released.",
+        )
+
     if payload.action == "reject":
-        await db_pool.execute(
-            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 WHERE id=$6",
-            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, payload.rejection_reason, app_id
+        _u = await db_pool.execute(
+            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4, rejection_reason=$5 "
+            "WHERE id=$6 AND status=$7",
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, payload.rejection_reason,
+            app_id, current_status
         )
     else:
-        await db_pool.execute(
-            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4 WHERE id=$5",
-            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, app_id
+        _u = await db_pool.execute(
+            "UPDATE loan_applications SET status=$1, reviewed_by=$2, reviewed_at=$3, review_notes=$4 "
+            "WHERE id=$5 AND status=$6",
+            new_status, uuid.UUID(admin["id"]), now_utc(), payload.notes, app_id, current_status
         )
+    # Optimistic concurrency, the same guard the bank endpoints use: if someone
+    # else moved the application between our read and our write, do not send the
+    # customer a WhatsApp about a decision that did not land.
+    if _rows_affected(_u) == 0:
+        raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(app_id, current_status, new_status, "admin", uuid.UUID(admin["id"]), payload.notes)
     if payload.action == "approve":
         message = f"Congratulations {app_row['customer_name']}!\n\nYour loan application has been APPROVED.\n\nLoan ID: {app_row['loan_id']}\n\nOur team will contact you within 24 hours.\n\n- Your Bank Name"

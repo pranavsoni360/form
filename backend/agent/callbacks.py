@@ -102,21 +102,42 @@ async def schedule_callback_manual(request: Request, user: dict = Depends(_state
 
     await _ensure_manual_batch()
 
+    # Stamp the caller's bank. The INSERT used to omit bank_id entirely, which
+    # had two consequences: the call never appeared in the originating bank's own
+    # dashboards, and _bill_completed_call short-circuits on a missing bank_id
+    # (transcript.py) — so these outbound PSTN calls were placed and never
+    # billed to anyone. An operator (admin token) has no bank of their own, so
+    # they must say which bank the callback belongs to.
+    bank_uuid = _state._bank_uuid(user)
+    if bank_uuid is None:
+        raw = (data.get("bank_id") or "").strip()
+        if not raw:
+            raise HTTPException(
+                status_code=400,
+                detail="Select a bank for this callback (operators must specify bank_id).",
+            )
+        try:
+            bank_uuid = uuid.UUID(raw)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid bank_id.")
+        if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", bank_uuid):
+            raise HTTPException(status_code=404, detail="Bank not found.")
+
     call_uuid = uuid.uuid4()
     room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"
     await _state.db_pool.execute(
         """INSERT INTO agent_calls (
-             id, batch_id, customer_name, phone, language, status, room_name,
+             id, batch_id, bank_id, customer_name, phone, language, status, room_name,
              interested, form_sent, category, transcript, collected_data,
              scheduled_callback_at, callback_reason, created_at, updated_at, agent_type
            ) VALUES (
-             $1, $2, $3, $4, $5, 'Called - Callback Requested', $6,
+             $1, $2, $12, $3, $4, $5, 'Called - Callback Requested', $6,
              false, false, 'Uncategorized', '[]'::jsonb, $7,
              $8, $9, $10, $10, $11
            )""",
         call_uuid, _MANUAL_BATCH_ID, name, phone, language, room_name,
         json.dumps({"gender": (data.get("gender") or "male").lower(), "customer_type": "callback"}),
-        dt_ist, reason, now_local, agent_type,
+        dt_ist, reason, now_local, agent_type, bank_uuid,
     )
 
     logger.info("Manual callback scheduled: %s (%s) at %s reason=%s",

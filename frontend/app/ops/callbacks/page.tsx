@@ -228,14 +228,26 @@ function ScheduleCallbackDialog({
   const [when, setWhen] = React.useState("");
   const [reason, setReason] = React.useState("");
   const [language, setLanguage] = React.useState("hindi");
+  const [bankId, setBankId] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState("");
+
+  // Every callback must belong to a bank, or the call is invisible in that
+  // bank's portal AND unbillable (billing short-circuits on a missing bank_id).
+  // This is an operator page, so the bank has to be chosen — the same rule
+  // /ops/batch already applies to an uploaded batch.
+  const banks = useQuery<{ banks: Array<{ id: string; name: string }> }>({
+    queryKey: ["banks-list"],
+    queryFn: () => opsFetch(`${API_URL}/api/admin/banks`, { credentials: "include" }).then((r) => r.json()),
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
 
   // Reset the form each time the dialog opens.
   React.useEffect(() => {
     if (open) {
       setName(""); setPhone(""); setWhen(""); setReason("");
-      setLanguage("hindi"); setError(""); setSaving(false);
+      setLanguage("hindi"); setBankId(""); setError(""); setSaving(false);
     }
   }, [open]);
 
@@ -244,6 +256,7 @@ function ScheduleCallbackDialog({
     if (!name.trim()) { setError("Customer name is required"); return; }
     if (phone.replace(/\D/g, "").length < 10) { setError("Enter a valid phone number"); return; }
     if (!when) { setError("Pick a callback date & time"); return; }
+    if (!bankId) { setError("Select the bank this callback belongs to"); return; }
     setSaving(true);
     try {
       const res = await opsFetch(`${API_URL}/api/agent/schedule-callback-manual`, {
@@ -256,6 +269,7 @@ function ScheduleCallbackDialog({
           callback_iso: when,          // datetime-local → naive ISO, treated as IST
           reason: reason.trim() || "manual",
           language,
+          bank_id: bankId,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -290,6 +304,20 @@ function ScheduleCallbackDialog({
       }
     >
       <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Bank *</label>
+          <select className={inputCls} value={bankId} onChange={(e) => setBankId(e.target.value)}>
+            <option value="">{banks.isLoading ? "Loading banks…" : "Select a bank…"}</option>
+            {(banks.data?.banks ?? []).map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+          {!bankId && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Required — an unassigned callback never appears in a bank&apos;s portal and is not billed.
+            </p>
+          )}
+        </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Customer name *</label>
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rahul Sharma" />

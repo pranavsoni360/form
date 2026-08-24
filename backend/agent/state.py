@@ -490,6 +490,19 @@ async def get_current_bank_user(
     raise HTTPException(status_code=403, detail="Bank user or operator access required")
 
 
+def _rows_affected(result: str) -> int:
+    """Row count out of an asyncpg command tag ("UPDATE 3" -> 3).
+
+    main.py has its own copy; the agent modules deliberately do not import main
+    (circular). Used to turn a no-op UPDATE into a 404 instead of a false
+    "updated" response.
+    """
+    try:
+        return int((result or "").split()[-1])
+    except (ValueError, IndexError, AttributeError):
+        return 0
+
+
 def _bank_uuid(user: dict):
     """Get bank_id as UUID, or None for operators (no bank scoping)."""
     bid = user.get("bank_id")

@@ -458,6 +458,44 @@ _DOC_KINDS: dict[str, frozenset] = {
 }
 _KIND_LABEL = {"pdf": "PDF", "png": "PNG", "jpg": "JPG"}
 
+# How each document is obtained. Mirrors `journey` in
+# frontend/lib/utils/loanDocuments.ts — kept as a literal because that spec is
+# TypeScript; change one, change the other.
+#
+# This exists so the SERVER can tell an officer why a document is present and
+# how much to trust it. A DigiLocker-fetched Aadhaar is issuer-signed; a file
+# the applicant picked is whatever they picked. Treating those as the same
+# "uploaded" is how a self-supplied ID passes for a verified one.
+#
+#   fetch   retrieved from an authorised source (DigiLocker)
+#   vendor  collected and parsed by a third party (Digitap statement analysis)
+#   parse   applicant supplies it AND we extract data from it
+#   upload  stored for a human to read; no extraction
+_DOC_JOURNEYS: dict[str, str] = {
+    "aadhaar_front": "fetch",
+    "aadhaar_back": "fetch",
+    "photo": "fetch",
+    "proof_of_identification": "fetch",
+    "proof_of_residence": "fetch",
+    "bank_statement": "parse",
+    "bank_statements": "parse",
+    "itr_form16": "upload",     # deliberately NOT credential-fetch; see below
+    "salary_slips": "upload",
+    "income_proof": "upload",
+    "pan_card": "upload",
+    "quotation": "upload",
+}
+
+# WHY ITR IS NOT A FETCH JOURNEY
+# VGDocverify exposes ITR_Advance, which takes the applicant's income-tax portal
+# username and PASSWORD. That credential controls their entire tax identity, and
+# a lender collecting it — even in transit, even unstored — takes on liability
+# far out of proportion to an optional document. Form 26AS (available for a
+# handful of banks, no password required) is the route to revisit. Until then
+# ITR is an upload, and `itr_advance` in lrs/providers/vg_docverify.py stays
+# unwired on purpose. Do not "finish" it without that decision being retaken.
+
+
 
 def validate_upload_content(document_type: str, content: bytes) -> str:
     """Validate the REAL file type for this document. Returns kind, or raises 400."""
@@ -3875,10 +3913,16 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
             await db_pool.execute(
                 """INSERT INTO application_documents
                        (application_id, bank_id, document_type, file_url,
-                        original_filename, content_type, size_bytes, uploaded_by_type)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+                        original_filename, content_type, size_bytes, uploaded_by_type,
+                        journey)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant',$8)""",
                 approw["id"], approw["bank_id"], document_type, file_url,
                 file.filename, file.content_type, len(file_content),
+                # A file arriving HERE was chosen by the applicant, whatever the
+                # document's usual journey — a fetch-journey document uploaded by hand is
+                # precisely the case an officer must be able to see. Only `parse` survives,
+                # because we do still extract from those.
+                "parse" if _DOC_JOURNEYS.get(document_type) == "parse" else "upload",
             )
     except Exception as e:
         logger.warning("application_documents insert failed for token %s: %s", token_row["id"], e)
@@ -4796,10 +4840,16 @@ async def upload_document_session(
         await db_pool.execute(
             """INSERT INTO application_documents
                    (application_id, bank_id, document_type, file_url,
-                    original_filename, content_type, size_bytes, uploaded_by_type)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+                    original_filename, content_type, size_bytes, uploaded_by_type,
+                    journey)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant',$8)""",
             app_row["id"], app_row["bank_id"], document_type, file_url,
             file.filename, file.content_type, len(file_content),
+            # A file arriving HERE was chosen by the applicant, whatever the
+            # document's usual journey — a fetch-journey document uploaded by hand is
+            # precisely the case an officer must be able to see. Only `parse` survives,
+            # because we do still extract from those.
+            "parse" if _DOC_JOURNEYS.get(document_type) == "parse" else "upload",
         )
     except Exception as e:
         logger.warning("application_documents insert failed for app %s: %s", session["application_id"], e)

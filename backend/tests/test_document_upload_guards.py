@@ -189,3 +189,47 @@ def test_consumer_durable_also_requires_the_dealer_quotation():
 
 def test_personal_loan_does_not_require_a_quotation():
     main_mod._validate_documents({**FULL, "consumer_loan_type": "personal"})
+
+
+# ── journeys ────────────────────────────────────────────────────────────────
+#
+# A document's journey is how it is OBTAINED, and it drives what the customer is
+# asked to do. Before this existed the form knew one verb — "Upload" — so it
+# demanded a file for Aadhaar (which DigiLocker already delivers) and for ITR
+# (which is fetchable), while a bank statement that must be machine-readable got
+# the same treatment as a salary slip nobody parses.
+
+def test_every_uploadable_document_declares_a_journey():
+    """A new document must not inherit a journey by accident."""
+    for document_type in main_mod._DOC_KINDS:
+        assert document_type in main_mod._DOC_JOURNEYS, (
+            f"{document_type} has a content rule but no declared journey"
+        )
+
+
+def test_journeys_are_from_the_known_set():
+    assert set(main_mod._DOC_JOURNEYS.values()) <= {"fetch", "vendor", "parse", "upload"}
+
+
+def test_bank_statement_is_a_parse_journey():
+    """It is the only document feeding the cash-flow pillar; storing is not enough."""
+    assert main_mod._DOC_JOURNEYS["bank_statements"] == "parse"
+    assert main_mod._DOC_JOURNEYS["bank_statement"] == "parse"
+
+
+def test_digilocker_backed_documents_are_fetch_journeys():
+    for document_type in ("aadhaar_front", "photo", "proof_of_identification",
+                          "proof_of_residence"):
+        assert main_mod._DOC_JOURNEYS[document_type] == "fetch"
+
+
+def test_itr_is_not_a_credential_fetch():
+    """ITR_Advance wants the applicant's income-tax portal PASSWORD.
+
+    That credential controls their entire tax identity, and a lender collecting
+    it — even in transit, even unstored — takes on liability out of all
+    proportion to an optional document. If this test fails, someone wired
+    ITR_Advance into the customer journey; that decision needs retaking, not a
+    test update.
+    """
+    assert main_mod._DOC_JOURNEYS["itr_form16"] == "upload"

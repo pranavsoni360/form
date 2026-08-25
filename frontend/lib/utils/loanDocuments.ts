@@ -6,19 +6,42 @@
 // and an application could be submitted with no documents at all. Hoisting it
 // means the gate, the render and the file-type rules all read one definition.
 //
-// EVERY DOCUMENT HAS ITS OWN TYPE AND ITS OWN JOURNEY
-// A single `accept=".jpg,.jpeg,.png,.pdf"` on every row let a customer attach a
-// photo of a bank statement, or a PDF where a passport photograph was needed —
-// both accepted silently, both useless downstream. A bank statement in
-// particular MUST be a real PDF: Digitap's parser template-matches the issuing
-// bank's layout, so a phone snapshot of a statement cannot be analysed at all.
+// EVERY DOCUMENT HAS ITS OWN JOURNEY
+// "Upload" was the only verb the form knew, so every row got an Upload button —
+// including ITR, which is fetchable, and Aadhaar, which DigiLocker already
+// delivers during KYC. Asking someone to hunt for a PDF we can fetch (or have
+// already fetched) is work we are pushing onto the customer for no reason, and
+// it invites the wrong file: a photo of a bank statement is unparseable, but the
+// form used to accept it.
+//
+// A document's journey is a property OF THE DOCUMENT, not of the screen. This
+// module names it, and the step renders whatever that journey needs.
 
+/**
+ * How a document actually gets satisfied.
+ *
+ * - `fetch`     We retrieve it from a source the customer authorises (DigiLocker).
+ *               No file is asked for. If the fetch already happened in KYC the
+ *               row is simply shown as done.
+ * - `vendor`    A third party collects and parses it through their own flow
+ *               (Digitap bank-statement analysis). The customer is handed off
+ *               and comes back; we never receive a raw file directly.
+ * - `parse`     The customer uploads a file AND we extract data from it. The
+ *               upload is not the end state — the extraction is.
+ * - `upload`    We store the file for a human to read. No extraction, no API.
+ *               The honest default when there is nothing smarter to do.
+ */
+export type DocJourney = "fetch" | "vendor" | "parse" | "upload";
+
+/** Where a `fetch` journey gets its data. */
 export type DocSource = "digilocker" | "upload";
 
 export interface LoanDocSpec {
   key: string;
   label: string;
   required: boolean;
+  /** How this document is obtained. Drives which UI the row renders. */
+  journey: DocJourney;
   /** `accept` attribute — deliberately narrower than "any file". */
   accept: string;
   /** MIME/extension guard applied client-side before the upload fires. */
@@ -26,11 +49,23 @@ export interface LoanDocSpec {
   /** One line telling the customer what a valid file looks like. */
   hint: string;
   /**
+   * What the customer is told the journey will DO, when it does more than
+   * store the file. Shown on `parse` and `vendor` rows so the extra step is
+   * expected rather than surprising.
+   */
+  journeyNote?: string;
+  /**
    * Documents DigiLocker can satisfy on the customer's behalf during KYC. The
    * form shows these as already-provided rather than asking twice — which is
    * also why Documents must stay AFTER the KYC step, not before it.
    */
   autoFilledBy?: DocSource;
+  /**
+   * A `fetch`/`vendor` journey that is not yet wired end to end. The row still
+   * renders and still accepts a manual upload, but we do NOT advertise an
+   * automatic option the customer cannot actually use. Set to the reason.
+   */
+  automationPending?: string;
   /** Only shown for consumer-durable applications. */
   consumerDurableOnly?: boolean;
 }
@@ -44,41 +79,55 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "aadhaar_front_url",
     label: "Aadhaar Document",
     required: true,
+    // DigiLocker returns the Aadhaar PDF, plus name/DOB/gender/address/photo,
+    // during step 1. By the time the customer reaches Documents this is
+    // normally already satisfied — so the row must not demand an upload.
+    journey: "fetch",
     accept: ".jpg,.jpeg,.png,.pdf",
     extensions: BOTH,
-    hint: "The DigiLocker Aadhaar XML, or a clear photo/scan of the card.",
+    hint: "Fetched from DigiLocker when you verify your Aadhaar. Upload only if you skipped that step.",
+    journeyNote: "Verified via DigiLocker",
     autoFilledBy: "digilocker",
   },
   {
     key: "photo_url",
     label: "Passport Size Photo",
     required: true,
+    // Also delivered by DigiLocker (base64 JPEG in the Aadhaar payload).
+    journey: "fetch",
     // Images ONLY. A PDF here breaks every downstream consumer that renders a
     // face — and customers do attach PDFs when the picker allows it.
     accept: ".jpg,.jpeg,.png",
     extensions: IMG,
-    hint: "A recent passport-style photograph. JPG or PNG — not a PDF.",
+    hint: "Taken from your Aadhaar record. Upload a recent photo only if it is missing.",
+    journeyNote: "Retrieved with your Aadhaar",
     autoFilledBy: "digilocker",
   },
   {
     key: "bank_statements_url",
     label: "Bank Statements (Last 6 months)",
     required: true,
-    // PDF ONLY, and this one is load-bearing. The statement is the single
-    // document that feeds the cash-flow score, and Digitap parses it by matching
-    // the issuing bank's PDF template. A photo of a statement yields nothing.
+    // The statement is analysed by Digitap, not merely stored: it is the only
+    // document feeding the cash-flow pillar. Their parser template-matches the
+    // issuing bank's PDF layout, so a photo or screenshot yields nothing at all.
+    journey: "parse",
     accept: ".pdf",
     extensions: PDF,
     hint: "The PDF your bank issues — downloaded from net banking or their app. A photo of a statement cannot be read.",
+    journeyNote: "Analysed automatically to assess your cash flow",
+    // The officer-side Digitap journey exists (backend/routers/bsa.py) but is
+    // not reachable from this form yet, so we do not offer "connect your bank".
+    automationPending: "Automatic bank connection is not available yet — please upload the PDF.",
   },
   {
     key: "salary_slips_url",
-    // No longer required: Aadhaar and photo are usually DigiLocker-satisfied,
-    // and the bank statement is what actually reaches scoring. Kept because it
-    // is still the clearest income evidence an officer can read by eye, and
-    // because statement analysis does not yet extract salary credits.
+    // Not required: Aadhaar and photo are usually DigiLocker-satisfied, and the
+    // bank statement is what actually reaches scoring. Kept because it is the
+    // clearest income evidence an officer can read by eye, and because statement
+    // analysis does not yet extract salary credits reliably.
     label: "Salary Slips (Last 3 months)",
     required: false,
+    journey: "upload",
     accept: ".jpg,.jpeg,.png,.pdf",
     extensions: BOTH,
     hint: "Optional. Helps if your salary is not obvious from the statement.",
@@ -87,6 +136,13 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "itr_form16_url",
     label: "ITR / Form 16",
     required: false,
+    // Deliberately NOT a credential-based fetch. The ITR_Advance API exists and
+    // takes the applicant's income-tax portal username and password — a
+    // credential that controls their entire tax identity. A lender collecting
+    // that, even in transit and even unstored, takes on liability far out of
+    // proportion to an optional document. Form 26AS (no password) is the route
+    // to revisit; until then this is an upload we parse, not a login we ask for.
+    journey: "upload",
     accept: ".pdf",
     extensions: PDF,
     hint: "Optional. The PDF from the income-tax portal or your employer.",
@@ -95,24 +151,29 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "proof_of_identification_url",
     label: "Proof of Identification",
     required: false,
+    journey: "fetch",
     accept: ".jpg,.jpeg,.png,.pdf",
     extensions: BOTH,
-    hint: "Only if you did not verify with DigiLocker — a verified Aadhaar covers this.",
+    hint: "Covered by your verified Aadhaar. Upload another ID only if you skipped DigiLocker.",
+    journeyNote: "Satisfied by DigiLocker Aadhaar",
     autoFilledBy: "digilocker",
   },
   {
     key: "proof_of_residence_url",
     label: "Proof of Residence",
     required: false,
+    journey: "fetch",
     accept: ".jpg,.jpeg,.png,.pdf",
     extensions: BOTH,
-    hint: "Only if you did not verify with DigiLocker — a verified Aadhaar covers this.",
+    hint: "Covered by the address on your verified Aadhaar. Upload another proof only if you skipped DigiLocker.",
+    journeyNote: "Satisfied by DigiLocker Aadhaar",
     autoFilledBy: "digilocker",
   },
   {
     key: "quotation_url",
     label: "Dealer Quotation",
     required: true,
+    journey: "upload",
     accept: ".jpg,.jpeg,.png,.pdf",
     extensions: BOTH,
     hint: "The quotation from the dealer for the item you are financing.",
@@ -135,11 +196,53 @@ export function missingRequired(
 }
 
 /**
+ * Was this document satisfied automatically, rather than by the customer
+ * choosing a file? Drives the "Verified via DigiLocker" treatment instead of a
+ * bare "Uploaded", so the customer can see the difference between what we
+ * fetched and what they provided.
+ */
+export function wasAutoFilled(
+  spec: LoanDocSpec,
+  formData: Record<string, any>,
+): boolean {
+  if (!formData[spec.key]) return false;
+  if (spec.journey !== "fetch") return false;
+  // field_sources is written by the DigiLocker/PAN handlers; a key present
+  // there means the value did not come from a file the customer picked.
+  const src = formData.field_sources?.[spec.key];
+  if (src && !src.modified) return true;
+  // Aadhaar-derived rows: a verified Aadhaar is itself the evidence.
+  return spec.autoFilledBy === "digilocker" && !!formData.aadhaar_verified;
+}
+
+/**
+ * What the row should offer right now.
+ *
+ * `done`     satisfied — show what satisfied it, offer replace
+ * `awaiting` a fetch/vendor journey could satisfy this but has not yet
+ * `manual`   the customer must provide the file themselves
+ */
+export function journeyState(
+  spec: LoanDocSpec,
+  formData: Record<string, any>,
+): "done" | "awaiting" | "manual" {
+  if (formData[spec.key]) return "done";
+  if (spec.journey === "fetch" && spec.autoFilledBy === "digilocker" && !formData.aadhaar_verified) {
+    return "awaiting";
+  }
+  return "manual";
+}
+
+/**
  * Validate a chosen file against ONE document's rules.
  *
  * Extension is checked rather than MIME type: browsers report inconsistent MIME
  * for PDFs and some Android pickers send `application/octet-stream`, which would
  * reject valid files. Returns an error string, or "" when acceptable.
+ *
+ * NOTE: this is convenience only. The server re-validates by reading the file's
+ * own leading bytes (backend/main.py validate_upload_content), because anything
+ * decided in the browser can be bypassed.
  */
 export function validateDocFile(spec: LoanDocSpec, file: File): string {
   const name = (file.name || "").toLowerCase();

@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
-import { documentsFor, missingRequired, validateDocFile } from '@/lib/utils/loanDocuments';
+import { documentsFor, missingRequired, validateDocFile, wasAutoFilled, journeyState } from '@/lib/utils/loanDocuments';
 // Server expires a loan session after LOAN_SESSION_INACTIVITY_SECONDS of
 // inactivity (backend main.py; /api/get-application, /api/autosave-session and
 // /api/session-keepalive all read the same constant).
@@ -1947,12 +1947,12 @@ export default function LoanApplication() {
 
           {currentStep === 2 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="DOC" color="var(--fx-orange)" title="Document Upload" />
+              <SectionTitle icon="DOC" color="var(--fx-orange)" title="Documents" />
               {/* Deliberately NOT listing file types here any more: they now differ per
                   document (photo is images-only, bank statement is PDF-only), so a
                   blanket "PDF / JPG / PNG accepted" would contradict the per-row hints
                   and mislead exactly where the rules matter most. */}
-              <p className="text-sm" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>Max 5MB each · accepted formats are listed under each document</p>
+              <p className="text-sm" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>Anything we could fetch for you is already filled in. Max 5MB per file · accepted formats are listed under each document.</p>
               {docError && (
                 <div className="flex items-start gap-2.5 rounded-xl p-3.5"
                   style={{ background: 'var(--fx-red-tint)', border: '1px solid var(--fx-red-tint)' }}>
@@ -1962,26 +1962,67 @@ export default function LoanApplication() {
               )}
               <div className="space-y-3">
                 {documentsFor(formData.consumer_loan_type).map(doc => {
-                  const fs = formData.field_sources?.[doc.key];
-                  const isDigilocker = fs?.source === 'aadhaar';
+                  // The row renders by JOURNEY, not by "has a file yet". A
+                  // DigiLocker-fetched Aadhaar and a hand-picked salary slip are
+                  // both "done", but they got there differently and the customer
+                  // should be able to see which.
+                  const auto = wasAutoFilled(doc, formData);
+                  const state = journeyState(doc, formData);
+                  const isDigilocker = auto;
                   return (
                   <div key={doc.key}>
-                  <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-dark-section' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section') : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
+                  <div className="flex items-center justify-between gap-3 p-4 rounded-xl"
+                    style={{
+                      background: 'var(--fx-surface)',
+                      // The border carries the state; the surface stays neutral so
+                      // badge text is always legible against it.
+                      border: `1.5px solid ${
+                        !formData[doc.key]
+                          ? 'var(--fx-border)'
+                          : isDigilocker
+                            ? 'color-mix(in oklch, var(--fx-accent) 45%, var(--fx-border))'
+                            : 'color-mix(in oklch, var(--fx-green) 45%, var(--fx-border))'
+                      }`,
+                    }}>
                     <div>
-                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--fx-text)' }}>{doc.label} {doc.required && <span style={{ color: 'var(--fx-red)' }}>*</span>}</p>
                       {/* What a valid file looks like for THIS document — the
                           single most effective way to prevent a wrong upload. */}
                       {!formData[doc.key] && doc.hint && (
                         <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>{doc.hint}</p>
                       )}
+                      {/* A `fetch` row whose source has not run yet: tell the
+                          customer the automatic route exists and where it is,
+                          instead of silently demanding a file. */}
+                      {state === 'awaiting' && (
+                        <button type="button"
+                          onClick={() => { autoSave(); setCurrentStep(1); window.scrollTo(0, 0); }}
+                          className="text-xs mt-1 underline underline-offset-2"
+                          style={{ color: 'var(--fx-accent)', fontFamily: 'var(--font-body)' }}>
+                          Verify with DigiLocker to fill this automatically
+                        </button>
+                      )}
+                      {/* A journey that WOULD be automatic but is not wired yet.
+                          Stated plainly rather than dressed up as a choice. */}
+                      {state !== 'done' && doc.automationPending && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--fx-amber)' }}>{doc.automationPending}</p>
+                      )}
+                      {/* What we will DO with the file, for journeys where
+                          storing it is not the end of the story. */}
+                      {state !== 'done' && doc.journey === 'parse' && doc.journeyNote && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>{doc.journeyNote}</p>
+                      )}
                       {formData[doc.key] && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {isDigilocker ? (
-                          <span className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3" />DigiLocker Verified
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
+                            style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)', border: '1px solid var(--fx-border)' }}>
+                            <ShieldCheck className="w-3 h-3" />{doc.journeyNote || 'DigiLocker Verified'}
                           </span>
                         ) : (
-                          <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Uploaded</p>
+                          <p className="text-xs flex items-center gap-1" style={{ color: 'var(--fx-green)' }}><CheckCircle2 className="w-3 h-3" />
+                            {doc.journey === 'parse' ? 'Uploaded — will be analysed' : 'Uploaded'}
+                          </p>
                         )}
                         <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>
                       </div>
@@ -2030,9 +2071,19 @@ export default function LoanApplication() {
                           }
                         }}
                       />
-                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 ${uploading[doc.key] ? 'opacity-70 cursor-wait' : ''} ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                      {/* The verb matches the journey. A `fetch` document that
+                          DigiLocker has not filled yet offers "Upload instead"
+                          — the manual fallback, not the expected path — so the
+                          customer is not told to go find a file we can retrieve. */}
+                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 whitespace-nowrap ${uploading[doc.key] ? 'opacity-70 cursor-wait' : ''} ${formData[doc.key] ? 'bg-green-600 text-white' : state === 'awaiting' ? 'bg-gray-500 text-white hover:bg-gray-600' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                         {uploading[doc.key] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        {uploading[doc.key] ? 'Uploading' : formData[doc.key] ? 'Replace' : 'Upload'}
+                        {uploading[doc.key]
+                          ? 'Uploading'
+                          : formData[doc.key]
+                            ? 'Replace'
+                            : state === 'awaiting'
+                              ? 'Upload instead'
+                              : 'Upload'}
                       </span>
                     </label>
                   </div>

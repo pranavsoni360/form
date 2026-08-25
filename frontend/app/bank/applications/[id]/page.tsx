@@ -47,6 +47,7 @@ import {
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
 import { AssignVendorPanel } from '@/components/bank/AssignVendorPanel';
 import { LRSScorePanel } from '@/components/bank/LRSScorePanel';
+import { BankStatementPanel } from '@/components/bank/BankStatementPanel';
 import { BankUserShell } from '../../_shell/BankUserShell';
 import {
   Toolbar,
@@ -373,6 +374,10 @@ export default function ApplicationDetailPage() {
                   ))}
                 </CardBody>
               </Card>
+
+              {/* Bank statement analysis — the real source for the cash-flow
+                  pillar, which is otherwise scored on mock data. */}
+              <BankStatementPanel applicationId={appId} />
 
               <Card>
                 <CardHeader title="Status timeline" qualifier={`${timeline.length} events`} />

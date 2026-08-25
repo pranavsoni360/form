@@ -1,4 +1,4 @@
-﻿# main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
+# main.py - FastAPI Backend for Bank Loan Form System (Multi-Bank Tenant Architecture)
 from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -252,6 +252,15 @@ app.include_router(lrs_router, prefix="/api/lrs", tags=["lrs"])
 # and the local get_bank_admin dependency requires role='bank_admin'.
 from routers.bank_admin import router as bank_admin_router  # noqa: E402
 app.include_router(bank_admin_router)
+
+# Bank Statement Analysis — Digitap via VGDocverify AcAggregator (migration_v42).
+# First real source for the banking_behaviour pillar, which MockBankStmtProvider
+# currently fills with fabricated numbers. The /api/bsa/callback route is
+# deliberately UNAUTHENTICATED: it is the vendor's completion webhook, its
+# contract is unconfirmed, and it is treated as a hint that triggers verification
+# rather than as a source of truth.
+from routers.bsa import router as bsa_router  # noqa: E402
+app.include_router(bsa_router)
 
 
 # Exception types that mean "the caller went away", not "we broke". Matched by

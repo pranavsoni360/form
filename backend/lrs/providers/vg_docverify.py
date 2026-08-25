@@ -39,20 +39,82 @@ from lrs.providers.base import FetchContext
 
 logger = logging.getLogger("lrs-vg-docverify")
 
-# ── Configuration (env-first; documented defaults from VG_Docverify_API doc) ──
-# SECURITY: these are the bank's shared credentials from the API doc. Prefer
-# setting them via environment / secrets manager before deploying; the defaults
-# exist only so the integration is functional out of the box in the VG env.
-_BASE_URL = os.getenv("VG_DOCVERIFY_BASE_URL", "https://vpays.in/VGDocverify").rstrip("/")
-_USER_ID = os.getenv("VG_DOCVERIFY_USER_ID", "25")
-_VERIFICATION_KEY = os.getenv("VG_DOCVERIFY_VERIFICATION_KEY", "COVAI27032026")
-_BANK_NAME = os.getenv("VG_DOCVERIFY_BANK_NAME", "Virtual Galaxy Fintech Pvt Ltd")
-_BANK_SHORT_CODE = os.getenv("VG_DOCVERIFY_BANK_SHORT_CODE", "VPAY")
+# ── Configuration ─────────────────────────────────────────────────────────────
+#
+# VG Docverify has TWO environments with DIFFERENT credentials, and the pair MUST
+# match the host. Sending the production UserId to a UAT host returns
+#     "For given User 25 API Rights Not Assigned"
+# which reads like a provisioning problem but is really an environment mismatch —
+# it cost real time to diagnose, so the credentials are now derived FROM the base
+# URL instead of being set independently.
+#
+#   UAT   10.200.10.43 / galaxypay.in:9005   user 33  CONV27032026   VGIL
+#   PROD  vpays.in                           user 25  COVAI27032026  VPAY
+#
+# SECURITY: these are shared bank credentials and they are in this file's git
+# history. They belong in a secrets manager; the built-in table exists only so a
+# misconfigured host fails loudly rather than silently using the wrong pair.
+# Every value stays individually overridable for the case where VG rotates one.
 
-# ExperianReport SOAP method + inner request element. The element name comes from
-# the WSDL (?op=experianreport); overridable via env in case VG's is different.
+_UAT_CREDS = {
+    "user_id": "33",
+    "verification_key": "CONV27032026",
+    "bank_short_code": "VGIL",
+    "bank_name": "VIRTUAL URBAN CO-OPERATIVE BANK LTD",
+}
+_PROD_CREDS = {
+    "user_id": "25",
+    "verification_key": "COVAI27032026",
+    "bank_short_code": "VPAY",
+    "bank_name": "Virtual Galaxy Fintech Pvt Ltd",
+}
+
+# Default to UAT: a wrong-environment call that leaks real applicant PAN/DOB to
+# production is worse than one that fails in test.
+_BASE_URL = os.getenv("VG_DOCVERIFY_BASE_URL", "http://10.200.10.43/VGDocverify").rstrip("/")
+
+
+def _creds_for(base_url: str) -> dict:
+    """
+    Pick the credential set that belongs to this host.
+
+    Matches on the hostname rather than a separate VG_DOCVERIFY_ENV flag, so the
+    two can never disagree — the host is the single source of truth about which
+    environment we are talking to.
+    """
+    host = base_url.lower()
+    if "vpays.in" in host:
+        return _PROD_CREDS
+    if "10.200.10.43" in host or "galaxypay.in" in host:
+        return _UAT_CREDS
+    # An unrecognised host is most likely a new production endpoint, so assume
+    # nothing and require the credentials to be supplied explicitly.
+    logger.warning(
+        "VG Docverify: unrecognised host %r — set VG_DOCVERIFY_USER_ID and "
+        "VG_DOCVERIFY_VERIFICATION_KEY explicitly for this environment.", base_url,
+    )
+    return {"user_id": "", "verification_key": "", "bank_short_code": "", "bank_name": ""}
+
+
+_C = _creds_for(_BASE_URL)
+_USER_ID = os.getenv("VG_DOCVERIFY_USER_ID") or _C["user_id"]
+_VERIFICATION_KEY = os.getenv("VG_DOCVERIFY_VERIFICATION_KEY") or _C["verification_key"]
+_BANK_NAME = os.getenv("VG_DOCVERIFY_BANK_NAME") or _C["bank_name"]
+_BANK_SHORT_CODE = os.getenv("VG_DOCVERIFY_BANK_SHORT_CODE") or _C["bank_short_code"]
+
+# ExperianReport SOAP method + inner request element.
+#
+# CONFIRMED from the live WSDL (ProteanCredit.asmx?WSDL): the request is
+#     <experianreport><obj>{pan, firstName, ... UserId, VerificationKey}</obj></experianreport>
+# i.e. `obj` is a SINGLE PCrdBo whose children are the parameters themselves.
+# There is NO inner repeating element.
+#
+# _soap_envelope() already hardcodes the <obj> wrapper, so the inner element must
+# be EMPTY here — the old default of "experian" produced <obj><experian>…</obj>,
+# an element the schema does not define. (Setting this to "obj" instead is the
+# other wrong answer: it yields <obj><obj>…</obj></obj>.)
 _EXPERIAN_METHOD = os.getenv("VG_EXPERIAN_METHOD", "experianreport")
-_EXPERIAN_ELEM = os.getenv("VG_EXPERIAN_ELEM", "experian")
+_EXPERIAN_ELEM = os.getenv("VG_EXPERIAN_ELEM", "")
 _APP_MODE = os.getenv("VG_DOCVERIFY_APP_MODE", "LRS")
 _REQUEST_FROM = os.getenv("VG_DOCVERIFY_REQUEST_FROM", "LRS")
 _DEVICE_ID = os.getenv("VG_DOCVERIFY_DEVICE_ID", "lrs-backend")
@@ -141,12 +203,18 @@ async def _post(url: str, api_code: str, ctx: FetchContext, fields: dict) -> dic
 # Verified live against ProteanCredit.asmx/experianreport and VGKVerify.asmx/Pan.
 
 def _soap_envelope(method: str, inner_element: str, rows: list[dict]) -> str:
-    """Build a SOAP 1.1 envelope: <method><obj><inner_element>…</inner_element></obj></method>."""
+    """Build a SOAP 1.1 envelope: <method><obj>[<inner_element>]…</obj></method>.
+
+    `inner_element` may be EMPTY, which emits the parameters as direct children of
+    <obj>. That is the shape ProteanCredit/experianreport requires: its WSDL
+    declares obj as a single PCrdBo whose children are the parameters. Endpoints
+    whose obj is a repeating list (VGKVerify's <kpan> etc.) pass a name.
+    """
     def _rowxml(row: dict) -> str:
         cells = "".join(
             f"<{k}>{_html.escape(str(v))}</{k}>" for k, v in row.items() if v is not None
         )
-        return f"<{inner_element}>{cells}</{inner_element}>"
+        return f"<{inner_element}>{cells}</{inner_element}>" if inner_element else cells
     body = "".join(_rowxml(r) for r in rows)
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
@@ -172,6 +240,23 @@ def _extract_soap_payload(xml_text: str) -> dict | None:
     fault = _re.search(r"<faultstring>(.*?)</faultstring>", xml_text, _re.S)
     if fault:
         raise RuntimeError(f"SOAP fault: {_html.unescape(fault.group(1)).strip()[:300]}")
+
+    # A gateway error can be emitted as JSON *before* the SOAP envelope, leaving
+    # the <...Response> element EMPTY:
+    #     {"message":"API rate limit exceeded"}<?xml ...><experianreportResponse/>
+    # Confirmed live against ProteanCredit. Without this branch the empty
+    # Response parses to None, which the providers read as "applicant has no
+    # record" — so a rate-limited or throttled call would silently score as a
+    # clean bureau miss and the pillar would re-weight around it. Raise instead,
+    # so the job worker retries.
+    stripped = xml_text.lstrip()
+    if stripped.startswith("{"):
+        try:
+            pre, end = _json.JSONDecoder().raw_decode(stripped)
+        except ValueError:
+            pre, end = None, 0
+        if isinstance(pre, dict) and pre.get("message") and "<" in stripped[end:]:
+            raise RuntimeError(f"VG gateway error: {str(pre.get('message'))[:200]}")
     # Grab the text inside the first *Response element (any namespace prefix).
     m = _re.search(r"<\w*Response[^>]*>(.*?)</\w*Response>", xml_text, _re.S)
     inner = m.group(1) if m else xml_text

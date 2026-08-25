@@ -375,6 +375,10 @@ export default function ApplicationDetailPage() {
                 </CardBody>
               </Card>
 
+              {/* Bank statement analysis — the real source for the cash-flow
+                  pillar, which is otherwise scored on mock data. */}
+              <BankStatementPanel applicationId={appId} />
+
               <Card>
                 <CardHeader title="Status timeline" qualifier={`${timeline.length} events`} />
                 {timeline.length > 0 ? (

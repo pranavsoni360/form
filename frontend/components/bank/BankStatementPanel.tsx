@@ -1,321 +1,338 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { initiateAAUpload, checkAAStatus, rescoreLRS } from '@/lib/api/bank';
+// Bank Statement Analysis panel — application detail page, officer-facing.
+//
+// WHY IT LOOKS LIKE A LIFECYCLE AND NOT A RESULT
+// This is not a synchronous lookup. The officer issues an upload link, the
+// borrower leaves and uploads a PDF at Digitap, and the analysed report arrives
+// minutes-to-hours later. So the panel's job is to make the WAIT legible: whose
+// turn it is, when the link dies, and what to do when nothing happens.
+//
+// THE FAILURE THAT LEAVES NO TRACE
+// If a borrower uploads a statement from the wrong bank, Digitap rejects it
+// inside their own UI (error 065). No callback fires and statuscheck keeps
+// saying TxnNotFound, so the journey looks identical to "hasn't started yet"
+// until the link expires. That is why the pending state names the expiry and
+// offers Refresh — an officer must never be left guessing whether a silent hour
+// means working or broken.
+//
+// COVERAGE IS SHOWN, NOT HIDDEN
+// The derivation deliberately withholds inputs the statement cannot support, so
+// the panel reports what was and was not derived. An officer reading a partial
+// score needs to know it is partial: "we could not tell" and "healthy" must not
+// look the same.
 
-interface BankStatementPanelProps {
-  token: string;
-  applicationId: string;
-  app: any;
-  onRefresh: () => void;
-}
+import * as React from "react";
+import {
+  Card,
+  CardHeader,
+  CardBody,
+  Button,
+  Field,
+  Select,
+  Pill,
+  LoadingState,
+  EmptyState,
+} from "@/components/finix";
+import {
+  bsaInstitutions,
+  bsaListFetches,
+  bsaStartFetch,
+  bsaAdvance,
+  type BsaFetch,
+  type BsaInstitution,
+} from "@/lib/api/bank";
 
-type PanelState = 'idle' | 'initiating' | 'ready' | 'checking' | 'complete' | 'failed';
-
-const FIELD_LABELS: Record<string, string> = {
-  amb_pct_of_nmi:       'Avg Balance % of Income',
-  net_cash_flow:        'Net Cash Flow (₹)',
-  surplus_income_ratio: 'Surplus / Income %',
-  otp_ratio_pct:        'On-Time Payment %',
-  missed_payment_ratio: 'Missed Payment Ratio',
-  penalty_count:        'Penalty Charges',
-  employment_type:      'Employment Type',
-  net_monthly_income:   'Monthly Income (₹)',
+/** Human labels for the scorecard keys the derivation emits. */
+const METRIC_LABEL: Record<string, string> = {
+  net_cash_flow: "Net monthly cash flow",
+  surplus_income_ratio: "Surplus vs income",
+  otp_ratio_pct: "On-time payments",
+  missed_payment_ratio: "Missed payments",
+  penalty_count: "Cheque bounces",
+  amb_pct_of_nmi: "Avg balance vs income",
+  net_monthly_income: "Detected monthly income",
+  employment_type: "Employment type",
 };
 
-function fmt(key: string, value: any): string {
-  if (value === null || value === undefined) return '—';
-  const n = Number(value);
-  if (!isNaN(n)) {
-    if (key.includes('ratio') || key === 'missed_payment_ratio') return (n * (key === 'missed_payment_ratio' ? 100 : 1)).toFixed(1) + '%';
-    if (key.includes('pct') || key.includes('_pct')) return n.toFixed(1) + '%';
-    if (key.includes('income') || key.includes('flow')) return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-    if (key === 'penalty_count') return String(Math.round(n));
-    return n.toFixed(1);
+/** Why an input could not be derived — plain language, not the raw key. */
+const MISSING_REASON: Record<string, string> = {
+  otp_ratio_pct: "The statement shows payments made but not payments due.",
+  missed_payment_ratio: "The statement shows payments made but not payments due.",
+  net_monthly_income_not_detected: "No salary credits were detected.",
+  employment_type_unsupported_by_salary_data: "Employment type was reported without salary evidence to support it.",
+  amb_pct_of_nmi: "Needs detected income, which this statement did not show.",
+  surplus_income_ratio: "Needs detected income, which this statement did not show.",
+  net_cash_flow: "Credit/debit totals were not present.",
+  penalty_count: "Bounce counts were not present.",
+};
+
+const STATUS_TONE: Record<string, "green" | "amber" | "red" | "accent" | "neutral"> = {
+  completed: "green",
+  processing: "accent",
+  pending: "amber",
+  failed: "red",
+  expired: "neutral",
+};
+
+function fmtMetric(key: string, value: number | string): string {
+  if (typeof value === "string") return value.replace(/_/g, " ");
+  if (key.endsWith("_pct") || key.endsWith("_ratio")) return `${value}%`;
+  if (key === "net_cash_flow" || key === "net_monthly_income") {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency", currency: "INR", maximumFractionDigits: 0,
+    }).format(value);
   }
-  return String(value).replace(/_/g, ' ');
+  return String(value);
 }
 
-export function BankStatementPanel({ token, applicationId, app, onRefresh }: BankStatementPanelProps) {
-  const alreadyComplete = Boolean(app.aa_completed_at && app.aa_lrs_inputs);
-  const alreadyInitiated = Boolean(app.aa_initiated_at);
+function expiryLabel(iso?: string | null): string | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "expired";
+  const h = Math.floor(ms / 3_600_000);
+  return h >= 1 ? `expires in ${h}h` : `expires in ${Math.max(1, Math.round(ms / 60_000))}m`;
+}
 
-  const [state, setState] = useState<PanelState>(
-    alreadyComplete ? 'complete' : alreadyInitiated ? 'ready' : 'idle'
-  );
-  const [uploadUrl, setUploadUrl] = useState<string | null>(null);
-  const [mappedFields, setMappedFields] = useState<Record<string, any> | null>(
-    alreadyComplete ? (app.aa_lrs_inputs || null) : null
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [rescoring, setRescoring] = useState(false);
-  const [rescored, setRescored] = useState(false);
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+export function BankStatementPanel({ applicationId }: { applicationId: string }) {
+  const [fetches, setFetches] = React.useState<BsaFetch[] | null>(null);
+  const [institutions, setInstitutions] = React.useState<BsaInstitution[]>([]);
+  const [institutionId, setInstitutionId] = React.useState("");
+  const [months, setMonths] = React.useState("6");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
 
-  const stopPoll = () => {
-    if (pollTimer.current) { clearTimeout(pollTimer.current); pollTimer.current = null; }
-  };
+  const load = React.useCallback(() => {
+    bsaListFetches(applicationId)
+      .then((r) => setFetches(r.fetches ?? []))
+      .catch((e: any) => setErr(e?.message || "Could not load bank statement fetches."));
+  }, [applicationId]);
 
-  const pollStatus = useCallback(async () => {
+  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    bsaInstitutions()
+      .then((r) => setInstitutions(r.institutions ?? []))
+      .catch(() => setInstitutions([]));
+  }, []);
+
+  const latest = fetches?.[0] ?? null;
+  // Starting another journey is ALWAYS allowed. Hiding the form while one is
+  // pending looked tidy but stranded the officer: a borrower who uploads a
+  // statement from the wrong bank fails silently inside Digitap's UI, so the
+  // journey sits `pending` for the full 24h link life with no way to issue a
+  // replacement. A borrower may also legitimately need a second bank.
+  // The form is collapsed by default when something is already in flight, so the
+  // common case stays quiet without being a dead end.
+  const inFlight = !!latest && ["pending", "processing"].includes(latest.status);
+  const [showForm, setShowForm] = React.useState(false);
+  const formOpen = !inFlight || showForm;
+
+  async function start() {
+    if (!institutionId) { setErr("Pick the bank that issued the statement."); return; }
+    setBusy(true);
+    setErr(null);
     try {
-      const data = await checkAAStatus(token, applicationId);
-      if (data.status === 'complete') {
-        stopPoll();
-        setMappedFields(data.mapped_fields || app.aa_lrs_inputs || null);
-        setState('complete');
-        onRefresh();
-      } else if (data.status === 'failed') {
-        stopPoll();
-        setState('failed');
-        setError('Statement processing failed. Please try again.');
-      } else {
-        pollTimer.current = setTimeout(pollStatus, 5000);
-      }
-    } catch {
-      pollTimer.current = setTimeout(pollStatus, 8000);
-    }
-  }, [token, applicationId, onRefresh, app.aa_lrs_inputs]);
-
-  useEffect(() => { return () => stopPoll(); }, []);
-
-  const handleInitiate = async () => {
-    setState('initiating');
-    setError(null);
-    try {
-      const data = await initiateAAUpload(token, applicationId);
-      setUploadUrl(data.url);
-      setState('ready');
-      onRefresh();
+      const inst = institutions.find((i) => String(i.digitap_id) === institutionId);
+      await bsaStartFetch({
+        application_id: applicationId,
+        institution_id: Number(institutionId),
+        institution_name: inst?.name,
+        months: Number(months),
+      });
+      load();
     } catch (e: any) {
-      setError(e.message || 'Could not generate upload link');
-      setState('idle');
-    }
-  };
-
-  const handleCheckStatus = async () => {
-    setState('checking');
-    setError(null);
-    try {
-      const data = await checkAAStatus(token, applicationId);
-      if (data.status === 'complete') {
-        setMappedFields(data.mapped_fields || null);
-        setState('complete');
-        onRefresh();
-      } else if (data.status === 'failed') {
-        setState('failed');
-        setError('Statement processing failed. Please generate a new link.');
-      } else if (data.status === 'pending') {
-        setState('ready');
-        // auto-poll every 5s
-        pollTimer.current = setTimeout(pollStatus, 5000);
-      } else {
-        setState('ready');
-      }
-    } catch (e: any) {
-      setError(e.message || 'Could not check status');
-      setState('ready');
-    }
-  };
-
-  const handleRescore = async () => {
-    setRescoring(true);
-    try {
-      await rescoreLRS(token, applicationId);
-      setRescored(true);
-      onRefresh();
-    } catch {
-      // non-blocking — LRS panel will show the updated score on next load
+      setErr(e?.message || "Could not create the upload link.");
     } finally {
-      setRescoring(false);
+      setBusy(false);
     }
-  };
+  }
 
-  const containerStyle: React.CSSProperties = {
-    background: 'rgba(59,130,246,0.04)',
-    border: '1px solid rgba(59,130,246,0.12)',
-    backdropFilter: 'blur(12px)',
-    borderRadius: '12px',
-    padding: '16px',
-    marginTop: '12px',
-  };
-
-  const labelStyle: React.CSSProperties = {
-    fontSize: '11px',
-    fontWeight: 600,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    color: 'rgba(59,130,246,0.7)',
-    marginBottom: '10px',
-  };
-
-  const btnBase: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '7px 14px',
-    borderRadius: '8px',
-    fontSize: '13px',
-    fontWeight: 500,
-    cursor: 'pointer',
-    border: 'none',
-    transition: 'opacity 0.15s',
-  };
-
-  const primaryBtn: React.CSSProperties = {
-    ...btnBase,
-    background: 'rgba(59,130,246,0.9)',
-    color: '#fff',
-  };
-
-  const ghostBtn: React.CSSProperties = {
-    ...btnBase,
-    background: 'rgba(59,130,246,0.08)',
-    color: 'rgba(59,130,246,0.9)',
-    border: '1px solid rgba(59,130,246,0.2)',
-  };
-
-  const urlBoxStyle: React.CSSProperties = {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    background: 'rgba(0,0,0,0.03)',
-    border: '1px solid rgba(59,130,246,0.12)',
-    borderRadius: '8px',
-    padding: '8px 12px',
-    marginBottom: '10px',
-  };
-
-  const fields = mappedFields || {};
-  const fieldKeys = Object.keys(FIELD_LABELS).filter(k => fields[k] !== undefined);
+  async function refresh(id: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await bsaAdvance(id);
+      load();
+    } catch (e: any) {
+      setErr(e?.message || "Could not refresh.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div style={containerStyle}>
-      <div style={labelStyle}>Bank Statement · Account Aggregator</div>
+    <Card>
+      <CardHeader
+        title="Bank statements"
+        qualifier="feeds the cash-flow score"
+        right={latest ? <Pill tone={STATUS_TONE[latest.status] ?? "neutral"}>{latest.status}</Pill> : undefined}
+      />
+      <CardBody className="space-y-4">
+        {err && <p className="text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>}
 
-      {/* ── IDLE: never initiated ─────────────────────────── */}
-      {state === 'idle' && (
-        <div>
-          <p style={{ fontSize: '13px', color: 'var(--fx-text2, #6b7280)', marginBottom: '12px' }}>
-            Generate a secure upload link for the customer to share their bank statement.
-            Covers the last 6 months automatically.
-          </p>
-          <button style={primaryBtn} onClick={handleInitiate}>
-            ⬆ Get Upload Link
-          </button>
-        </div>
-      )}
-
-      {/* ── INITIATING ───────────────────────────────────── */}
-      {state === 'initiating' && (
-        <p style={{ fontSize: '13px', color: 'var(--fx-text2, #6b7280)' }}>Generating link…</p>
-      )}
-
-      {/* ── READY: URL generated, waiting for customer ────── */}
-      {state === 'ready' && (
-        <div>
-          {uploadUrl && (
-            <div>
-              <p style={{ fontSize: '12px', color: 'var(--fx-text2, #6b7280)', marginBottom: '6px' }}>
-                Share this link with the customer to upload their bank statement:
-              </p>
-              <div style={urlBoxStyle}>
-                <span style={{ fontSize: '12px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fx-text, #111)' }}>
-                  {uploadUrl}
-                </span>
-                <button
-                  style={{ ...ghostBtn, padding: '4px 10px', fontSize: '11px' }}
-                  onClick={() => navigator.clipboard.writeText(uploadUrl)}
-                >
-                  Copy
-                </button>
-              </div>
-            </div>
-          )}
-          {!uploadUrl && (
-            <p style={{ fontSize: '13px', color: 'var(--fx-text2, #6b7280)', marginBottom: '10px' }}>
-              Upload link previously generated. Click below once the customer has uploaded.
-            </p>
-          )}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button style={primaryBtn} onClick={handleCheckStatus}>
-              ↻ Check Status
-            </button>
-            <button style={ghostBtn} onClick={handleInitiate}>
-              New Link
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── CHECKING ─────────────────────────────────────── */}
-      {state === 'checking' && (
-        <p style={{ fontSize: '13px', color: 'var(--fx-text2, #6b7280)' }}>Checking status…</p>
-      )}
-
-      {/* ── COMPLETE ─────────────────────────────────────── */}
-      {state === 'complete' && (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
-            <span style={{ color: '#22c55e', fontSize: '14px' }}>✓</span>
-            <span style={{ fontSize: '13px', fontWeight: 500, color: '#22c55e' }}>Statement received & processed</span>
-          </div>
-
-          {fieldKeys.length > 0 && (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-              gap: '8px',
-              marginBottom: '14px',
-            }}>
-              {fieldKeys.map(k => (
-                <div key={k} style={{
-                  background: 'rgba(59,130,246,0.05)',
-                  border: '1px solid rgba(59,130,246,0.1)',
-                  borderRadius: '8px',
-                  padding: '8px 10px',
-                }}>
-                  <div style={{ fontSize: '10px', color: 'rgba(59,130,246,0.7)', fontWeight: 600, marginBottom: '2px' }}>
-                    {FIELD_LABELS[k]}
-                  </div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--fx-text, #111)' }}>
-                    {fmt(k, fields[k])}
-                  </div>
+        {fetches === null ? (
+          <LoadingState label="Loading…" rows={2} />
+        ) : (
+          <>
+            {/* ── start a new journey ── */}
+            {inFlight && !showForm && (
+              <button
+                type="button"
+                onClick={() => setShowForm(true)}
+                className="fx-tap text-[12px] transition-colors hover:underline"
+                style={{ color: "var(--fx-accent)" }}
+              >
+                Request another statement
+              </button>
+            )}
+            {formOpen && (
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field
+                    label="Borrower's bank"
+                    htmlFor="bsa-inst"
+                    hint="Must match the statement they upload, or Digitap will reject it."
+                  >
+                    <Select
+                      id="bsa-inst"
+                      value={institutionId}
+                      onChange={(e) => setInstitutionId(e.target.value)}
+                    >
+                      <option value="">Select a bank…</option>
+                      {institutions.map((i) => (
+                        <option key={i.digitap_id} value={i.digitap_id}>{i.name}</option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Statement period" htmlFor="bsa-months">
+                    <Select id="bsa-months" value={months} onChange={(e) => setMonths(e.target.value)}>
+                      <option value="3">Last 3 months</option>
+                      <option value="6">Last 6 months</option>
+                      <option value="12">Last 12 months</option>
+                    </Select>
+                  </Field>
                 </div>
-              ))}
-            </div>
-          )}
+                <Button variant="primary" onClick={start} disabled={busy || !institutions.length}>
+                  {busy ? "Creating link…" : "Request bank statements"}
+                </Button>
+                {!institutions.length && (
+                  <p className="text-[11px] text-fx-text3">
+                    The bank list could not be loaded, so a link cannot be created yet.
+                  </p>
+                )}
+              </div>
+            )}
 
-          {!rescored ? (
-            <button
-              style={primaryBtn}
-              onClick={handleRescore}
-              disabled={rescoring}
-            >
-              {rescoring ? 'Rescoring…' : '↻ Rescore LRS with statement data'}
-            </button>
-          ) : (
-            <span style={{ fontSize: '12px', color: '#22c55e' }}>
-              ✓ LRS rescore triggered — check the LRS panel for updated score
-            </span>
-          )}
-        </div>
-      )}
+            {/* ── the journeys ── */}
+            {fetches.length === 0 ? (
+              <EmptyState
+                title="No statement requested yet"
+                description="Request one to score the borrower's cash flow from their real bank statement."
+              />
+            ) : (
+              <div className="space-y-3">
+                {fetches.map((f) => (
+                  <div key={f.id} className="rounded-[10px] p-3" style={{ background: "var(--fx-bg)" }}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill tone={STATUS_TONE[f.status] ?? "neutral"}>{f.status}</Pill>
+                      <span className="text-[13px] text-fx-text">{f.institution_name || `Bank #${f.institution_id}`}</span>
+                      <span className="fx-mono text-[11px] text-fx-text3">
+                        {f.start_month} → {f.end_month}
+                      </span>
+                      {(f.status === "pending" || f.status === "processing") && (
+                        <span className="ml-auto">
+                          <Button variant="quiet" onClick={() => refresh(f.id)} disabled={busy}>
+                            Refresh
+                          </Button>
+                        </span>
+                      )}
+                    </div>
 
-      {/* ── FAILED ───────────────────────────────────────── */}
-      {state === 'failed' && (
-        <div>
-          <p style={{ fontSize: '13px', color: '#ef4444', marginBottom: '10px' }}>
-            Statement processing failed. Please generate a new link and try again.
-          </p>
-          <button style={primaryBtn} onClick={handleInitiate}>
-            ↻ Try Again
-          </button>
-        </div>
-      )}
+                    {/* Waiting on the borrower. Naming the expiry matters: a
+                        wrong-bank upload fails silently inside Digitap, so the
+                        link lapsing is often the only signal an officer gets. */}
+                    {f.status === "pending" && f.upload_url && (
+                      <div className="mt-2 space-y-2">
+                        <p className="text-[12px] text-fx-text2">
+                          Waiting for the borrower to upload
+                          {expiryLabel(f.expires_at) ? ` — link ${expiryLabel(f.expires_at)}` : ""}.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <code className="fx-mono flex-1 truncate rounded-[8px] px-2 py-1 text-[11px] text-fx-text2"
+                                style={{ background: "var(--fx-surface2)" }}>
+                            {f.upload_url}
+                          </code>
+                          <Button
+                            variant="quiet"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(f.upload_url!);
+                              setCopied(true);
+                              setTimeout(() => setCopied(false), 2000);
+                            }}
+                          >
+                            {copied ? "Copied" : "Copy link"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
 
-      {error && (
-        <p style={{ fontSize: '12px', color: '#ef4444', marginTop: '8px' }}>{error}</p>
-      )}
-    </div>
+                    {(f.status === "failed" || f.status === "expired") && (
+                      <p className="mt-2 text-[12px]" style={{ color: "var(--fx-red)" }}>
+                        {f.vendor_message || "The statement could not be analysed."}
+                        {f.vendor_code ? ` (${f.vendor_code})` : ""}
+                      </p>
+                    )}
+
+                    {/* ── the result ── */}
+                    {f.status === "completed" && f.metrics && (
+                      <div className="mt-3 space-y-3">
+                        {Object.entries(f.metrics.inputs ?? {}).length > 0 ? (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {Object.entries(f.metrics.inputs ?? {}).map(([k, v]) => (
+                              <div key={k} className="flex items-baseline gap-2">
+                                <span className="text-[11px] text-fx-text3">
+                                  {METRIC_LABEL[k] ?? k.replace(/_/g, " ")}
+                                </span>
+                                <span className="fx-mono ml-auto text-[13px] text-fx-text">
+                                  {fmtMetric(k, v)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[12px]" style={{ color: "var(--fx-amber)" }}>
+                            The statement was analysed but produced no usable scoring inputs.
+                          </p>
+                        )}
+
+                        {/* Not an error state — a statement legitimately may not
+                            evidence everything. Shown so a partial score is never
+                            mistaken for a complete one. */}
+                        {(f.metrics.coverage?.missing?.length ?? 0) > 0 && (
+                          <div className="rounded-[8px] p-2.5" style={{ background: "var(--fx-amber-tint)" }}>
+                            <div className="text-[11px]" style={{ color: "var(--fx-amber)" }}>
+                              Not derivable from this statement
+                            </div>
+                            <ul className="mt-1 space-y-0.5">
+                              {f.metrics.coverage!.missing.map((m) => (
+                                <li key={m} className="text-[11px] text-fx-text2">
+                                  {METRIC_LABEL[m] ?? m.replace(/_/g, " ")}
+                                  {MISSING_REASON[m] ? ` — ${MISSING_REASON[m]}` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </CardBody>
+    </Card>
   );
 }

@@ -263,9 +263,9 @@ export default function UsagePage() {
 function QuotaPanel({ quota }: { quota: QuotaInfo }) {
   const exceeded = quota.exceeded;
   const projText = quota.projection
-    ? `At the current rate — ${quota.rate_per_day.toLocaleString("en-IN")} minutes a day over the last 7 days — you will reach the quota around ${quota.projection.date}, ${quota.projection.days_before_end} day${quota.projection.days_before_end === 1 ? "" : "s"} before the period ends.`
+    ? `At the current rate — ${quota.rate_per_day.toLocaleString("en-IN")} minute${quota.rate_per_day === 1 ? "" : "s"} a day over the last 7 days — you will reach the quota around ${quota.projection.date}, ${quota.projection.days_before_end} day${quota.projection.days_before_end === 1 ? "" : "s"} before the period ends.`
     : quota.rate_per_day > 0
-      ? `At the current rate — ${quota.rate_per_day.toLocaleString("en-IN")} minutes a day — you are on track to stay within the quota this period.`
+      ? `At the current rate — ${quota.rate_per_day.toLocaleString("en-IN")} minute${quota.rate_per_day === 1 ? "" : "s"} a day — you are on track to stay within the quota this period.`
       : "No calls in the last 7 days, so there is no run rate to project from.";
 
   return (

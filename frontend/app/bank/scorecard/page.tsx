@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { API_URL } from '@/lib/api';
-import { getAccessToken } from '@/lib/auth';
+import { getAccessToken, getCurrentUser } from '@/lib/auth';
+import { getMe } from '@/lib/api/bank';
 import {
   ChevronDown, ChevronRight, Save, RotateCcw, AlertTriangle,
   CheckCircle2, Loader2, ArrowLeft, Info,
@@ -695,6 +696,9 @@ export default function ScorecardPage() {
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null);
 
   const [token, setToken] = useState<string | null>(null);
+  // PUT /api/lrs/config is bank_admin-only. Without this the editor happily
+  // took an officer's edits, enabled Save, and answered 403 on click.
+  const [canEdit, setCanEdit] = useState(true);
 
   useEffect(() => {
     // Read the token on the client (after mount) so we never redirect on a
@@ -702,6 +706,15 @@ export default function ScorecardPage() {
     const t = getAccessToken('bank');
     if (!t) { router.push('/bank/login'); return; }
     setToken(t);
+    // Ask the server who this is; fall back to the cached identity. If
+    // neither answers, leave the editor as it was rather than locking out
+    // an admin over a transient failure - the backend is the real guard.
+    getMe(t)
+      .then((u: any) => setCanEdit(u?.role === 'bank_admin'))
+      .catch(() => {
+        const cached = getCurrentUser('bank');
+        if (cached?.role) setCanEdit(cached.role === 'bank_admin');
+      });
     fetch(`${API_URL}/api/lrs/config`, { headers: { Authorization: `Bearer ${t}` } })
       .then(async r => {
         const data = await r.json();
@@ -855,7 +868,7 @@ export default function ScorecardPage() {
     // it every sc- token resolves to nothing. The provider supplies the theme
     // because this screen renders its own chrome rather than BankUserShell's.
     <FinixThemeProvider>
-    <div className="finix-root sc-root min-h-screen" style={{ background: 'var(--ground)' }}>
+    <div className={`finix-root sc-root min-h-screen${canEdit ? '' : ' sc-readonly'}`} style={{ background: 'var(--ground)' }}>
       <style dangerouslySetInnerHTML={{ __html: `
         /* FINIX MIGRATION (Job 2): this screen keeps its own sc-* component
            layer — 1,143 lines of deeply nested band/category editors that drive
@@ -911,6 +924,11 @@ export default function ScorecardPage() {
         }
         .sc-num:focus { box-shadow: inset 0 0 0 1px var(--fx-accent); }
         .sc-num:disabled { background: var(--fx-bg); color: var(--ink-faint); }
+        /* View-only (non bank_admin): the value editors stop responding, but
+           expanding pillars and opening the formula popovers still works —
+           reading the scorecard is allowed, publishing it is not. */
+        .sc-readonly input, .sc-readonly select, .sc-readonly textarea,
+        .sc-readonly [role="switch"] { pointer-events: none; opacity: .65; }
         /* Decision score track */
         .sc-track { display: flex; height: 12px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--fx-border); }
         .sc-track-zone { transition: width .2s ease; }
@@ -1008,7 +1026,8 @@ export default function ScorecardPage() {
         <Button
           variant="primary"
           onClick={handleSave}
-          disabled={!isDirty || saving || !pillarWeightOk}
+          disabled={!canEdit || !isDirty || saving || !pillarWeightOk}
+          title={!canEdit ? 'Only a bank admin can publish the scorecard' : undefined}
           className="flex-shrink-0"
         >
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -1032,6 +1051,19 @@ export default function ScorecardPage() {
       )}
 
       <div className="max-w-4xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
+
+        {/* Read-only notice — say it before the officer spends time editing. */}
+        {!canEdit && (
+          <div className="mb-4 flex items-start gap-2.5 rounded-[10px] p-3 text-[13px]"
+            style={{ background: 'var(--fx-amber-tint)', color: 'var(--fx-amber)' }}>
+            <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <span>
+              <b>View only.</b> The scorecard sets the weights and cut-offs behind every credit
+              decision for your bank, so only a <b>bank admin</b> can change it. You can read
+              everything here — ask your bank admin to make any change.
+            </span>
+          </div>
+        )}
 
         {/* Pillar weight total warning */}
         {!pillarWeightOk && (

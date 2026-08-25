@@ -35,10 +35,11 @@ CALL_ID = uuid.uuid4()
 
 
 class _Pool:
-    def __init__(self, row=None, val=1, exec_result="UPDATE 1"):
+    def __init__(self, row=None, val=1, exec_result="UPDATE 1", bank_status="active"):
         self.row = row
         self.val = val
         self.exec_result = exec_result
+        self.bank_status = bank_status
         self.statements: list[tuple[str, tuple]] = []
 
     async def fetchrow(self, sql, *args):
@@ -47,6 +48,8 @@ class _Pool:
 
     async def fetchval(self, sql, *args):
         self.statements.append((sql, args))
+        if "SELECT status FROM banks" in sql:
+            return self.bank_status
         return self.val
 
     async def execute(self, sql, *args):
@@ -131,7 +134,7 @@ def test_an_operator_supplying_a_bank_is_accepted(cb_pool):
 
 
 def test_an_unknown_bank_is_rejected(monkeypatch):
-    pool = _Pool(val=None)  # SELECT 1 FROM banks -> no row
+    pool = _Pool(bank_status=None)  # SELECT status FROM banks -> no row
     monkeypatch.setattr(state_mod, "db_pool", pool)
 
     async def _ensure():
@@ -214,3 +217,22 @@ def test_live_status_no_longer_hides_everything_from_an_operator(monkeypatch):
     except Exception:
         pass  # the rest of the handler is not what we are pinning here
     assert "IS NOT DISTINCT FROM" not in pool.sql, "the inverted operator predicate is back"
+
+
+@pytest.mark.parametrize("status", ["inactive", "suspended"])
+def test_a_non_active_bank_is_rejected(monkeypatch, status):
+    """The /ops bank picker lists every bank the admin API returns, including
+    the LEGACY / UNASSIGNED placeholder (status=inactive). Assigning work to one
+    would dial on behalf of a bank that is not supposed to be operating."""
+    pool = _Pool(bank_status=status)
+    monkeypatch.setattr(state_mod, "db_pool", pool)
+
+    async def _ensure():
+        return None
+
+    monkeypatch.setattr(cb_mod, "_ensure_manual_batch", _ensure)
+    with pytest.raises(HTTPException) as e:
+        _schedule(_body(bank_id=str(BANK_B)), OPERATOR)
+    assert e.value.status_code == 400
+    assert status in str(e.value.detail)
+    assert not any("INSERT INTO agent_calls" in s for s, _ in pool.statements)

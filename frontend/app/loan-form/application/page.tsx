@@ -246,6 +246,10 @@ export default function LoanApplication() {
   const [previewDisclaimer, setPreviewDisclaimer] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  // Summary of which required documents are still outstanding. Kept separate
+  // from `errors` so it can name them all in one sentence at the top of the
+  // step, rather than only marking each row.
+  const [docError, setDocError] = useState('');
   const [errors, setErrors] = useState<any>({});
   const [inactivityWarning, setInactivityWarning] = useState(false);
   const [countdown, setCountdown] = useState(Math.floor(WARNING_WINDOW_MS / 1000));
@@ -938,6 +942,58 @@ export default function LoanApplication() {
     return '';
   };
 
+  // ── Required documents ──────────────────────────────────────────────────
+  // Hoisted out of the JSX so step 5 can actually VALIDATE against it. While the
+  // list lived inline, `required: true` and the red asterisk were decoration:
+  // handleNext fell through to `else valid = true` for step 5, and handleSubmit
+  // never looked at documents either — so an application could be submitted with
+  // nothing attached at all. The backend does not check them either, so this is
+  // the only gate.
+  //
+  // Consumer-durable applications additionally need the dealer quotation, which
+  // is why this is a function of the loan type rather than a constant.
+  const requiredDocs = (): { key: string; label: string }[] => {
+    const base = [
+      { key: 'aadhaar_front_url', label: 'Aadhaar Document' },
+      { key: 'photo_url', label: 'Passport Size Photo' },
+      { key: 'salary_slips_url', label: 'Salary Slips (Last 3 months)' },
+      { key: 'bank_statements_url', label: 'Bank Statements (Last 6 months)' },
+    ];
+    if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
+      base.push({ key: 'quotation_url', label: 'Dealer Quotation' });
+    }
+    return base;
+  };
+
+  /**
+   * Step 5 gate. Names the missing documents rather than saying "upload the
+   * required documents" — the customer has just been shown five upload rows and
+   * needs to know WHICH ones are outstanding.
+   *
+   * Note several of these can be satisfied automatically by DigiLocker (photo,
+   * Aadhaar, and the two optional proofs), so a customer who verified via
+   * DigiLocker often has fewer to do than the list suggests.
+   */
+  const step5Valid = () => {
+    const missing = requiredDocs().filter(d => !formData[d.key]);
+    setErrors((p: any) => {
+      const next = { ...p };
+      requiredDocs().forEach(d => { delete next[d.key]; });
+      missing.forEach(d => { next[d.key] = 'This document is required'; });
+      return next;
+    });
+    if (missing.length) {
+      setDocError(
+        missing.length === 1
+          ? `${missing[0].label} is still required.`
+          : `${missing.length} required documents are still missing: ${missing.map(d => d.label).join(', ')}.`
+      );
+      return false;
+    }
+    setDocError('');
+    return true;
+  };
+
   const step4Valid = () => {
     const isCD = (formData.consumer_loan_type || 'personal') === 'consumer_durable';
     // Single validate() call so its setErrors doesn't wipe the merged errors below.
@@ -977,6 +1033,7 @@ export default function LoanApplication() {
     else if (currentStep === 2) valid = step2Valid();
     else if (currentStep === 3) valid = step3Valid();
     else if (currentStep === 4) valid = step4Valid();
+    else if (currentStep === 5) valid = step5Valid();
     else valid = true;
 
     if (valid) {
@@ -993,6 +1050,17 @@ export default function LoanApplication() {
       return;
     }
     if (!agreed) { alert('Please agree to the declaration'); return; }
+    // Re-check here as well as in step 5: a resumed session can land directly on
+    // Review (the resume banner does exactly that), bypassing the step gate.
+    const missingDocs = requiredDocs().filter(d => !formData[d.key]);
+    if (missingDocs.length) {
+      setCurrentStep(5);
+      setDocError(
+        `Cannot submit — still missing: ${missingDocs.map(d => d.label).join(', ')}.`
+      );
+      window.scrollTo(0, 0);
+      return;
+    }
     setSubmitting(true);
     const session = getSession();
     try {
@@ -1833,6 +1901,13 @@ export default function LoanApplication() {
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="DOC" color="#DC2626" title="Document Upload" />
               <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · PDF / JPG / PNG accepted</p>
+              {docError && (
+                <div className="flex items-start gap-2.5 rounded-xl p-3.5"
+                  style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                  <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{docError}</p>
+                </div>
+              )}
               <div className="space-y-3">
                 {[
                   { key: 'aadhaar_front_url', label: 'Aadhaar Document', required: true },

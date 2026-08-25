@@ -1638,6 +1638,49 @@ def _validate_employment(app: dict) -> None:
     if occ and occ in _INELIGIBLE_OCCUPATION_IDS:
         raise HTTPException(status_code=400, detail=msg)
 
+
+# Required documents, mirroring frontend/lib/utils/loanDocuments.ts. Kept as a
+# literal rather than imported because the frontend spec is TypeScript; if a
+# document's `required` flag changes there, change it here too.
+#
+# WHY THIS EXISTS: the form marked these required with a red asterisk and a
+# client-side gate, but /api/submit-form-session never checked them. A POST that
+# skipped the UI submitted an application with no documents at all, and LRS
+# scoring then ran against a borrower with no bank statement — the one document
+# the cash-flow pillar depends on.
+_REQUIRED_DOC_COLUMNS = {
+    "aadhaar_front_url":    "Aadhaar Document",
+    "photo_url":            "Passport Size Photo",
+    "bank_statements_url":  "Bank Statements",
+}
+# Consumer-durable applications also need the dealer quotation.
+_CD_REQUIRED_DOC_COLUMNS = {"quotation_url": "Dealer Quotation"}
+
+
+def _validate_documents(app: dict) -> None:
+    """Reject submission when a required document is missing (mirrors the client)."""
+    required = dict(_REQUIRED_DOC_COLUMNS)
+    if str(app.get("consumer_loan_type") or "").strip() == "consumer_durable":
+        required.update(_CD_REQUIRED_DOC_COLUMNS)
+    # bank_statements_url is the column the upload endpoint writes; older rows
+    # used bank_statement_url (singular). Accept either so applications created
+    # before migration_v44 can still be submitted.
+    missing = []
+    for col, label in required.items():
+        val = app.get(col)
+        if not val and col == "bank_statements_url":
+            val = app.get("bank_statement_url")
+        if not str(val or "").strip():
+            missing.append(label)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{'This document is' if len(missing) == 1 else 'These documents are'} "
+                f"required before submitting: {', '.join(missing)}."
+            ),
+        )
+
 # ============================================
 # API ENDPOINTS
 # ============================================
@@ -4840,6 +4883,7 @@ async def submit_form_session(session_token: str, request: Request):
     _validate_experience(app_row)
     _validate_address(app_row)
     _validate_employment(app_row)
+    _validate_documents(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

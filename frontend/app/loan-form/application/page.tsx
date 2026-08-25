@@ -1,5 +1,5 @@
 ﻿'use client';
-import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -109,6 +109,20 @@ export default function LoanApplication() {
   const [panMismatchWarning, setPanMismatchWarning] = useState<{callName: string; verifiedName: string; attemptsRemaining: number} | null>(null);
   const [pincodeLookingUp, setPincodeLookingUp] = useState<{ current: boolean; permanent: boolean }>({ current: false, permanent: false });
   const [pincodeValid, setPincodeValid] = useState<{ current: boolean; permanent: boolean }>({ current: true, permanent: true });
+  // Per-document upload in flight — without this the customer can tap Upload
+  // repeatedly on a slow connection and race several writes to the same column.
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  // The REAL inactivity window, learned from the server on load.
+  // SESSION_TIMEOUT_MS is only a first-paint default: the backend reads
+  // LOAN_SESSION_INACTIVITY_SECONDS from the environment, so if that is ever
+  // tuned in a deployment the hardcoded 15 minutes would be wrong in the
+  // dangerous direction — the client would promise time the server will not
+  // honour and the session would die with no warning at all.
+  const timeoutMsRef = useRef<number>(SESSION_TIMEOUT_MS);
+  // Seconds left in the session, shown continuously in the header. The customer
+  // is asked to leave the page to fetch a bank PDF; a visible clock is the only
+  // way they can judge whether they have time before it expires.
+  const [secondsLeft, setSecondsLeft] = useState<number>(Math.floor(SESSION_TIMEOUT_MS / 1000));
 
   const handleVerifyPAN = async () => {
     const pan = (formData.pan_number || '').trim();
@@ -355,7 +369,8 @@ export default function LoanApplication() {
 
     // Single 1s ticker: drives the warning modal + live countdown + auto-expiry.
     const ticker = setInterval(() => {
-      const remainingMs = SESSION_TIMEOUT_MS - (Date.now() - lastActivityRef.current);
+      const remainingMs = timeoutMsRef.current - (Date.now() - lastActivityRef.current);
+      setSecondsLeft(Math.max(0, Math.ceil(remainingMs / 1000)));
       if (remainingMs <= 0) { logout(); return; }
       if (remainingMs <= WARNING_WINDOW_MS) {
         warningShownRef.current = true;
@@ -610,6 +625,15 @@ export default function LoanApplication() {
       if (res.status === 401) { logout(); return; }
       const data = await res.json();
       if (data.status === 'success') {
+        // Derive the true idle window from the server's own expiry stamp.
+        // Guarded: only accept a sane value (1–120 min) so a clock skew or a
+        // malformed timestamp can never shorten the session to nothing.
+        if (data.session_valid_until) {
+          const ms = new Date(data.session_valid_until).getTime() - Date.now();
+          if (Number.isFinite(ms) && ms > 60_000 && ms < 120 * 60_000) {
+            timeoutMsRef.current = ms;
+          }
+        }
         const d = data.data;
         // Split full_name → first/last if not already set (pre-filled from voice call)
         if (d.full_name && !d.first_name) {
@@ -1215,15 +1239,31 @@ export default function LoanApplication() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Always-visible session countdown. Turns amber inside the last
+                  two minutes — the same threshold that raises the warning modal,
+                  so the colour change and the modal never disagree. */}
+              <span
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full tabular-nums"
+                title="Time left before this session expires from inactivity"
+                style={{
+                  color: secondsLeft <= WARNING_WINDOW_MS / 1000 ? 'var(--fx-amber)' : 'var(--fx-text2)',
+                  background: secondsLeft <= WARNING_WINDOW_MS / 1000 ? 'var(--fx-amber-tint)' : 'var(--fx-surface2)',
+                  border: '1px solid var(--fx-border)',
+                  fontFamily: 'var(--font-body)',
+                }}>
+                <Clock className="w-3 h-3 flex-shrink-0" />
+                <span className="hidden sm:inline">Session&nbsp;</span>
+                {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:{String(secondsLeft % 60).padStart(2, '0')}
+              </span>
               {saving ? (
                 <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: 'var(--fx-accent)', background: 'var(--fx-accent-tint)', fontFamily: 'var(--font-body)' }}>
                   <Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving</span>
                 </span>
               ) : lastSaved ? (
-                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: 'var(--fx-green)', background: 'var(--fx-green-tint)', fontFamily: 'var(--font-body)' }}>
-                  <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: 'var(--fx-green)' }} />
-                  <span className="hidden sm:inline">Last saved {lastSaved}</span>
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full whitespace-nowrap" title={`Last saved ${lastSaved}`} style={{ color: 'var(--fx-green)', background: 'var(--fx-green-tint)', fontFamily: 'var(--font-body)' }}>
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block flex-shrink-0" style={{ background: 'var(--fx-green)' }} />
+                  <span className="hidden md:inline">Saved</span>
                 </span>
               ) : null}
               <ThemeToggle />
@@ -1262,6 +1302,12 @@ export default function LoanApplication() {
                 left: `${100 / steps.length / 2}%`,
                 width: `${Math.max(0, (Math.max(highestStep, currentStep) - 1)) / (steps.length - 1) * (100 - 100 / steps.length)}%`,
               }} />
+            {/* Mobile-only: name the current step, since the per-circle
+                labels below are hidden under `sm`. */}
+            <p className="sm:hidden text-center text-xs font-semibold mb-2"
+              style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+              Step {currentStep} of {steps.length} · {steps[currentStep - 1]}
+            </p>
             <div className="relative flex">
               {steps.map((s, i) => {
                 const stepNum  = i + 1;
@@ -1759,10 +1805,10 @@ export default function LoanApplication() {
                               fd.append('file', file);
                               try {
                                 const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
-                                const data = await res.json();
-                                if (data.url) onChange('quotation_url', data.url);
-                                else setErrors((p: any) => ({ ...p, quotation_url: 'Upload failed. Try again.' }));
-                              } catch { setErrors((p: any) => ({ ...p, quotation_url: 'Upload failed. Try again.' })); }
+                                const data = await res.json().catch(() => ({}));
+                                if (res.ok && data.url) onChange('quotation_url', data.url);
+                                else setErrors((p: any) => ({ ...p, quotation_url: data.detail || 'Upload failed. Please try again.' }));
+                              } catch { setErrors((p: any) => ({ ...p, quotation_url: 'Could not reach the server. Check your connection and try again.' })); }
                             }}
                           />
                           <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData.quotation_url ? 'bg-green-600 text-white' : 'bg-orange-500 text-white hover:bg-orange-600'}`}>
@@ -1946,7 +1992,7 @@ export default function LoanApplication() {
                           photo is images-only, a bank statement is PDF-only.
                           One shared accept let customers attach a photo of a
                           statement, which Digitap cannot parse at all. */}
-                      <input type="file" accept={doc.accept} className="hidden"
+                      <input type="file" accept={doc.accept} className="hidden" disabled={!!uploading[doc.key]}
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
@@ -1964,16 +2010,29 @@ export default function LoanApplication() {
                           fd.append('session_token', getSession() || '');
                           fd.append('document_type', doc.key.replace('_url', ''));
                           fd.append('file', file);
+                          setUploading((u: any) => ({ ...u, [doc.key]: true }));
                           try {
                             const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
-                            const data = await res.json();
-                            if (data.url) onChange(doc.key, data.url);
-                            else setErrors((p: any) => ({ ...p, [doc.key]: 'Upload failed. Try again.' }));
-                          } catch { setErrors((p: any) => ({ ...p, [doc.key]: 'Upload failed. Try again.' })); }
+                            const data = await res.json().catch(() => ({}));
+                            if (res.ok && data.url) {
+                              onChange(doc.key, data.url);
+                            } else {
+                              // Show the server's reason verbatim — it names the
+                              // actual problem (wrong type, too large, not saved).
+                              setErrors((p: any) => ({ ...p, [doc.key]: data.detail || 'Upload failed. Please try again.' }));
+                              e.target.value = '';
+                            }
+                          } catch {
+                            setErrors((p: any) => ({ ...p, [doc.key]: 'Could not reach the server. Check your connection and try again.' }));
+                            e.target.value = '';
+                          } finally {
+                            setUploading((u: any) => ({ ...u, [doc.key]: false }));
+                          }
                         }}
                       />
-                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                        {formData[doc.key] ? 'Replace' : 'Upload'}
+                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 ${uploading[doc.key] ? 'opacity-70 cursor-wait' : ''} ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                        {uploading[doc.key] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {uploading[doc.key] ? 'Uploading' : formData[doc.key] ? 'Replace' : 'Upload'}
                       </span>
                     </label>
                   </div>

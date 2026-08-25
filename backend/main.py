@@ -413,6 +413,72 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 _SAFE_UPLOAD_EXTS = frozenset({"jpg", "jpeg", "png", "pdf"})
 
 
+# ── Upload content validation ────────────────────────────────────────────────
+# Uploads were validated on the browser-declared Content-Type alone. That is
+# attacker-controlled: a renamed executable sent with Content-Type
+# application/pdf was written to disk and served back from /uploads/. It also
+# REJECTED valid files, because some Android pickers send
+# application/octet-stream for a real PDF. Reading the file's own leading bytes
+# fixes both directions at once.
+_MAGIC: dict[str, tuple[bytes, ...]] = {
+    "pdf": (b"%PDF-",),
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpg": (b"\xff\xd8\xff",),
+}
+
+
+def sniff_upload_kind(content: bytes) -> str | None:
+    """Return 'pdf' | 'png' | 'jpg' from the file's own bytes, or None."""
+    for kind, sigs in _MAGIC.items():
+        if any(content.startswith(sig) for sig in sigs):
+            return kind
+    return None
+
+
+# Which content kinds each document may actually be. Mirrors the per-document
+# `accept` in frontend/lib/utils/loanDocuments.ts — the browser enforced these
+# but the server accepted any of the three for any document, so a request that
+# skipped the UI could attach a PHOTO of a bank statement, which Digitap's
+# parser cannot read at all, or a PDF where a passport photograph is required.
+_IMG = frozenset({"jpg", "png"})
+_PDF = frozenset({"pdf"})
+_BOTH = _IMG | _PDF
+_DOC_KINDS: dict[str, frozenset] = {
+    "aadhaar_front": _BOTH,
+    "aadhaar_back": _BOTH,
+    "pan_card": _BOTH,
+    "photo": _IMG,                                    # a face, never a PDF
+    "bank_statement": _PDF, "bank_statements": _PDF,  # must be machine-readable
+    "itr_form16": _PDF,
+    "income_proof": _BOTH,
+    "salary_slips": _BOTH,
+    "proof_of_identification": _BOTH,
+    "proof_of_residence": _BOTH,
+    "quotation": _BOTH,
+}
+_KIND_LABEL = {"pdf": "PDF", "png": "PNG", "jpg": "JPG"}
+
+
+def validate_upload_content(document_type: str, content: bytes) -> str:
+    """Validate the REAL file type for this document. Returns kind, or raises 400."""
+    if not content:
+        raise HTTPException(status_code=400, detail="That file is empty. Please choose another.")
+    kind = sniff_upload_kind(content)
+    if kind is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Unrecognised file. Please upload a JPG, PNG or PDF.",
+        )
+    allowed = _DOC_KINDS.get(document_type, _BOTH)
+    if kind not in allowed:
+        want = " or ".join(sorted(_KIND_LABEL[k] for k in allowed))
+        raise HTTPException(
+            status_code=400,
+            detail=f"This document must be a {want} file (received {_KIND_LABEL[kind]}).",
+        )
+    return kind
+
+
 def safe_upload_filename(document_type: str, original_name: str | None) -> str:
     """Filename that cannot escape its directory or change the served type."""
     label = re.sub(r"[^A-Za-z0-9_-]", "_", (document_type or "").strip())[:40] or "document"
@@ -3752,12 +3818,12 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         raise HTTPException(status_code=404, detail="Invalid token")
     if not token_row.get("otp_verified"):
         raise HTTPException(status_code=403, detail="Please verify OTP before uploading documents.")
-    allowed_types = ['image/jpeg', 'image/png', 'application/pdf']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Invalid file type")
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
+    # Validate the file's OWN bytes, not the browser-declared Content-Type, and
+    # enforce the per-document rule (a bank statement must be a real PDF).
+    validate_upload_content(document_type, file_content)
     loan_dir = UPLOAD_DIR / token_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(document_type, file.filename)
@@ -3774,15 +3840,31 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
+        # NOT best-effort. This column IS the upload: the form reads the persisted
+        # row to decide whether a required document is satisfied, and
+        # _validate_documents gates submission on the same columns. Swallowing a
+        # failure returned {"status": "uploaded"} with a green tick while the field
+        # stayed empty — the customer then could not submit and no error appeared
+        # anywhere. That is how the missing bank_statements_url column (v44) turned
+        # into an unsubmittable application. All 12 mapping targets exist as of v44,
+        # so a failure here is a real fault and must surface.
         try:
             await db_pool.execute(
                 f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE token_id = $2",
                 file_url, token_row["id"]
             )
         except Exception as e:
-            # Some field_mapping targets have no column yet (e.g. salary_slips_url);
-            # application_documents below is the durable record, so never fail the upload.
-            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+            logger.error("Document column update FAILED for %s (%s): %s",
+                         document_type, field_mapping[document_type], e)
+            raise HTTPException(
+                status_code=500,
+                detail="The file was received but could not be attached to your application. Please try again.",
+            ) from e
+    else:
+        # An unmapped document_type persists nothing. Reject rather than report
+        # success for a file the application can never reference.
+        logger.error("Unknown document_type %r rejected", document_type)
+        raise HTTPException(status_code=400, detail=f"Unsupported document type: {document_type}")
     # Durable normalized record — accepts ANY document_type (fixes the missing-column
     # cases) and captures who/when/size. Best-effort: never break the upload.
     try:
@@ -4662,12 +4744,12 @@ async def upload_document_session(
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
-    allowed_types = ['image/jpeg', 'image/png', 'application/pdf']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: JPG, PNG, PDF")
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
+    # Validate the file's OWN bytes, not the browser-declared Content-Type, and
+    # enforce the per-document rule (a bank statement must be a real PDF).
+    validate_upload_content(document_type, file_content)
     loan_dir = UPLOAD_DIR / app_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(document_type, file.filename)
@@ -4684,13 +4766,31 @@ async def upload_document_session(
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
+        # NOT best-effort. This column IS the upload: the form reads the persisted
+        # row to decide whether a required document is satisfied, and
+        # _validate_documents gates submission on the same columns. Swallowing a
+        # failure returned {"status": "uploaded"} with a green tick while the field
+        # stayed empty — the customer then could not submit and no error appeared
+        # anywhere. That is how the missing bank_statements_url column (v44) turned
+        # into an unsubmittable application. All 12 mapping targets exist as of v44,
+        # so a failure here is a real fault and must surface.
         try:
             await db_pool.execute(
                 f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE id = $2",
                 file_url, session["application_id"]
             )
         except Exception as e:
-            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+            logger.error("Document column update FAILED for %s (%s): %s",
+                         document_type, field_mapping[document_type], e)
+            raise HTTPException(
+                status_code=500,
+                detail="The file was received but could not be attached to your application. Please try again.",
+            ) from e
+    else:
+        # An unmapped document_type persists nothing. Reject rather than report
+        # success for a file the application can never reference.
+        logger.error("Unknown document_type %r rejected", document_type)
+        raise HTTPException(status_code=400, detail=f"Unsupported document type: {document_type}")
     # Durable normalized record — accepts ANY document_type; best-effort.
     try:
         await db_pool.execute(

@@ -6,11 +6,23 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
-// Server expires a loan session after 5 min of inactivity (backend
-// /api/get-application, /api/autosave-session, /api/session-keepalive all use 300s).
-// Keep these in sync with that cutoff: warn 60s before, count down to 0 = expiry.
-const SESSION_TIMEOUT_MS = 5 * 60 * 1000;   // 300s — MUST match backend
-const WARNING_WINDOW_MS = 60 * 1000;        // show the warning modal 60s before expiry
+import { documentsFor, missingRequired, validateDocFile } from '@/lib/utils/loanDocuments';
+// Server expires a loan session after LOAN_SESSION_INACTIVITY_SECONDS of
+// inactivity (backend main.py; /api/get-application, /api/autosave-session and
+// /api/session-keepalive all read the same constant).
+//
+// MUST match the backend. If this is shorter the customer sees a warning for an
+// expiry that has not happened; if longer, the session dies with no warning at
+// all and unsaved work is lost.
+//
+// Raised from 5 to 15 minutes: five minutes is punishing for a six-step form
+// that asks people to find and upload a passport photo, salary slips and six
+// months of bank statements. Switching to a banking app to download a PDF
+// routinely takes longer than that.
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000;  // 900s — MUST match backend
+// Warn 2 minutes out rather than 1: with a longer window the customer is more
+// likely to be away from the screen, so they need more time to come back.
+const WARNING_WINDOW_MS = 2 * 60 * 1000;
 const KEEPALIVE_THROTTLE_MS = 60 * 1000;    // at most one server ping per 60s of activity
 
 // Format a save timestamp as full date + time, with a friendly Today/Yesterday
@@ -828,7 +840,7 @@ export default function LoanApplication() {
     if (Object.keys(extra).length) setErrors((p: any) => ({ ...p, ...extra }));
     return base && Object.keys(extra).length === 0;
   };
-  const step2Valid = () => {
+  const step2AddressValid = () => {
     // Permanent address is always required (Aadhaar-sourced). Current address
     // is required only when the user doesn't check "Same as permanent".
     const base: any = { permanent_house: 'Required', permanent_street: 'Required', permanent_pincode: 'Required', permanent_state_code: 'Required', permanent_city_code: 'Required' };
@@ -943,42 +955,25 @@ export default function LoanApplication() {
   };
 
   // ── Required documents ──────────────────────────────────────────────────
-  // Hoisted out of the JSX so step 5 can actually VALIDATE against it. While the
-  // list lived inline, `required: true` and the red asterisk were decoration:
-  // handleNext fell through to `else valid = true` for step 5, and handleSubmit
-  // never looked at documents either — so an application could be submitted with
-  // nothing attached at all. The backend does not check them either, so this is
-  // the only gate.
-  //
-  // Consumer-durable applications additionally need the dealer quotation, which
-  // is why this is a function of the loan type rather than a constant.
-  const requiredDocs = (): { key: string; label: string }[] => {
-    const base = [
-      { key: 'aadhaar_front_url', label: 'Aadhaar Document' },
-      { key: 'photo_url', label: 'Passport Size Photo' },
-      { key: 'salary_slips_url', label: 'Salary Slips (Last 3 months)' },
-      { key: 'bank_statements_url', label: 'Bank Statements (Last 6 months)' },
-    ];
-    if ((formData.consumer_loan_type || 'personal') === 'consumer_durable') {
-      base.push({ key: 'quotation_url', label: 'Dealer Quotation' });
-    }
-    return base;
-  };
+  // Defined in lib/utils/loanDocuments.ts so the gate, the render and the
+  // per-document file-type rules all read ONE definition. While the list lived
+  // inline in the JSX nothing could validate it, and an application could be
+  // submitted with nothing attached.
 
   /**
-   * Step 5 gate. Names the missing documents rather than saying "upload the
-   * required documents" — the customer has just been shown five upload rows and
-   * needs to know WHICH ones are outstanding.
+   * Step 2 gate. Names the missing documents rather than saying "upload the
+   * required documents" — the customer is looking at several upload rows and
+   * needs to know which are outstanding.
    *
-   * Note several of these can be satisfied automatically by DigiLocker (photo,
-   * Aadhaar, and the two optional proofs), so a customer who verified via
-   * DigiLocker often has fewer to do than the list suggests.
+   * Aadhaar, photo and both proofs are usually satisfied automatically by
+   * DigiLocker during KYC (step 1), so most customers reach this step with only
+   * the bank statement left to do.
    */
-  const step5Valid = () => {
-    const missing = requiredDocs().filter(d => !formData[d.key]);
+  const step2Valid = () => {
+    const missing = missingRequired(formData.consumer_loan_type, formData);
     setErrors((p: any) => {
       const next = { ...p };
-      requiredDocs().forEach(d => { delete next[d.key]; });
+      documentsFor(formData.consumer_loan_type).forEach(d => { delete next[d.key]; });
       missing.forEach(d => { next[d.key] = 'This document is required'; });
       return next;
     });
@@ -1029,11 +1024,15 @@ export default function LoanApplication() {
       return;
     }
     let valid = false;
+    // Step order: 1 KYC · 2 Documents · 3 Address · 4 Occupation ·
+    // 5 Loan & Financial · 6 Review. Documents sits at 2 — right after the
+    // DigiLocker KYC that auto-satisfies four of them, and BEFORE the
+    // financial questions the bank statement is meant to prefill.
     if (currentStep === 1) valid = step1Valid();
     else if (currentStep === 2) valid = step2Valid();
-    else if (currentStep === 3) valid = step3Valid();
-    else if (currentStep === 4) valid = step4Valid();
-    else if (currentStep === 5) valid = step5Valid();
+    else if (currentStep === 3) valid = step2AddressValid();
+    else if (currentStep === 4) valid = step3Valid();
+    else if (currentStep === 5) valid = step4Valid();
     else valid = true;
 
     if (valid) {
@@ -1052,9 +1051,9 @@ export default function LoanApplication() {
     if (!agreed) { alert('Please agree to the declaration'); return; }
     // Re-check here as well as in step 5: a resumed session can land directly on
     // Review (the resume banner does exactly that), bypassing the step gate.
-    const missingDocs = requiredDocs().filter(d => !formData[d.key]);
+    const missingDocs = missingRequired(formData.consumer_loan_type, formData);
     if (missingDocs.length) {
-      setCurrentStep(5);
+      setCurrentStep(2);
       setDocError(
         `Cannot submit — still missing: ${missingDocs.map(d => d.label).join(', ')}.`
       );
@@ -1102,7 +1101,10 @@ export default function LoanApplication() {
     </div>
   );
 
-  const steps = ['KYC & Identity', 'Address', 'Occupation', 'Loan & Financial', 'Documents', 'Review'];
+  // Documents second: the customer uploads while they still have their papers
+  // to hand, and the bank statement is captured before the income questions
+  // it is meant to prefill.
+  const steps = ['KYC & Identity', 'Documents', 'Address', 'Occupation', 'Loan & Financial', 'Review'];
 
   return (
     <div className="min-h-screen" style={{ background: '#F0F4FF' }}>
@@ -1465,7 +1467,7 @@ export default function LoanApplication() {
             </div>
           )}
 
-          {currentStep === 2 && (
+          {currentStep === 3 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="ADR" color="#059669" title="Address Details" />
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
@@ -1564,7 +1566,7 @@ export default function LoanApplication() {
             </div>
           )}
 
-          {currentStep === 3 && (
+          {currentStep === 4 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="WRK" color="#D97706" title="Occupation Details" />
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
@@ -1632,7 +1634,7 @@ export default function LoanApplication() {
             </div>
           )}
 
-          {currentStep === 4 && (
+          {currentStep === 5 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="₹" color="#7C3AED" title="Loan & Financial Details" />
 
@@ -1897,10 +1899,14 @@ export default function LoanApplication() {
             </div>
           )}
 
-          {currentStep === 5 && (
+          {currentStep === 2 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
               <SectionTitle icon="DOC" color="#DC2626" title="Document Upload" />
-              <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · PDF / JPG / PNG accepted</p>
+              {/* Deliberately NOT listing file types here any more: they now differ per
+                  document (photo is images-only, bank statement is PDF-only), so a
+                  blanket "PDF / JPG / PNG accepted" would contradict the per-row hints
+                  and mislead exactly where the rules matter most. */}
+              <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · accepted formats are listed under each document</p>
               {docError && (
                 <div className="flex items-start gap-2.5 rounded-xl p-3.5"
                   style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
@@ -1909,18 +1915,7 @@ export default function LoanApplication() {
                 </div>
               )}
               <div className="space-y-3">
-                {[
-                  { key: 'aadhaar_front_url', label: 'Aadhaar Document', required: true },
-                  { key: 'photo_url', label: 'Passport Size Photo', required: true },
-                  { key: 'salary_slips_url', label: 'Salary Slips (Last 3 months)', required: true },
-                  { key: 'itr_form16_url', label: 'ITR / Form 16', required: false },
-                  { key: 'bank_statements_url', label: 'Bank Statements (Last 6 months)', required: true },
-                  { key: 'proof_of_identification_url', label: 'Proof of Identification', required: false },
-                  { key: 'proof_of_residence_url', label: 'Proof of Residence', required: false },
-                  ...((formData.consumer_loan_type || 'personal') === 'consumer_durable'
-                    ? [{ key: 'quotation_url', label: 'Dealer Quotation (PDF/Image)', required: true }]
-                    : []),
-                ].map(doc => {
+                {documentsFor(formData.consumer_loan_type).map(doc => {
                   const fs = formData.field_sources?.[doc.key];
                   const isDigilocker = fs?.source === 'aadhaar';
                   return (
@@ -1928,6 +1923,11 @@ export default function LoanApplication() {
                   <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-dark-section' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section') : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
                     <div>
                       <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
+                      {/* What a valid file looks like for THIS document — the
+                          single most effective way to prevent a wrong upload. */}
+                      {!formData[doc.key] && doc.hint && (
+                        <p className="text-xs mt-0.5" style={{ color: '#94A3B8' }}>{doc.hint}</p>
+                      )}
                       {formData[doc.key] && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {isDigilocker ? (
@@ -1942,18 +1942,20 @@ export default function LoanApplication() {
                     )}
                     </div>
                     <label className="cursor-pointer">
-                      <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
+                      {/* accept comes from the document's own spec: a passport
+                          photo is images-only, a bank statement is PDF-only.
+                          One shared accept let customers attach a photo of a
+                          statement, which Digitap cannot parse at all. */}
+                      <input type="file" accept={doc.accept} className="hidden"
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
-                          const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
-                          if (!allowed.includes(file.type)) {
-                            setErrors((p: any) => ({ ...p, [doc.key]: 'Only JPG, PNG or PDF allowed' }));
-                            e.target.value = '';
-                            return;
-                          }
-                          if (file.size > 5 * 1024 * 1024) {
-                            setErrors((p: any) => ({ ...p, [doc.key]: 'File too large. Max 5MB allowed' }));
+                          // Extension-based, not MIME: some Android pickers send
+                          // application/octet-stream for a valid PDF, and the old
+                          // MIME allow-list rejected those outright.
+                          const fileErr = validateDocFile(doc, file);
+                          if (fileErr) {
+                            setErrors((p: any) => ({ ...p, [doc.key]: fileErr }));
                             e.target.value = '';
                             return;
                           }

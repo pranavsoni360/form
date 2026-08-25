@@ -382,6 +382,20 @@ AISENSY_CAMPAIGN_NAME = os.getenv("AISENSY_CAMPAIGN_NAME", "Call")
 AISENSY_USERNAME = os.getenv("AISENSY_USERNAME", "Virtual Galaxy WABA")
 AISENSY_SUBMISSION_CAMPAIGN = os.getenv("AISENSY_SUBMISSION_CAMPAIGN", "")
 AISENSY_APPROVAL_CAMPAIGN = os.getenv("AISENSY_APPROVAL_CAMPAIGN", "loan_approved_confirm")
+# ── Loan-session inactivity window ──────────────────────────────────────────
+# How long a customer's form session survives with no activity. Was 300s (5 min)
+# hardcoded in FOUR separate checks; raised to 15 min and named, because five
+# minutes is punishing for what this form actually asks people to do: a six-step
+# application that requires finding and uploading a passport photo, salary slips
+# and six months of bank statements. A customer switching to their banking app to
+# download a PDF could return to an expired session and lose their place.
+#
+# The frontend's SESSION_TIMEOUT_MS in app/loan-form/application/page.tsx MUST
+# match this, or the client either warns about an expiry that has not happened or
+# lets the session die with no warning at all.
+LOAN_SESSION_INACTIVITY_SECONDS = int(os.getenv("LOAN_SESSION_INACTIVITY_SECONDS", "900"))
+LOAN_SESSION_INACTIVITY_MINUTES = LOAN_SESSION_INACTIVITY_SECONDS // 60
+
 AISENSY_DISBURSEMENT_CAMPAIGN = os.getenv("AISENSY_DISBURSEMENT_CAMPAIGN", "loan_disbursement_initiated")
 
 # UPLOAD_DIR: prefer env, else <repo>/uploads (works on Windows + Linux). Was hardcoded to /root/...
@@ -4468,8 +4482,8 @@ async def get_application(session_token: str, request: Request):
     last_activity = session["last_activity_at"]
     if last_activity.tzinfo is None:
         last_activity = last_activity.replace(tzinfo=timezone.utc)
-    if (now_utc() - last_activity).total_seconds() > 300:
-        raise HTTPException(status_code=401, detail="Session inactive for 5 minutes. Please re-verify.")
+    if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
+        raise HTTPException(status_code=401, detail=f"Session inactive for {LOAN_SESSION_INACTIVITY_MINUTES} minutes. Please re-verify.")
     await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
@@ -4500,8 +4514,8 @@ async def withdraw_application(body: WithdrawApplicationRequest):
     last_activity = session["last_activity_at"]
     if last_activity.tzinfo is None:
         last_activity = last_activity.replace(tzinfo=timezone.utc)
-    if (now_utc() - last_activity).total_seconds() > 300:
-        raise HTTPException(status_code=401, detail="Session inactive for 5 minutes. Please re-verify.")
+    if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
+        raise HTTPException(status_code=401, detail=f"Session inactive for {LOAN_SESSION_INACTIVITY_MINUTES} minutes. Please re-verify.")
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found.")
@@ -4542,10 +4556,10 @@ async def session_keepalive(request: Request):
     last_activity = session["last_activity_at"]
     if last_activity.tzinfo is None:
         last_activity = last_activity.replace(tzinfo=timezone.utc)
-    if (now_utc() - last_activity).total_seconds() > 300:
+    if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
         raise HTTPException(status_code=401, detail="Session expired due to inactivity. Please verify again.")
     await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
-    return {"status": "extended", "inactivity_window_seconds": 300}
+    return {"status": "extended", "inactivity_window_seconds": LOAN_SESSION_INACTIVITY_SECONDS}
 
 
 @app.post("/api/autosave-session")
@@ -4564,7 +4578,7 @@ async def autosave_session(request: Request):
     last_activity = session["last_activity_at"]
     if last_activity.tzinfo is None:
         last_activity = last_activity.replace(tzinfo=timezone.utc)
-    if (now_utc() - last_activity).total_seconds() > 300:
+    if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
         raise HTTPException(status_code=401, detail="Session expired due to inactivity")
     await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
     safe_data = {k: _coerce_value(k, v) for k, v in form_data.items() if k in AUTOSAVE_COLUMNS}

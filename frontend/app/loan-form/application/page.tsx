@@ -1,12 +1,12 @@
 ﻿'use client';
-import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
-import { documentsFor, missingRequired, validateDocFile } from '@/lib/utils/loanDocuments';
+import { documentsFor, missingRequired, validateDocFile, wasAutoFilled, journeyState } from '@/lib/utils/loanDocuments';
 // Server expires a loan session after LOAN_SESSION_INACTIVITY_SECONDS of
 // inactivity (backend main.py; /api/get-application, /api/autosave-session and
 // /api/session-keepalive all read the same constant).
@@ -109,6 +109,20 @@ export default function LoanApplication() {
   const [panMismatchWarning, setPanMismatchWarning] = useState<{callName: string; verifiedName: string; attemptsRemaining: number} | null>(null);
   const [pincodeLookingUp, setPincodeLookingUp] = useState<{ current: boolean; permanent: boolean }>({ current: false, permanent: false });
   const [pincodeValid, setPincodeValid] = useState<{ current: boolean; permanent: boolean }>({ current: true, permanent: true });
+  // Per-document upload in flight — without this the customer can tap Upload
+  // repeatedly on a slow connection and race several writes to the same column.
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  // The REAL inactivity window, learned from the server on load.
+  // SESSION_TIMEOUT_MS is only a first-paint default: the backend reads
+  // LOAN_SESSION_INACTIVITY_SECONDS from the environment, so if that is ever
+  // tuned in a deployment the hardcoded 15 minutes would be wrong in the
+  // dangerous direction — the client would promise time the server will not
+  // honour and the session would die with no warning at all.
+  const timeoutMsRef = useRef<number>(SESSION_TIMEOUT_MS);
+  // Seconds left in the session, shown continuously in the header. The customer
+  // is asked to leave the page to fetch a bank PDF; a visible clock is the only
+  // way they can judge whether they have time before it expires.
+  const [secondsLeft, setSecondsLeft] = useState<number>(Math.floor(SESSION_TIMEOUT_MS / 1000));
 
   const handleVerifyPAN = async () => {
     const pan = (formData.pan_number || '').trim();
@@ -384,7 +398,8 @@ export default function LoanApplication() {
 
     // Single 1s ticker: drives the warning modal + live countdown + auto-expiry.
     const ticker = setInterval(() => {
-      const remainingMs = SESSION_TIMEOUT_MS - (Date.now() - lastActivityRef.current);
+      const remainingMs = timeoutMsRef.current - (Date.now() - lastActivityRef.current);
+      setSecondsLeft(Math.max(0, Math.ceil(remainingMs / 1000)));
       if (remainingMs <= 0) { logout(); return; }
       if (remainingMs <= WARNING_WINDOW_MS) {
         warningShownRef.current = true;
@@ -672,6 +687,15 @@ export default function LoanApplication() {
       if (res.status === 401) { logout(); return; }
       const data = await res.json();
       if (data.status === 'success') {
+        // Derive the true idle window from the server's own expiry stamp.
+        // Guarded: only accept a sane value (1–120 min) so a clock skew or a
+        // malformed timestamp can never shorten the session to nothing.
+        if (data.session_valid_until) {
+          const ms = new Date(data.session_valid_until).getTime() - Date.now();
+          if (Number.isFinite(ms) && ms > 60_000 && ms < 120 * 60_000) {
+            timeoutMsRef.current = ms;
+          }
+        }
         const d = data.data;
         // Split full_name → first/last if not already set (pre-filled from voice call)
         if (d.full_name && !d.first_name) {
@@ -1137,28 +1161,28 @@ export default function LoanApplication() {
   };
 
   if (sessionExpired) return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#F8F9FC' }}>
-      <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center" style={{ border: '1px solid #E2E8F0', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }}>
-        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: '#FEF3C7' }}>
-          <AlertTriangle className="w-8 h-8" style={{ color: '#D97706' }} />
+    <div className="finix-root min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--fx-bg)' }}>
+      <div className="rounded-2xl p-8 max-w-md w-full text-center" style={{ background: 'var(--fx-surface)', border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: 'var(--fx-amber-tint)' }}>
+          <AlertTriangle className="w-8 h-8" style={{ color: 'var(--fx-amber)' }} />
         </div>
-        <h2 className="text-2xl font-bold mb-2" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Session Expired</h2>
-        <p className="mb-6 text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>Your session has expired due to inactivity. Please verify again to continue.</p>
+        <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Session Expired</h2>
+        <p className="mb-6 text-sm" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>Your session has expired due to inactivity. Please verify again to continue.</p>
         <button onClick={() => router.push('/loan-form')}
           className="w-full py-4 rounded-xl font-semibold text-white transition hover:opacity-90"
-          style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)', fontFamily: 'var(--font-heading)' }}>
+          style={{ background: 'var(--fx-accent-grad)', fontFamily: 'var(--font-heading)' }}>
           Re-verify with OTP →
         </button>
-        <p className="text-xs mt-4" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Your progress has been saved automatically</p>
+        <p className="text-xs mt-4" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>Your progress has been saved automatically</p>
       </div>
     </div>
   );
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8F9FC' }}>
+    <div className="finix-root min-h-screen flex items-center justify-center" style={{ background: 'var(--fx-bg)' }}>
       <div className="text-center">
-        <div className="animate-spin rounded-full h-14 w-14 border-b-2 mx-auto" style={{ borderColor: '#1A1A2E' }}></div>
-        <p className="mt-4 text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>Loading your application...</p>
+        <div className="animate-spin rounded-full h-14 w-14 border-b-2 mx-auto" style={{ borderColor: 'var(--fx-accent)' }}></div>
+        <p className="mt-4 text-sm" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>Loading your application...</p>
       </div>
     </div>
   );
@@ -1169,42 +1193,42 @@ export default function LoanApplication() {
   const steps = ['KYC & Identity', 'Documents', 'Address', 'Occupation', 'Loan & Financial', 'Review'];
 
   return (
-    <div className="min-h-screen" style={{ background: '#F0F4FF' }}>
+    <div className="finix-root min-h-screen" style={{ background: 'var(--fx-bg)' }}>
 
       {/* ── Name mismatch popup ── */}
       {nameMatchError && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" style={{ border: '1px solid #FECACA' }}>
+          <div className="rounded-2xl shadow-2xl max-w-md w-full p-6" style={{ background: 'var(--fx-surface)', border: '1px solid var(--fx-red-tint)' }}>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#FEE2E2' }}>
-                <AlertTriangle className="w-5 h-5" style={{ color: '#DC2626' }} />
+              <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'var(--fx-red-tint)' }}>
+                <AlertTriangle className="w-5 h-5" style={{ color: 'var(--fx-red)' }} />
               </div>
               <div>
-                <h3 className="font-bold text-lg" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Identity Mismatch Detected</h3>
-                <p className="text-sm" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>{nameMatchError.score}% match — minimum required is 85%</p>
+                <h3 className="font-bold text-lg" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Identity Mismatch Detected</h3>
+                <p className="text-sm" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>{nameMatchError.score}% match — minimum required is 85%</p>
               </div>
             </div>
             <div className="space-y-3 mb-5">
-              <div className="rounded-xl p-3" style={{ background: '#F8F9FC' }}>
-                <p className="text-xs mb-1" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Name from voice call</p>
-                <p className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>{nameMatchError.callName}</p>
+              <div className="rounded-xl p-3" style={{ background: 'var(--fx-surface2)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>Name from voice call</p>
+                <p className="font-semibold" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-body)' }}>{nameMatchError.callName}</p>
               </div>
-              <div className="rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                <p className="text-xs mb-1" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Name from {nameMatchError.source}</p>
-                <p className="font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{nameMatchError.verifiedName}</p>
+              <div className="rounded-xl p-3" style={{ background: 'var(--fx-red-tint)', border: '1px solid var(--fx-red-tint)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>Name from {nameMatchError.source}</p>
+                <p className="font-semibold" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>{nameMatchError.verifiedName}</p>
               </div>
             </div>
-            <p className="text-sm mb-5" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+            <p className="text-sm mb-5" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
               The name on your <strong>{nameMatchError.source}</strong> does not sufficiently match the name recorded during your voice call. Please contact your bank branch.
             </p>
             <div className="flex gap-3">
               <button onClick={() => setNameMatchError(null)}
                 className="flex-1 py-3 rounded-xl font-medium transition hover:opacity-80"
-                style={{ border: '1px solid #E2E8F0', color: '#475569', fontFamily: 'var(--font-body)' }}>
+                style={{ border: '1px solid var(--fx-border)', color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
                 Dismiss
               </button>
               <button disabled className="flex-1 py-3 rounded-xl font-medium cursor-not-allowed"
-                style={{ background: '#FEE2E2', color: '#FCA5A5', fontFamily: 'var(--font-body)' }}>
+                style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>
                 Form Locked
               </button>
             </div>
@@ -1215,33 +1239,33 @@ export default function LoanApplication() {
       {/* Inactivity warning — countdown + Continue / Logout */}
       {inactivityWarning && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" style={{ background: 'rgba(15,23,42,0.45)' }}>
-          <div className="bg-white shadow-2xl rounded-2xl px-6 py-6 max-w-sm w-full text-center animate-[slideDown_0.3s_ease-out]"
-            style={{ border: '1px solid #FDE68A' }}>
-            <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: '#FEF3C7' }}>
-              <AlertTriangle className="w-6 h-6" style={{ color: '#D97706' }} />
+          <div className="shadow-2xl rounded-2xl px-6 py-6 max-w-sm w-full text-center animate-[slideDown_0.3s_ease-out]"
+            style={{ background: 'var(--fx-surface)', border: '1px solid var(--fx-amber-tint)' }}>
+            <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: 'var(--fx-amber-tint)' }}>
+              <AlertTriangle className="w-6 h-6" style={{ color: 'var(--fx-amber)' }} />
             </div>
-            <p className="text-base font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Session about to expire</p>
-            <p className="text-sm mt-1" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+            <p className="text-base font-semibold" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Session about to expire</p>
+            <p className="text-sm mt-1" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
               Your session will expire due to inactivity. Click &ldquo;Continue Session&rdquo; to keep working.
             </p>
             <div className="my-4">
-              <div className="text-4xl font-bold tabular-nums" style={{ color: '#D97706', fontFamily: 'var(--font-heading)' }}>
+              <div className="text-4xl font-bold tabular-nums" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-heading)' }}>
                 {countdown}s
               </div>
-              <div className="mt-2 mx-auto h-1.5 rounded-full overflow-hidden" style={{ background: '#E2E8F0', width: '80%' }}>
+              <div className="mt-2 mx-auto h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--fx-border)', width: '80%' }}>
                 <div className="h-full rounded-full transition-[width] duration-1000 ease-linear"
-                  style={{ background: '#D97706', width: `${Math.max(0, (countdown / (WARNING_WINDOW_MS / 1000)) * 100)}%` }} />
+                  style={{ background: 'var(--fx-amber)', width: `${Math.max(0, (countdown / (WARNING_WINDOW_MS / 1000)) * 100)}%` }} />
               </div>
             </div>
             <div className="flex gap-3 mt-2">
               <button onClick={continueSession}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition active:scale-[0.98]"
-                style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)' }}>
+                style={{ background: 'var(--fx-accent)', fontFamily: 'var(--font-heading)' }}>
                 Continue Session
               </button>
               <button onClick={sessionLogout}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98]"
-                style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)' }}>
+                style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', fontFamily: 'var(--font-heading)' }}>
                 Logout
               </button>
             </div>
@@ -1252,40 +1276,56 @@ export default function LoanApplication() {
       <div className="max-w-[680px] mx-auto">
 
         {/* ── HEADER CARD — sticky ── */}
-        <div className="bg-white sticky top-0 z-20 mb-3 sm:mb-4 sm:mt-4 sm:mx-4 sm:rounded-2xl px-4 sm:px-5 py-3 sm:py-4"
-          style={{ borderBottom: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.07)' }}>
+        <div className="sticky top-0 z-20 mb-3 sm:mb-4 sm:mt-4 sm:mx-4 sm:rounded-2xl px-4 sm:px-5 py-3 sm:py-4"
+          style={{ background: 'var(--fx-surface)', borderBottom: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
           {/* Top row: logo + name + autosave */}
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0"
-                style={{ background: '#1A1A2E', fontFamily: 'var(--font-heading)', fontSize: '14px', boxShadow: '0 2px 8px rgba(26,26,46,0.3)' }}>
+                style={{ background: 'var(--fx-accent-grad)', fontFamily: 'var(--font-heading)', fontSize: '14px', boxShadow: 'var(--fx-accent-glow)' }}>
                 VV
               </div>
               <div>
-                <h1 className="font-bold leading-tight" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)', fontSize: '18px' }}>
+                <h1 className="font-bold leading-tight" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)', fontSize: '18px' }}>
                   Loan Application
                 </h1>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                  <span className="text-sm" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+                  <span className="text-sm" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
                     {appData?.customer_name}
                   </span>
                   {appData?.loan_id && (
-                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: '#94A3B8', fontFamily: 'var(--font-mono-loan)', background: '#F8F9FC', border: '1px solid #E2E8F0' }}>
+                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-mono-loan)', background: 'var(--fx-surface2)', border: '1px solid var(--fx-border)' }}>
                       {appData.loan_id}
                     </span>
                   )}
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Always-visible session countdown. Turns amber inside the last
+                  two minutes — the same threshold that raises the warning modal,
+                  so the colour change and the modal never disagree. */}
+              <span
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full tabular-nums"
+                title="Time left before this session expires from inactivity"
+                style={{
+                  color: secondsLeft <= WARNING_WINDOW_MS / 1000 ? 'var(--fx-amber)' : 'var(--fx-text2)',
+                  background: secondsLeft <= WARNING_WINDOW_MS / 1000 ? 'var(--fx-amber-tint)' : 'var(--fx-surface2)',
+                  border: '1px solid var(--fx-border)',
+                  fontFamily: 'var(--font-body)',
+                }}>
+                <Clock className="w-3 h-3 flex-shrink-0" />
+                <span className="hidden sm:inline">Session&nbsp;</span>
+                {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:{String(secondsLeft % 60).padStart(2, '0')}
+              </span>
               {saving ? (
-                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: '#2563EB', background: '#EFF6FF', fontFamily: 'var(--font-body)' }}>
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: 'var(--fx-accent)', background: 'var(--fx-accent-tint)', fontFamily: 'var(--font-body)' }}>
                   <Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving</span>
                 </span>
               ) : lastSaved ? (
-                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: '#059669', background: '#F0FDF4', fontFamily: 'var(--font-body)' }}>
-                  <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: '#059669' }} />
-                  <span className="hidden sm:inline">Last saved {lastSaved}</span>
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full whitespace-nowrap" title={`Last saved ${lastSaved}`} style={{ color: 'var(--fx-green)', background: 'var(--fx-green-tint)', fontFamily: 'var(--font-body)' }}>
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block flex-shrink-0" style={{ background: 'var(--fx-green)' }} />
+                  <span className="hidden md:inline">Saved</span>
                 </span>
               ) : null}
               <ThemeToggle />
@@ -1294,18 +1334,18 @@ export default function LoanApplication() {
 
           {/* ── RESUME BANNER — shown when continuing a previously-saved application ── */}
           {resuming && (
-            <div className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-              <RotateCcw className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#2563EB' }} />
+            <div className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--fx-accent-tint)', border: '1px solid color-mix(in oklch, var(--fx-accent) 35%, var(--fx-border))' }}>
+              <RotateCcw className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: 'var(--fx-accent)' }} />
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold" style={{ color: '#1E3A8A', fontFamily: 'var(--font-heading)' }}>
+                <p className="text-xs font-semibold" style={{ color: 'var(--fx-accent)', fontFamily: 'var(--font-heading)' }}>
                   You&apos;re resuming your previously saved loan application
                 </p>
-                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: '#475569', fontFamily: 'var(--font-body)' }}>
+                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
                   Resume point: <b>{steps[Math.min(Math.max(resumeStep, 1), steps.length) - 1]}</b> (Step {resumeStep} of {steps.length}). Continue from where you left off.
                   {lastSaved ? <><br />Last saved: {lastSaved}</> : null}
                 </p>
               </div>
-              <button onClick={() => setResuming(false)} className="flex-shrink-0 p-0.5" style={{ color: '#94A3B8' }} aria-label="Dismiss">
+              <button onClick={() => setResuming(false)} className="flex-shrink-0 p-0.5" style={{ color: 'var(--fx-text3)' }} aria-label="Dismiss">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -1315,15 +1355,21 @@ export default function LoanApplication() {
           <div className="relative">
             {/* Grey track */}
             <div className="absolute h-0.5 z-0"
-              style={{ background: '#E2E8F0', top: '15px', left: `${100 / steps.length / 2}%`, right: `${100 / steps.length / 2}%` }} />
+              style={{ background: 'var(--fx-border)', top: '15px', left: `${100 / steps.length / 2}%`, right: `${100 / steps.length / 2}%` }} />
             {/* Green progress */}
             <div className="absolute h-0.5 z-0 transition-all duration-500"
               style={{
-                background: '#059669',
+                background: 'var(--fx-green)',
                 top: '15px',
                 left: `${100 / steps.length / 2}%`,
                 width: `${Math.max(0, (Math.max(highestStep, currentStep) - 1)) / (steps.length - 1) * (100 - 100 / steps.length)}%`,
               }} />
+            {/* Mobile-only: name the current step, since the per-circle
+                labels below are hidden under `sm`. */}
+            <p className="sm:hidden text-center text-xs font-semibold mb-2"
+              style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+              Step {currentStep} of {steps.length} · {steps[currentStep - 1]}
+            </p>
             <div className="relative flex">
               {steps.map((s, i) => {
                 const stepNum  = i + 1;
@@ -1336,11 +1382,11 @@ export default function LoanApplication() {
                       onClick={() => { if (isReachable && !(nameMatchLocked && stepNum > 1)) { autoSave(); setCurrentStep(stepNum); window.scrollTo(0, 0); } }}
                       className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-bold z-10 transition-all duration-200 select-none"
                       style={{
-                        background: isActive ? '#1A1A2E' : isCompleted ? '#059669' : '#F1F5F9',
-                        color: isActive || isCompleted ? '#fff' : '#94A3B8',
-                        border: isActive ? '2px solid #1A1A2E' : isCompleted ? '2px solid #059669' : '2px solid #E2E8F0',
+                        background: isActive ? 'var(--fx-accent)' : isCompleted ? 'var(--fx-green)' : 'var(--fx-surface2)',
+                        color: isActive || isCompleted ? '#fff' : 'var(--fx-text3)',
+                        border: isActive ? '2px solid var(--fx-accent)' : isCompleted ? '2px solid var(--fx-green)' : '2px solid var(--fx-border)',
                         cursor: isReachable ? 'pointer' : 'default',
-                        boxShadow: isActive ? '0 0 0 4px rgba(26,26,46,0.1)' : 'none',
+                        boxShadow: isActive ? 'var(--fx-focus)' : 'none',
                         fontFamily: 'var(--font-heading)',
                         fontSize: '13px',
                       }}>
@@ -1348,7 +1394,7 @@ export default function LoanApplication() {
                     </div>
                     <span className="text-[10px] mt-2 text-center leading-tight hidden sm:block"
                       style={{
-                        color: isActive ? '#1A1A2E' : isCompleted ? '#059669' : '#94A3B8',
+                        color: isActive ? 'var(--fx-accent)' : isCompleted ? 'var(--fx-green)' : 'var(--fx-text3)',
                         fontFamily: 'var(--font-body)',
                         fontWeight: isActive ? 700 : 400,
                         maxWidth: '60px',
@@ -1370,19 +1416,19 @@ export default function LoanApplication() {
 
           {currentStep === 1 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="KYC" color="#2563EB" title="KYC & Personal Details" />
+              <SectionTitle icon="KYC" color="var(--fx-accent)" title="KYC & Personal Details" />
               {/* PAN mismatch — retryable warning (first failure) */}
               {!nameMatchLocked && panMismatchWarning && (
-                <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: '#FFFBEB', border: '1px solid #FCD34D' }}>
+                <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: 'var(--fx-amber-tint)', border: '1px solid var(--fx-amber-tint)' }}>
                   <div className="flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#D97706' }} />
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--fx-amber)' }} />
                     <div className="flex-1">
-                      <p className="text-sm font-semibold" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>PAN verification failed — name mismatch</p>
-                      <p className="text-xs mt-0.5" style={{ color: '#B45309', fontFamily: 'var(--font-body)' }}>
+                      <p className="text-sm font-semibold" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-body)' }}>PAN verification failed — name mismatch</p>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-body)' }}>
                         The name on your PAN card (<strong>{panMismatchWarning.verifiedName}</strong>) does not match the name on file (<strong>{panMismatchWarning.callName}</strong>).
                         Please verify the PAN number entered and try again.
                       </p>
-                      <p className="text-xs mt-1 font-medium" style={{ color: '#D97706', fontFamily: 'var(--font-body)' }}>
+                      <p className="text-xs mt-1 font-medium" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-body)' }}>
                         {panMismatchWarning.attemptsRemaining} retry attempt{panMismatchWarning.attemptsRemaining !== 1 ? 's' : ''} remaining.
                       </p>
                     </div>
@@ -1391,21 +1437,21 @@ export default function LoanApplication() {
               )}
               {/* PAN mismatch — hard lock (max retries exceeded) */}
               {nameMatchLocked && (
-                <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: '#DC2626' }} />
+                <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: 'var(--fx-red-tint)', border: '1px solid var(--fx-red-tint)' }}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: 'var(--fx-red)' }} />
                   <div className="flex-1">
-                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>Application locked — identity verification failed</p>
-                    <p className="text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>Identity verification failed after maximum retry attempts. Please contact your bank branch to resolve this.</p>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>Application locked — identity verification failed</p>
+                    <p className="text-xs" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>Identity verification failed after maximum retry attempts. Please contact your bank branch to resolve this.</p>
                   </div>
-                  <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs underline whitespace-nowrap" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>View details</button>
+                  <button onClick={() => setNameMatchError(nameMatchDetail)} className="text-xs underline whitespace-nowrap" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>View details</button>
                 </div>
               )}
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
-                    <Lock className="w-3.5 h-3.5" style={{ color: '#2563EB' }} />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-surface2)', borderBottom: '1px solid var(--fx-border)' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in oklch, var(--fx-accent) 12%, transparent)' }}>
+                    <Lock className="w-3.5 h-3.5" style={{ color: 'var(--fx-accent)' }} />
                   </div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Identity Verification</p>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Identity Verification</p>
                 </div>
                 <div className="p-5 space-y-4">
                 <F label="PAN Number" required error={errors.pan_number}>
@@ -1421,7 +1467,7 @@ export default function LoanApplication() {
                         disabled={formData.pan_verified || nameMatchLocked}
                         readOnly={false}
                         className={`w-full pr-16 ${formData.pan_verified ? '' : 'cursor-text'} ${inp(errors.pan_number)}`}
-                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? '#F0FDF4' : nameMatchLocked ? '#FEF2F2' : undefined, borderColor: formData.pan_verified ? '#059669' : nameMatchLocked ? '#FECACA' : panMismatchWarning ? '#FCD34D' : undefined }}
+                        style={{ fontFamily: 'var(--font-mono-loan)', fontSize: '1rem', letterSpacing: formData.pan_number && !showPan ? '0.3em' : '0.05em', background: formData.pan_verified ? 'var(--fx-green-tint)' : nameMatchLocked ? 'var(--fx-red-tint)' : undefined, borderColor: formData.pan_verified ? 'var(--fx-green)' : nameMatchLocked ? 'var(--fx-red-tint)' : panMismatchWarning ? 'var(--fx-amber-tint)' : undefined }}
                         placeholder="ABCDE1234F" maxLength={10} />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         {!formData.pan_verified && (
@@ -1441,7 +1487,7 @@ export default function LoanApplication() {
                     <button type="button" onClick={handleVerifyPAN} disabled={formData.pan_verified || panVerifying || nameMatchLocked}
                       className="px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition flex items-center justify-center gap-1 sm:gap-2 min-w-[76px] sm:min-w-[100px] disabled:opacity-70"
                       style={{
-                        background: formData.pan_verified ? '#059669' : nameMatchLocked ? '#DC2626' : '#1A1A2E',
+                        background: formData.pan_verified ? 'var(--fx-green)' : nameMatchLocked ? 'var(--fx-red)' : 'var(--fx-accent)',
                         color: '#fff',
                         fontFamily: 'var(--font-heading)',
                         cursor: (formData.pan_verified || nameMatchLocked) ? 'default' : 'pointer',
@@ -1462,14 +1508,14 @@ export default function LoanApplication() {
                     </div>
                   ) : !formData.pan_verified ? (
                     <div className="w-full rounded-xl flex items-center justify-center gap-3 opacity-60 cursor-not-allowed"
-                      style={{ background: '#E2E8F0', color: '#64748B', fontFamily: 'var(--font-heading)', height: '52px' }}>
+                      style={{ background: 'var(--fx-border)', color: 'var(--fx-text2)', fontFamily: 'var(--font-heading)', height: '52px' }}>
                       <Lock className="w-4 h-4" />
                       <span className="text-sm font-semibold">Verify PAN first to unlock Aadhaar</span>
                     </div>
                   ) : (
                     <button type="button" onClick={handleVerifyAadhaar} disabled={aadhaarVerifying}
                       className="w-full rounded-xl font-semibold transition disabled:opacity-50 flex items-center justify-center gap-3 active:scale-[0.99]"
-                      style={{ background: 'linear-gradient(135deg, #EA580C 0%, #DC2626 100%)', color: '#fff', fontFamily: 'var(--font-heading)', height: '52px', boxShadow: '0 4px 16px rgba(234,88,12,0.3)' }}>
+                      style={{ background: 'linear-gradient(135deg, var(--fx-orange) 0%, var(--fx-red) 100%)', color: '#fff', fontFamily: 'var(--font-heading)', height: '52px', boxShadow: 'var(--fx-elevation)' }}>
                       {digilockerStep === 'linking' || digilockerStep === 'fetching' ? (
                         <><Loader2 className="w-5 h-5 animate-spin" /><span>{digilockerStep === 'linking' ? 'Opening DigiLocker...' : 'Fetching data...'}</span></>
                       ) : (
@@ -1485,18 +1531,18 @@ export default function LoanApplication() {
                   )}
                   {digilockerStep === 'waiting' && <p className="text-xs text-orange-600 dark:text-orange-400 mt-1 animate-pulse">Please complete authentication on the DigiLocker window...</p>}
                   {digilockerStep === 'fetching' && <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Fetching your Aadhaar data from DigiLocker...</p>}
-                  <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}><Lock className="w-3 h-3" />Only last 4 digits stored</p>
+                  <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}><Lock className="w-3 h-3" />Only last 4 digits stored</p>
                 </F>
                 </div>{/* end p-5 */}
               </div>{/* end identity card */}
 
               {/* Personal Details card */}
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F8FAFF', borderBottom: '1px solid #E2E8F0' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#2563EB18' }}>
-                    <User className="w-3.5 h-3.5" style={{ color: '#2563EB' }} />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-surface2)', borderBottom: '1px solid var(--fx-border)' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'color-mix(in oklch, var(--fx-accent) 12%, transparent)' }}>
+                    <User className="w-3.5 h-3.5" style={{ color: 'var(--fx-accent)' }} />
                   </div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Personal Details</p>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Personal Details</p>
                 </div>
                 <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -1531,15 +1577,15 @@ export default function LoanApplication() {
 
           {currentStep === 3 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="ADR" color="#059669" title="Address Details" />
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
+              <SectionTitle icon="ADR" color="var(--fx-green)" title="Address Details" />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: 'var(--fx-green-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-green) 35%, var(--fx-border))' }}>
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><Home className="w-3.5 h-3.5" style={{ color: '#059669' }} /></div>
-                    <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Current Address</p>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-green) 12%, transparent)' }}><Home className="w-3.5 h-3.5" style={{ color: 'var(--fx-green)' }} /></div>
+                    <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Current Address</p>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={formData.same_as_current || false} onChange={e => onChange('same_as_current', e.target.checked)} className="w-4 h-4 dark:bg-gray-700 dark:border-gray-600" />
+                    <input type="checkbox" checked={formData.same_as_current || false} onChange={e => onChange('same_as_current', e.target.checked)} className="w-4 h-4 cursor-pointer" style={{ accentColor: 'var(--fx-accent)' }} />
                     <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Same as permanent</span>
                   </label>
                 </div>
@@ -1580,10 +1626,10 @@ export default function LoanApplication() {
                 </div>
                 </>)}
               </div>
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><MapPin className="w-3.5 h-3.5" style={{ color: '#059669' }} /></div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Permanent Address</p>
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-green-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-green) 35%, var(--fx-border))' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-green) 12%, transparent)' }}><MapPin className="w-3.5 h-3.5" style={{ color: 'var(--fx-green)' }} /></div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Permanent Address</p>
                 </div>
                 <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1630,11 +1676,11 @@ export default function LoanApplication() {
 
           {currentStep === 4 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="WRK" color="#D97706" title="Occupation Details" />
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#FFFBEB', borderBottom: '1px solid #FDE68A' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#D9770618' }}><Building2 className="w-3.5 h-3.5" style={{ color: '#D97706' }} /></div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Employment Details</p>
+              <SectionTitle icon="WRK" color="var(--fx-amber)" title="Occupation Details" />
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-amber-tint)', borderBottom: '1px solid var(--fx-amber-tint)' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-amber) 12%, transparent)' }}><Building2 className="w-3.5 h-3.5" style={{ color: 'var(--fx-amber)' }} /></div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Employment Details</p>
                 </div>
               <div className="p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1698,13 +1744,13 @@ export default function LoanApplication() {
 
           {currentStep === 5 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="₹" color="#7C3AED" title="Loan & Financial Details" />
+              <SectionTitle icon="₹" color="var(--fx-accent)" title="Loan & Financial Details" />
 
               {/* ── Loan Type Selector ── */}
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><Tag className="w-3.5 h-3.5" style={{ color: '#7C3AED' }} /></div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Type</p>
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-accent-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-accent) 35%, var(--fx-border))' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-accent) 12%, transparent)' }}><Tag className="w-3.5 h-3.5" style={{ color: 'var(--fx-accent)' }} /></div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Loan Type</p>
                   {(() => {
                     const src = formData.field_sources?.consumer_loan_type;
                     if (!src) return null;
@@ -1723,16 +1769,16 @@ export default function LoanApplication() {
                         onClick={() => onChange('consumer_loan_type', opt.value)}
                         className="text-left p-4 rounded-xl border-2 transition-all"
                         style={{
-                          borderColor: (formData.consumer_loan_type || 'personal') === opt.value ? '#7C3AED' : '#E2E8F0',
-                          background: (formData.consumer_loan_type || 'personal') === opt.value ? '#F5F3FF' : '#fff',
+                          borderColor: (formData.consumer_loan_type || 'personal') === opt.value ? 'var(--fx-accent)' : 'var(--fx-border)',
+                          background: (formData.consumer_loan_type || 'personal') === opt.value ? 'var(--fx-accent-tint)' : 'var(--fx-surface)',
                         }}>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{opt.label}</span>
+                          <span className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>{opt.label}</span>
                           {(formData.consumer_loan_type || 'personal') === opt.value && (
-                            <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#7C3AED', color: '#fff' }}>Selected</span>
+                            <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--fx-accent)', color: '#fff' }}>Selected</span>
                           )}
                         </div>
-                        <p className="text-xs" style={{ color: '#64748B', fontFamily: 'var(--font-body)' }}>{opt.desc}</p>
+                        <p className="text-xs" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>{opt.desc}</p>
                       </button>
                     ))}
                   </div>
@@ -1741,10 +1787,10 @@ export default function LoanApplication() {
 
               {/* ── Consumer Durable Fields (conditional) ── */}
               {(formData.consumer_loan_type || 'personal') === 'consumer_durable' && (
-                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #FED7AA', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                  <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#FFF7ED', borderBottom: '1px solid #FED7AA' }}>
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#F9731618' }}><ShoppingBag className="w-3.5 h-3.5" style={{ color: '#F97316' }} /></div>
-                    <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Product & Dealer Details</p>
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid color-mix(in oklch, var(--fx-orange) 35%, var(--fx-border))', boxShadow: 'var(--fx-elevation)' }}>
+                  <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-orange-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-orange) 35%, var(--fx-border))' }}>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-orange) 12%, transparent)' }}><ShoppingBag className="w-3.5 h-3.5" style={{ color: 'var(--fx-orange)' }} /></div>
+                    <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Product & Dealer Details</p>
                   </div>
                   <div className="p-5 space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1780,23 +1826,23 @@ export default function LoanApplication() {
                     </F>
                     {/* Quotation upload — inline on Step 4 */}
                     <div>
-                      <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
-                        Dealer Quotation (PDF / Image) <span style={{ color: '#DC2626' }}>*</span>
+                      <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+                        Dealer Quotation (PDF / Image) <span style={{ color: 'var(--fx-red)' }}>*</span>
                       </label>
                       <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData.quotation_url ? 'border-green-400/50 bg-green-50' : 'border-dashed border-orange-300 bg-orange-50/40'}`}>
                         <div>
                           {formData.quotation_url ? (
                             <div className="flex items-center gap-2">
                               <CheckCircle2 className="w-4 h-4 text-green-600" />
-                              <span className="text-sm font-medium" style={{ color: '#065F46' }}>Quotation uploaded</span>
+                              <span className="text-sm font-medium" style={{ color: 'var(--fx-green)' }}>Quotation uploaded</span>
                               <a href={`${API_URL}${formData.quotation_url}`} target="_blank" rel="noopener noreferrer">
                                 <Eye className="w-4 h-4 text-blue-500 hover:text-blue-700" />
                               </a>
                             </div>
                           ) : (
                             <div>
-                              <p className="text-sm font-medium" style={{ color: '#92400E' }}>Upload dealer quotation</p>
-                              <p className="text-xs mt-0.5" style={{ color: '#B45309' }}>PDF, JPG or PNG · Max 5MB</p>
+                              <p className="text-sm font-medium" style={{ color: 'var(--fx-amber)' }}>Upload dealer quotation</p>
+                              <p className="text-xs mt-0.5" style={{ color: 'var(--fx-amber)' }}>PDF, JPG or PNG · Max 5MB</p>
                             </div>
                           )}
                           {errors.quotation_url && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{errors.quotation_url}</p>}
@@ -1821,10 +1867,10 @@ export default function LoanApplication() {
                               fd.append('file', file);
                               try {
                                 const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
-                                const data = await res.json();
-                                if (data.url) onChange('quotation_url', data.url);
-                                else setErrors((p: any) => ({ ...p, quotation_url: 'Upload failed. Try again.' }));
-                              } catch { setErrors((p: any) => ({ ...p, quotation_url: 'Upload failed. Try again.' })); }
+                                const data = await res.json().catch(() => ({}));
+                                if (res.ok && data.url) onChange('quotation_url', data.url);
+                                else setErrors((p: any) => ({ ...p, quotation_url: data.detail || 'Upload failed. Please try again.' }));
+                              } catch { setErrors((p: any) => ({ ...p, quotation_url: 'Could not reach the server. Check your connection and try again.' })); }
                             }}
                           />
                           <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData.quotation_url ? 'bg-green-600 text-white' : 'bg-orange-500 text-white hover:bg-orange-600'}`}>
@@ -1837,10 +1883,10 @@ export default function LoanApplication() {
                 </div>
               )}
 
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F5F3FF', borderBottom: '1px solid #DDD6FE' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#7C3AED18' }}><CreditCard className="w-3.5 h-3.5" style={{ color: '#7C3AED' }} /></div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Loan Details</p>
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-accent-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-accent) 35%, var(--fx-border))' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-accent) 12%, transparent)' }}><CreditCard className="w-3.5 h-3.5" style={{ color: 'var(--fx-accent)' }} /></div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Loan Details</p>
                 </div>
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1891,10 +1937,10 @@ export default function LoanApplication() {
               </div>{/* p-5 */}
               </div>{/* loan card */}
 
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0FDF4', borderBottom: '1px solid #BBF7D0' }}>
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#05966918' }}><Banknote className="w-3.5 h-3.5" style={{ color: '#059669' }} /></div>
-                  <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Financial Details</p>
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+                <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-green-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-green) 35%, var(--fx-border))' }}>
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-green) 12%, transparent)' }}><Banknote className="w-3.5 h-3.5" style={{ color: 'var(--fx-green)' }} /></div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Financial Details</p>
                 </div>
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1921,13 +1967,13 @@ export default function LoanApplication() {
                 const required = loanAmt > 100000;
                 const disabled = !required;
                 return (
-                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', opacity: disabled ? 0.5 : 1 }}>
-                  <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: '#F0F9FF', borderBottom: '1px solid #BAE6FD' }}>
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E918' }}><Users className="w-3.5 h-3.5" style={{ color: '#0EA5E9' }} /></div>
-                    <p className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Guarantor Details</p>
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)', opacity: disabled ? 0.5 : 1 }}>
+                  <div className="px-5 py-3.5 flex items-center gap-2" style={{ background: 'var(--fx-accent-tint)', borderBottom: '1px solid color-mix(in oklch, var(--fx-accent) 35%, var(--fx-border))' }}>
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in oklch, var(--fx-accent) 12%, transparent)' }}><Users className="w-3.5 h-3.5" style={{ color: 'var(--fx-accent)' }} /></div>
+                    <p className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>Guarantor Details</p>
                     {required
-                      ? <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#FEE2E2', color: '#B91C1C', fontFamily: 'var(--font-body)' }}>Required for loans &gt; ₹1 lakh</span>
-                      : <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: '#F1F5F9', color: '#64748B', fontFamily: 'var(--font-body)' }}>Required only for loans &gt; ₹1 lakh</span>
+                      ? <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>Required for loans &gt; ₹1 lakh</span>
+                      : <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>Required only for loans &gt; ₹1 lakh</span>
                     }
                   </div>
                   <div className="p-5">
@@ -1950,10 +1996,10 @@ export default function LoanApplication() {
                 );
               })()}
 
-              <div className="rounded-xl p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+              <div className="rounded-xl p-4" style={{ background: 'var(--fx-amber-tint)', border: '1px solid var(--fx-amber-tint)' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => { onChange('criminal_records', e.target.checked); if (e.target.checked) setErrors((p: any) => ({ ...p, criminal_records: undefined })); }} className="mt-1 w-5 h-5" />
-                  <span className="text-sm" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>I do not have any pending criminal cases or criminal records</span>
+                  <input type="checkbox" checked={formData.criminal_records || false} onChange={e => { onChange('criminal_records', e.target.checked); if (e.target.checked) setErrors((p: any) => ({ ...p, criminal_records: undefined })); }} className="mt-1 w-5 h-5 flex-shrink-0 cursor-pointer" style={{ accentColor: 'var(--fx-accent)' }} />
+                  <span className="text-sm" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-body)' }}>I do not have any pending criminal cases or criminal records</span>
                 </label>
                 {errors.criminal_records && <p className="mt-2 text-xs text-red-600">{errors.criminal_records}</p>}
               </div>
@@ -1963,17 +2009,17 @@ export default function LoanApplication() {
 
           {currentStep === 2 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="DOC" color="#DC2626" title="Document Upload" />
+              <SectionTitle icon="DOC" color="var(--fx-orange)" title="Documents" />
               {/* Deliberately NOT listing file types here any more: they now differ per
                   document (photo is images-only, bank statement is PDF-only), so a
                   blanket "PDF / JPG / PNG accepted" would contradict the per-row hints
                   and mislead exactly where the rules matter most. */}
-              <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Max 5MB each · accepted formats are listed under each document</p>
+              <p className="text-sm" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>Anything we could fetch for you is already filled in. Max 5MB per file · accepted formats are listed under each document.</p>
               {docError && (
                 <div className="flex items-start gap-2.5 rounded-xl p-3.5"
-                  style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
-                  <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{docError}</p>
+                  style={{ background: 'var(--fx-red-tint)', border: '1px solid var(--fx-red-tint)' }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--fx-red)' }} />
+                  <p className="text-sm" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>{docError}</p>
                 </div>
               )}
               <div className="space-y-3">
@@ -2030,26 +2076,67 @@ export default function LoanApplication() {
                 </div>
 
                 {documentsFor(formData.consumer_loan_type).map(doc => {
-                  const fs = formData.field_sources?.[doc.key];
-                  const isDigilocker = fs?.source === 'aadhaar';
+                  // The row renders by JOURNEY, not by "has a file yet". A
+                  // DigiLocker-fetched Aadhaar and a hand-picked salary slip are
+                  // both "done", but they got there differently and the customer
+                  // should be able to see which.
+                  const auto = wasAutoFilled(doc, formData);
+                  const state = journeyState(doc, formData);
+                  const isDigilocker = auto;
                   return (
                   <div key={doc.key}>
-                  <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${formData[doc.key] ? (isDigilocker ? 'border-blue-400/50 dark:border-blue-800/40 bg-blue-50/50 dark:bg-dark-section' : 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section') : 'border-gray-200 dark:border-gray-700/50 bg-gray-50 dark:bg-dark-section'}`}>
+                  <div className="flex items-center justify-between gap-3 p-4 rounded-xl"
+                    style={{
+                      background: 'var(--fx-surface)',
+                      // The border carries the state; the surface stays neutral so
+                      // badge text is always legible against it.
+                      border: `1.5px solid ${
+                        !formData[doc.key]
+                          ? 'var(--fx-border)'
+                          : isDigilocker
+                            ? 'color-mix(in oklch, var(--fx-accent) 45%, var(--fx-border))'
+                            : 'color-mix(in oklch, var(--fx-green) 45%, var(--fx-border))'
+                      }`,
+                    }}>
                     <div>
-                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{doc.label} {doc.required && <span className="text-red-500">*</span>}</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--fx-text)' }}>{doc.label} {doc.required && <span style={{ color: 'var(--fx-red)' }}>*</span>}</p>
                       {/* What a valid file looks like for THIS document — the
                           single most effective way to prevent a wrong upload. */}
                       {!formData[doc.key] && doc.hint && (
-                        <p className="text-xs mt-0.5" style={{ color: '#94A3B8' }}>{doc.hint}</p>
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>{doc.hint}</p>
+                      )}
+                      {/* A `fetch` row whose source has not run yet: tell the
+                          customer the automatic route exists and where it is,
+                          instead of silently demanding a file. */}
+                      {state === 'awaiting' && (
+                        <button type="button"
+                          onClick={() => { autoSave(); setCurrentStep(1); window.scrollTo(0, 0); }}
+                          className="text-xs mt-1 underline underline-offset-2"
+                          style={{ color: 'var(--fx-accent)', fontFamily: 'var(--font-body)' }}>
+                          Verify with DigiLocker to fill this automatically
+                        </button>
+                      )}
+                      {/* A journey that WOULD be automatic but is not wired yet.
+                          Stated plainly rather than dressed up as a choice. */}
+                      {state !== 'done' && doc.automationPending && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--fx-amber)' }}>{doc.automationPending}</p>
+                      )}
+                      {/* What we will DO with the file, for journeys where
+                          storing it is not the end of the story. */}
+                      {state !== 'done' && doc.journey === 'parse' && doc.journeyNote && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>{doc.journeyNote}</p>
                       )}
                       {formData[doc.key] && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {isDigilocker ? (
-                          <span className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3" />DigiLocker Verified
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
+                            style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)', border: '1px solid var(--fx-border)' }}>
+                            <ShieldCheck className="w-3 h-3" />{doc.journeyNote || 'DigiLocker Verified'}
                           </span>
                         ) : (
-                          <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Uploaded</p>
+                          <p className="text-xs flex items-center gap-1" style={{ color: 'var(--fx-green)' }}><CheckCircle2 className="w-3 h-3" />
+                            {doc.journey === 'parse' ? 'Uploaded — will be analysed' : 'Uploaded'}
+                          </p>
                         )}
                         <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>
                       </div>
@@ -2060,7 +2147,7 @@ export default function LoanApplication() {
                           photo is images-only, a bank statement is PDF-only.
                           One shared accept let customers attach a photo of a
                           statement, which Digitap cannot parse at all. */}
-                      <input type="file" accept={doc.accept} className="hidden"
+                      <input type="file" accept={doc.accept} className="hidden" disabled={!!uploading[doc.key]}
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
@@ -2078,16 +2165,39 @@ export default function LoanApplication() {
                           fd.append('session_token', getSession() || '');
                           fd.append('document_type', doc.key.replace('_url', ''));
                           fd.append('file', file);
+                          setUploading((u: any) => ({ ...u, [doc.key]: true }));
                           try {
                             const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
-                            const data = await res.json();
-                            if (data.url) onChange(doc.key, data.url);
-                            else setErrors((p: any) => ({ ...p, [doc.key]: 'Upload failed. Try again.' }));
-                          } catch { setErrors((p: any) => ({ ...p, [doc.key]: 'Upload failed. Try again.' })); }
+                            const data = await res.json().catch(() => ({}));
+                            if (res.ok && data.url) {
+                              onChange(doc.key, data.url);
+                            } else {
+                              // Show the server's reason verbatim — it names the
+                              // actual problem (wrong type, too large, not saved).
+                              setErrors((p: any) => ({ ...p, [doc.key]: data.detail || 'Upload failed. Please try again.' }));
+                              e.target.value = '';
+                            }
+                          } catch {
+                            setErrors((p: any) => ({ ...p, [doc.key]: 'Could not reach the server. Check your connection and try again.' }));
+                            e.target.value = '';
+                          } finally {
+                            setUploading((u: any) => ({ ...u, [doc.key]: false }));
+                          }
                         }}
                       />
-                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition ${formData[doc.key] ? 'bg-green-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                        {formData[doc.key] ? 'Replace' : 'Upload'}
+                      {/* The verb matches the journey. A `fetch` document that
+                          DigiLocker has not filled yet offers "Upload instead"
+                          — the manual fallback, not the expected path — so the
+                          customer is not told to go find a file we can retrieve. */}
+                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 whitespace-nowrap ${uploading[doc.key] ? 'opacity-70 cursor-wait' : ''} ${formData[doc.key] ? 'bg-green-600 text-white' : state === 'awaiting' ? 'bg-gray-500 text-white hover:bg-gray-600' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                        {uploading[doc.key] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {uploading[doc.key]
+                          ? 'Uploading'
+                          : formData[doc.key]
+                            ? 'Replace'
+                            : state === 'awaiting'
+                              ? 'Upload instead'
+                              : 'Upload'}
                       </span>
                     </label>
                   </div>
@@ -2102,7 +2212,7 @@ export default function LoanApplication() {
 
           {currentStep === 6 && (
             <div className="space-y-5 animate-[fadeIn_0.3s_ease-out]">
-              <SectionTitle icon="RVW" color="#059669" title="Review & Submit" />
+              <SectionTitle icon="RVW" color="var(--fx-green)" title="Review & Submit" />
               <RS title="Identity & KYC">
                 <RR label="PAN" value={formData.pan_number ? formData.pan_number.slice(0,2)+'***'+formData.pan_number.slice(-2) : ''} />
                 <RR label="Aadhaar" value={formData.aadhaar_number ? 'XXXX XXXX '+String(formData.aadhaar_number).slice(-4) : formData.aadhaar_last4 ? `XXXX XXXX ${formData.aadhaar_last4}` : ''} />
@@ -2140,35 +2250,37 @@ export default function LoanApplication() {
                   <RR label="Phone" value={formData.guarantor_phone} />
                 </RS>
               )}
-              <div className="rounded-2xl p-4" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+              <div className="rounded-2xl p-4" style={{ background: 'var(--fx-accent-tint)', border: '1px solid color-mix(in oklch, var(--fx-accent) 35%, var(--fx-border))' }}>
                 <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-1 w-5 h-5 rounded" />
-                  <span className="text-sm" style={{ color: '#1D4ED8', fontFamily: 'var(--font-body)' }}>I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
+                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
+                    className="mt-1 w-5 h-5 rounded flex-shrink-0 cursor-pointer"
+                    style={{ accentColor: 'var(--fx-accent)' }} />
+                  <span className="text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-body)' }}>I declare all information provided is true and accurate. I authorize the bank to verify details and conduct credit checks as required.</span>
                 </label>
               </div>
               {nameMatchLocked ? (
-                <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
+                <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: 'var(--fx-red-tint)', border: '1px solid var(--fx-red-tint)' }}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--fx-red)' }} />
                   <div>
-                    <p className="text-sm font-semibold" style={{ color: '#991B1B', fontFamily: 'var(--font-heading)' }}>Application Locked — Submission Not Allowed</p>
-                    <p className="text-xs mt-1" style={{ color: '#B91C1C', fontFamily: 'var(--font-body)' }}>This application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting.</p>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-heading)' }}>Application Locked — Submission Not Allowed</p>
+                    <p className="text-xs mt-1" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>This application is locked due to identity verification failure. Please contact your bank branch to unlock or re-verify your identity before submitting.</p>
                   </div>
                 </div>
               ) : (
-                <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
-                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: '#D97706' }} />
-                  <p className="text-xs" style={{ color: '#92400E', fontFamily: 'var(--font-body)' }}>Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
+                <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: 'var(--fx-amber-tint)', border: '1px solid var(--fx-amber-tint)' }}>
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: 'var(--fx-amber)' }} />
+                  <p className="text-xs" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-body)' }}>Once submitted, this application cannot be edited until reviewed by a bank officer.</p>
                 </div>
               )}
               <div className="flex gap-4">
                 <button onClick={() => { autoSave(); setCurrentStep(5); window.scrollTo(0, 0); }}
                   className="flex-1 py-4 rounded-xl font-semibold transition hover:opacity-80"
-                  style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)', border: '1px solid #E2E8F0' }}>
+                  style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', fontFamily: 'var(--font-heading)', border: '1px solid var(--fx-border)' }}>
                   ← Previous
                 </button>
                 <button onClick={handleSubmit} disabled={submitting || !agreed || nameMatchLocked}
                   className="flex-1 py-4 rounded-xl font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  style={{ background: nameMatchLocked ? '#DC2626' : 'linear-gradient(135deg, #059669 0%, #047857 100%)', fontFamily: 'var(--font-heading)' }}>
+                  style={{ background: nameMatchLocked ? 'var(--fx-red)' : 'linear-gradient(135deg, var(--fx-green) 0%, color-mix(in oklch, var(--fx-green) 75%, black) 100%)', fontFamily: 'var(--font-heading)' }}>
                   {nameMatchLocked ? 'Submission Locked' : submitting ? <><Loader2 className="w-5 h-5 animate-spin" /><span>Submitting...</span></> : 'Submit Application →'}
                 </button>
               </div>
@@ -2239,51 +2351,58 @@ function F({ label, required, error, children, fieldName, fieldSources }: any) {
   return (
     <div className="transition-all duration-200">
       <div className="flex items-center flex-wrap gap-1 sm:gap-1.5 mb-1">
-        <label className="text-sm font-medium" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>{label} {required && <span style={{ color: '#DC2626' }}>*</span>}</label>
+        <label className="text-sm font-medium" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-body)' }}>{label} {required && <span style={{ color: 'var(--fx-red)' }}>*</span>}</label>
         {src && !src.modified && (
           <div className="relative group flex-shrink-0">
             <span className={`px-1.5 sm:px-2 py-0.5 text-[8px] sm:text-[9px] font-medium rounded cursor-help inline-flex items-center gap-0.5 ${
-              src.source === 'agent_call'
-                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+              src.source === 'agent_call' ? 'fx-badge-green' : 'fx-badge-accent'
             }`}>
               {src.source === 'pan' ? 'PAN' : src.source === 'agent_call' ? 'Voice Call' : 'Aadhaar'}
             </span>
             <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
-              <div className="bg-gray-900 dark:bg-gray-700 text-white text-[10px] px-2 py-1.5 rounded-lg shadow-lg whitespace-nowrap max-w-[250px]">
+              <div className="fx-tooltip text-[10px] px-2 py-1.5 rounded-lg whitespace-nowrap max-w-[250px]">
                 <p>{src.source === 'agent_call' ? 'Collected during voice call' : `Fetched from ${src.source.toUpperCase()}`}</p>
-                <p className="text-gray-300 mt-0.5 truncate">{src.original}</p>
+                <p className="mt-0.5 truncate" style={{ color: 'var(--fx-text3)' }}>{src.original}</p>
               </div>
             </div>
           </div>
         )}
         {src && src.modified && (
           <div className="relative group flex-shrink-0">
-            <span className="px-1.5 sm:px-2 py-0.5 text-[8px] sm:text-[9px] font-medium rounded bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 cursor-help inline-flex items-center gap-0.5">
+            <span className="px-1.5 sm:px-2 py-0.5 text-[8px] sm:text-[9px] font-medium rounded fx-badge-orange cursor-help inline-flex items-center gap-0.5">
               Modified
             </span>
             <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 pointer-events-none">
-              <div className="bg-gray-900 dark:bg-gray-700 text-white text-[10px] px-2 py-1.5 rounded-lg shadow-lg whitespace-nowrap max-w-[250px]">
-                <p>Original from {src.source === 'agent_call' ? 'VOICE CALL' : src.source.toUpperCase()}: <span className="text-gray-300">{src.original}</span></p>
-                <p className="text-orange-300 mt-0.5">Modified by applicant</p>
+              <div className="fx-tooltip text-[10px] px-2 py-1.5 rounded-lg whitespace-nowrap max-w-[250px]">
+                <p>Original from {src.source === 'agent_call' ? 'VOICE CALL' : src.source.toUpperCase()}: <span style={{ color: 'var(--fx-text3)' }}>{src.original}</span></p>
+                <p className="mt-0.5" style={{ color: 'var(--fx-orange)' }}>Modified by applicant</p>
               </div>
             </div>
           </div>
         )}
       </div>
       {children}
-      {error && <p className="text-xs mt-1.5 flex items-center gap-1 animate-[fadeIn_0.2s]" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}><AlertTriangle className="w-3 h-3 flex-shrink-0" />{error}</p>}
+      {error && <p className="text-xs mt-1.5 flex items-center gap-1 animate-[fadeIn_0.2s]" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}><AlertTriangle className="w-3 h-3 flex-shrink-0" />{error}</p>}
     </div>
   );
 }
+// The old `color + '18'` / `${color}40` alpha-suffix trick only worked for hex
+// literals. Now that `color` is a design token (var(--fx-...)), concatenation
+// produced invalid CSS like `var(--fx-orange)18` and the tint/border silently
+// disappeared. color-mix does the same job for a token, in either theme.
 function SectionTitle({ icon, color, title }: { icon: string; color: string; title: string }) {
   return (
     <div className="flex items-center gap-3">
       <div className="w-8 h-8 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0"
-        style={{ background: color + '18', border: `1px solid ${color}40`, color, fontFamily: 'var(--font-heading)' }}>
+        style={{
+          background: `color-mix(in oklch, ${color} 12%, transparent)`,
+          border: `1px solid color-mix(in oklch, ${color} 30%, transparent)`,
+          color,
+          fontFamily: 'var(--font-heading)',
+        }}>
         {icon}
       </div>
-      <h2 className="text-lg font-bold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{title}</h2>
+      <h2 className="text-lg font-bold" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>{title}</h2>
     </div>
   );
 }
@@ -2293,14 +2412,14 @@ function Nav({ onPrev, onNext }: any) {
       {onPrev && (
         <button onClick={onPrev}
           className="flex-1 rounded-xl font-semibold text-sm transition hover:opacity-80 active:scale-[0.98]"
-          style={{ background: '#F1F5F9', color: '#475569', fontFamily: 'var(--font-heading)', border: '1.5px solid #E2E8F0', height: '52px' }}>
+          style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', fontFamily: 'var(--font-heading)', border: '1.5px solid var(--fx-border)', height: '52px' }}>
           ← Back
         </button>
       )}
       {onNext && (
         <button onClick={onNext}
           className={`${onPrev ? 'flex-1' : 'w-full'} rounded-xl font-semibold text-white text-sm transition hover:-translate-y-0.5 hover:shadow-xl active:scale-[0.98]`}
-          style={{ background: 'linear-gradient(135deg, #1A1A2E 0%, #0F3460 100%)', fontFamily: 'var(--font-heading)', height: '52px', boxShadow: '0 4px 16px rgba(26,26,46,0.25)' }}>
+          style={{ background: 'var(--fx-accent-grad)', fontFamily: 'var(--font-heading)', height: '52px', boxShadow: 'var(--fx-accent-glow)' }}>
           Continue →
         </button>
       )}
@@ -2309,27 +2428,29 @@ function Nav({ onPrev, onNext }: any) {
 }
 function RS({ title, children }: any) {
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-      <div className="px-4 sm:px-5 py-3" style={{ background: '#F8F9FC', borderBottom: '1px solid #E2E8F0' }}>
-        <h3 className="font-semibold text-sm" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>{title}</h3>
+    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+      <div className="px-4 sm:px-5 py-3" style={{ background: 'var(--fx-surface2)', borderBottom: '1px solid var(--fx-border)' }}>
+        <h3 className="font-semibold text-sm" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>{title}</h3>
       </div>
-      <div className="px-4 sm:px-5 py-4 space-y-3 bg-white">{children}</div>
+      <div className="px-4 sm:px-5 py-4 space-y-3" style={{ background: 'var(--fx-surface)' }}>{children}</div>
     </div>
   );
 }
 function RR({ label, value }: any) {
   return (
     <div className="flex justify-between items-start gap-4">
-      <span className="text-sm flex-shrink-0" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>{label}</span>
-      <span className="text-sm font-semibold text-right" style={{ color: '#0F172A', fontFamily: 'var(--font-body)' }}>{value || '—'}</span>
+      <span className="text-sm flex-shrink-0" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>{label}</span>
+      <span className="text-sm font-semibold text-right" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-body)' }}>{value || '—'}</span>
     </div>
   );
 }
 function inp(error: string) {
   // Explicit text colour in BOTH themes — without it the value inherits the
   // page colour and is invisible (dark text on the dark-mode field until blur).
-  const base = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 border text-[#0F172A] dark:text-slate-100 placeholder:text-[#94A3B8] dark:placeholder:text-slate-500';
-  const ok   = 'border-[#E2E8F0] bg-[#FAFAFA] hover:border-[#94A3B8] focus:border-[#1A1A2E] focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500 dark:focus:border-blue-500 dark:focus:bg-slate-800 focus:shadow-[0_0_0_3px_rgba(26,26,46,0.06)]';
-  const err  = 'border-[#DC2626] bg-[#FFF5F5] dark:bg-red-950/30 dark:border-red-500 text-[#0F172A] dark:text-slate-100 animate-[shake_0.3s]';
+  // Tokenised: one rule set that follows the theme, replacing the parallel
+  // light/dark class pairs that had to be kept in sync by hand.
+  const base = 'fx-input w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-150 border';
+  const ok   = 'fx-input-ok';
+  const err  = 'fx-input-err animate-[shake_0.3s]';
   return `${base} ${error ? err : ok}`;
 }

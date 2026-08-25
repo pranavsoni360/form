@@ -498,6 +498,47 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
   background-color: var(--fx-red-tint) !important;
 }
 
+/* Blue and orange families — used by the customer loan form (provenance chips,
+   DigiLocker/verification notices, the consumer-durable section). The bridge
+   above never covered them because no staff panel used blue or orange; the form
+   uses both heavily. Blue maps to the accent (it WAS the pre-Finix accent), and
+   orange to the orange token rather than amber so "modified" stays visually
+   distinct from "warning". */
+.finix-root :is(.text-blue-800, .text-blue-700, .text-blue-600, .text-blue-500, .text-blue-400, .text-blue-300) {
+  color: var(--fx-accent) !important;
+}
+.finix-root :is(.bg-blue-600, .bg-blue-700) {
+  background: var(--fx-accent-grad) !important;
+}
+.finix-root :is(.bg-blue-50, .bg-blue-100, [class*="bg-blue-900"]) {
+  background-color: var(--fx-accent-tint) !important;
+}
+.finix-root :is([class*="border-blue-"]) { border-color: var(--fx-accent) !important; }
+.finix-root :is(.text-orange-700, .text-orange-600, .text-orange-400) {
+  color: var(--fx-orange) !important;
+}
+.finix-root :is(.bg-orange-500, .bg-orange-600) {
+  background-color: var(--fx-orange) !important;
+}
+.finix-root :is(.bg-orange-50, .bg-orange-100) {
+  background-color: var(--fx-orange-tint) !important;
+}
+.finix-root :is([class*="border-orange-"], [class*="border-amber-"]) {
+  border-color: color-mix(in oklch, var(--fx-amber) 35%, var(--fx-border)) !important;
+}
+.finix-root :is([class*="border-green-"], [class*="border-emerald-"]) {
+  border-color: color-mix(in oklch, var(--fx-green) 35%, var(--fx-border)) !important;
+}
+/* text-red-500 is the required-field asterisk — keep it on the red token. */
+.finix-root .text-red-500 { color: var(--fx-red) !important; }
+.finix-root :is(.text-green-700, .text-green-600, .text-green-400, .text-green-300) {
+  color: var(--fx-green) !important;
+}
+.finix-root :is(.bg-green-100, [class*="bg-green-900"]) {
+  background-color: var(--fx-green-tint) !important;
+}
+.finix-root .bg-gray-950 { background-color: var(--fx-bg) !important; }
+
 /* Record-view field grid (components/finix/Tabs.tsx DataGrid). Hairlines are
    drawn as right/bottom borders on each cell, so the grid stays correct however
    the auto-fit columns wrap — a gap-based 1px background would leak the divider
@@ -522,6 +563,80 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
   50%      { opacity: 0.35; }
 }
 .fx-pulse { animation: fx-pulse 1.4s ease-in-out infinite; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CUSTOMER LOAN FORM  (app/loan-form/application)
+   The applicant-facing form was built before the Finix migration and styled
+   with ~163 inline hex values and parallel light/dark class pairs kept in sync
+   by hand. These classes let its six shared helpers (inp/F/RS/RR/Nav/
+   SectionTitle) express the same design through tokens, so the form follows
+   the theme like every staff screen.
+   Scoped under .finix-root so nothing here leaks into unmigrated pages.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Text inputs, selects and textareas — 46 fields route through inp(). */
+.finix-root .fx-input {
+  color: var(--fx-text);
+  font-family: var(--font-body);
+}
+.finix-root .fx-input::placeholder { color: var(--fx-text3); }
+
+.finix-root .fx-input-ok {
+  border-color: var(--fx-border);
+  background: var(--fx-surface2);
+}
+.finix-root .fx-input-ok:hover { border-color: var(--fx-border-strong); }
+.finix-root .fx-input-ok:focus {
+  border-color: var(--fx-accent);
+  background: var(--fx-surface);
+  box-shadow: var(--fx-focus);
+}
+/* Disabled fields are common here: PAN/Aadhaar lock after verification, and a
+   locked field must read as settled rather than broken. */
+.finix-root .fx-input:disabled,
+.finix-root .fx-input[readonly]:not(.fx-input-err) {
+  background: var(--fx-surface2);
+  color: var(--fx-text2);
+  cursor: not-allowed;
+}
+.finix-root .fx-input-err {
+  border-color: var(--fx-red);
+  background: var(--fx-red-tint);
+  color: var(--fx-text);
+}
+.finix-root .fx-input-err:focus {
+  border-color: var(--fx-red);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--fx-red) 18%, transparent);
+}
+
+/* Native controls follow the accent instead of the browser's default blue. */
+.finix-root .fx-input,
+.finix-root input[type="checkbox"],
+.finix-root input[type="radio"] { accent-color: var(--fx-accent); }
+
+/* Field-provenance badges. Hue still carries the meaning — verified from a
+   source vs edited by the applicant — so an officer can scan for overrides. */
+.finix-root .fx-badge-accent { background: var(--fx-accent-tint); color: var(--fx-accent); }
+.finix-root .fx-badge-green  { background: var(--fx-green-tint);  color: var(--fx-green); }
+.finix-root .fx-badge-orange { background: var(--fx-orange-tint); color: var(--fx-orange); }
+
+/* Hover tooltip showing the original fetched value. Inverted against the
+   surface so it reads as an overlay in either theme. */
+.finix-root .fx-tooltip {
+  background: var(--fx-text);
+  color: var(--fx-surface);
+  box-shadow: var(--fx-elevation);
+  font-family: var(--font-body);
+}
+
+/* A full-page Finix screen must paint the viewport, not just its own box.
+   `body` still uses the legacy shadcn `bg-background`, which does not follow
+   data-theme — so in dark mode a light strip showed above and below the form
+   wherever the root element did not reach (scroll overshoot, short content).
+   Scoped with :has() so pages still on the legacy design are untouched. */
+body:has(.finix-root) {
+  background: var(--fx-bg);
+}
 
 /* Popover entrance — small rise + fade + scale, quick and quiet. */
 @keyframes fx-pop-in {

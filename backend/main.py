@@ -417,6 +417,110 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 _SAFE_UPLOAD_EXTS = frozenset({"jpg", "jpeg", "png", "pdf"})
 
 
+# ── Upload content validation ────────────────────────────────────────────────
+# Uploads were validated on the browser-declared Content-Type alone. That is
+# attacker-controlled: a renamed executable sent with Content-Type
+# application/pdf was written to disk and served back from /uploads/. It also
+# REJECTED valid files, because some Android pickers send
+# application/octet-stream for a real PDF. Reading the file's own leading bytes
+# fixes both directions at once.
+_MAGIC: dict[str, tuple[bytes, ...]] = {
+    "pdf": (b"%PDF-",),
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpg": (b"\xff\xd8\xff",),
+}
+
+
+def sniff_upload_kind(content: bytes) -> str | None:
+    """Return 'pdf' | 'png' | 'jpg' from the file's own bytes, or None."""
+    for kind, sigs in _MAGIC.items():
+        if any(content.startswith(sig) for sig in sigs):
+            return kind
+    return None
+
+
+# Which content kinds each document may actually be. Mirrors the per-document
+# `accept` in frontend/lib/utils/loanDocuments.ts — the browser enforced these
+# but the server accepted any of the three for any document, so a request that
+# skipped the UI could attach a PHOTO of a bank statement, which Digitap's
+# parser cannot read at all, or a PDF where a passport photograph is required.
+_IMG = frozenset({"jpg", "png"})
+_PDF = frozenset({"pdf"})
+_BOTH = _IMG | _PDF
+_DOC_KINDS: dict[str, frozenset] = {
+    "aadhaar_front": _BOTH,
+    "aadhaar_back": _BOTH,
+    "pan_card": _BOTH,
+    "photo": _IMG,                                    # a face, never a PDF
+    "bank_statement": _PDF, "bank_statements": _PDF,  # must be machine-readable
+    "itr_form16": _PDF,
+    "income_proof": _BOTH,
+    "salary_slips": _BOTH,
+    "proof_of_identification": _BOTH,
+    "proof_of_residence": _BOTH,
+    "quotation": _BOTH,
+}
+_KIND_LABEL = {"pdf": "PDF", "png": "PNG", "jpg": "JPG"}
+
+# How each document is obtained. Mirrors `journey` in
+# frontend/lib/utils/loanDocuments.ts — kept as a literal because that spec is
+# TypeScript; change one, change the other.
+#
+# This exists so the SERVER can tell an officer why a document is present and
+# how much to trust it. A DigiLocker-fetched Aadhaar is issuer-signed; a file
+# the applicant picked is whatever they picked. Treating those as the same
+# "uploaded" is how a self-supplied ID passes for a verified one.
+#
+#   fetch   retrieved from an authorised source (DigiLocker)
+#   vendor  collected and parsed by a third party (Digitap statement analysis)
+#   parse   applicant supplies it AND we extract data from it
+#   upload  stored for a human to read; no extraction
+_DOC_JOURNEYS: dict[str, str] = {
+    "aadhaar_front": "fetch",
+    "aadhaar_back": "fetch",
+    "photo": "fetch",
+    "proof_of_identification": "fetch",
+    "proof_of_residence": "fetch",
+    "bank_statement": "parse",
+    "bank_statements": "parse",
+    "itr_form16": "upload",     # deliberately NOT credential-fetch; see below
+    "salary_slips": "upload",
+    "income_proof": "upload",
+    "pan_card": "upload",
+    "quotation": "upload",
+}
+
+# WHY ITR IS NOT A FETCH JOURNEY
+# VGDocverify exposes ITR_Advance, which takes the applicant's income-tax portal
+# username and PASSWORD. That credential controls their entire tax identity, and
+# a lender collecting it — even in transit, even unstored — takes on liability
+# far out of proportion to an optional document. Form 26AS (available for a
+# handful of banks, no password required) is the route to revisit. Until then
+# ITR is an upload, and `itr_advance` in lrs/providers/vg_docverify.py stays
+# unwired on purpose. Do not "finish" it without that decision being retaken.
+
+
+
+def validate_upload_content(document_type: str, content: bytes) -> str:
+    """Validate the REAL file type for this document. Returns kind, or raises 400."""
+    if not content:
+        raise HTTPException(status_code=400, detail="That file is empty. Please choose another.")
+    kind = sniff_upload_kind(content)
+    if kind is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Unrecognised file. Please upload a JPG, PNG or PDF.",
+        )
+    allowed = _DOC_KINDS.get(document_type, _BOTH)
+    if kind not in allowed:
+        want = " or ".join(sorted(_KIND_LABEL[k] for k in allowed))
+        raise HTTPException(
+            status_code=400,
+            detail=f"This document must be a {want} file (received {_KIND_LABEL[kind]}).",
+        )
+    return kind
+
+
 def safe_upload_filename(document_type: str, original_name: str | None) -> str:
     """Filename that cannot escape its directory or change the served type."""
     label = re.sub(r"[^A-Za-z0-9_-]", "_", (document_type or "").strip())[:40] or "document"
@@ -1641,6 +1745,49 @@ def _validate_employment(app: dict) -> None:
         raise HTTPException(status_code=400, detail=msg)
     if occ and occ in _INELIGIBLE_OCCUPATION_IDS:
         raise HTTPException(status_code=400, detail=msg)
+
+
+# Required documents, mirroring frontend/lib/utils/loanDocuments.ts. Kept as a
+# literal rather than imported because the frontend spec is TypeScript; if a
+# document's `required` flag changes there, change it here too.
+#
+# WHY THIS EXISTS: the form marked these required with a red asterisk and a
+# client-side gate, but /api/submit-form-session never checked them. A POST that
+# skipped the UI submitted an application with no documents at all, and LRS
+# scoring then ran against a borrower with no bank statement — the one document
+# the cash-flow pillar depends on.
+_REQUIRED_DOC_COLUMNS = {
+    "aadhaar_front_url":    "Aadhaar Document",
+    "photo_url":            "Passport Size Photo",
+    "bank_statements_url":  "Bank Statements",
+}
+# Consumer-durable applications also need the dealer quotation.
+_CD_REQUIRED_DOC_COLUMNS = {"quotation_url": "Dealer Quotation"}
+
+
+def _validate_documents(app: dict) -> None:
+    """Reject submission when a required document is missing (mirrors the client)."""
+    required = dict(_REQUIRED_DOC_COLUMNS)
+    if str(app.get("consumer_loan_type") or "").strip() == "consumer_durable":
+        required.update(_CD_REQUIRED_DOC_COLUMNS)
+    # bank_statements_url is the column the upload endpoint writes; older rows
+    # used bank_statement_url (singular). Accept either so applications created
+    # before migration_v44 can still be submitted.
+    missing = []
+    for col, label in required.items():
+        val = app.get(col)
+        if not val and col == "bank_statements_url":
+            val = app.get("bank_statement_url")
+        if not str(val or "").strip():
+            missing.append(label)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{'This document is' if len(missing) == 1 else 'These documents are'} "
+                f"required before submitting: {', '.join(missing)}."
+            ),
+        )
 
 # ============================================
 # API ENDPOINTS
@@ -3897,12 +4044,12 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         raise HTTPException(status_code=404, detail="Invalid token")
     if not token_row.get("otp_verified"):
         raise HTTPException(status_code=403, detail="Please verify OTP before uploading documents.")
-    allowed_types = ['image/jpeg', 'image/png', 'application/pdf']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Invalid file type")
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
+    # Validate the file's OWN bytes, not the browser-declared Content-Type, and
+    # enforce the per-document rule (a bank statement must be a real PDF).
+    validate_upload_content(document_type, file_content)
     loan_dir = UPLOAD_DIR / token_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(document_type, file.filename)
@@ -3919,15 +4066,31 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
+        # NOT best-effort. This column IS the upload: the form reads the persisted
+        # row to decide whether a required document is satisfied, and
+        # _validate_documents gates submission on the same columns. Swallowing a
+        # failure returned {"status": "uploaded"} with a green tick while the field
+        # stayed empty — the customer then could not submit and no error appeared
+        # anywhere. That is how the missing bank_statements_url column (v44) turned
+        # into an unsubmittable application. All 12 mapping targets exist as of v44,
+        # so a failure here is a real fault and must surface.
         try:
             await db_pool.execute(
                 f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE token_id = $2",
                 file_url, token_row["id"]
             )
         except Exception as e:
-            # Some field_mapping targets have no column yet (e.g. salary_slips_url);
-            # application_documents below is the durable record, so never fail the upload.
-            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+            logger.error("Document column update FAILED for %s (%s): %s",
+                         document_type, field_mapping[document_type], e)
+            raise HTTPException(
+                status_code=500,
+                detail="The file was received but could not be attached to your application. Please try again.",
+            ) from e
+    else:
+        # An unmapped document_type persists nothing. Reject rather than report
+        # success for a file the application can never reference.
+        logger.error("Unknown document_type %r rejected", document_type)
+        raise HTTPException(status_code=400, detail=f"Unsupported document type: {document_type}")
     # Durable normalized record — accepts ANY document_type (fixes the missing-column
     # cases) and captures who/when/size. Best-effort: never break the upload.
     try:
@@ -3938,10 +4101,16 @@ async def upload_document(token: str = Form(...), document_type: str = Form(...)
             await db_pool.execute(
                 """INSERT INTO application_documents
                        (application_id, bank_id, document_type, file_url,
-                        original_filename, content_type, size_bytes, uploaded_by_type)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+                        original_filename, content_type, size_bytes, uploaded_by_type,
+                        journey)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant',$8)""",
                 approw["id"], approw["bank_id"], document_type, file_url,
                 file.filename, file.content_type, len(file_content),
+                # A file arriving HERE was chosen by the applicant, whatever the
+                # document's usual journey — a fetch-journey document uploaded by hand is
+                # precisely the case an officer must be able to see. Only `parse` survives,
+                # because we do still extract from those.
+                "parse" if _DOC_JOURNEYS.get(document_type) == "parse" else "upload",
             )
     except Exception as e:
         logger.warning("application_documents insert failed for token %s: %s", token_row["id"], e)
@@ -4807,12 +4976,12 @@ async def upload_document_session(
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
-    allowed_types = ['image/jpeg', 'image/png', 'application/pdf']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: JPG, PNG, PDF")
     file_content = await file.read()
     if len(file_content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 5MB.")
+    # Validate the file's OWN bytes, not the browser-declared Content-Type, and
+    # enforce the per-document rule (a bank statement must be a real PDF).
+    validate_upload_content(document_type, file_content)
     loan_dir = UPLOAD_DIR / app_row["loan_id"]
     loan_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(document_type, file.filename)
@@ -4829,22 +4998,46 @@ async def upload_document_session(
         "proof_of_residence": "proof_of_residence_url", "quotation": "quotation_url",
     }
     if document_type in field_mapping:
+        # NOT best-effort. This column IS the upload: the form reads the persisted
+        # row to decide whether a required document is satisfied, and
+        # _validate_documents gates submission on the same columns. Swallowing a
+        # failure returned {"status": "uploaded"} with a green tick while the field
+        # stayed empty — the customer then could not submit and no error appeared
+        # anywhere. That is how the missing bank_statements_url column (v44) turned
+        # into an unsubmittable application. All 12 mapping targets exist as of v44,
+        # so a failure here is a real fault and must surface.
         try:
             await db_pool.execute(
                 f"UPDATE loan_applications SET {field_mapping[document_type]} = $1 WHERE id = $2",
                 file_url, session["application_id"]
             )
         except Exception as e:
-            logger.warning("Legacy *_url update skipped for %s: %s", document_type, e)
+            logger.error("Document column update FAILED for %s (%s): %s",
+                         document_type, field_mapping[document_type], e)
+            raise HTTPException(
+                status_code=500,
+                detail="The file was received but could not be attached to your application. Please try again.",
+            ) from e
+    else:
+        # An unmapped document_type persists nothing. Reject rather than report
+        # success for a file the application can never reference.
+        logger.error("Unknown document_type %r rejected", document_type)
+        raise HTTPException(status_code=400, detail=f"Unsupported document type: {document_type}")
     # Durable normalized record — accepts ANY document_type; best-effort.
     try:
         await db_pool.execute(
             """INSERT INTO application_documents
                    (application_id, bank_id, document_type, file_url,
-                    original_filename, content_type, size_bytes, uploaded_by_type)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant')""",
+                    original_filename, content_type, size_bytes, uploaded_by_type,
+                    journey)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,'applicant',$8)""",
             app_row["id"], app_row["bank_id"], document_type, file_url,
             file.filename, file.content_type, len(file_content),
+            # A file arriving HERE was chosen by the applicant, whatever the
+            # document's usual journey — a fetch-journey document uploaded by hand is
+            # precisely the case an officer must be able to see. Only `parse` survives,
+            # because we do still extract from those.
+            "parse" if _DOC_JOURNEYS.get(document_type) == "parse" else "upload",
         )
     except Exception as e:
         logger.warning("application_documents insert failed for app %s: %s", session["application_id"], e)
@@ -5028,6 +5221,7 @@ async def submit_form_session(session_token: str, request: Request):
     _validate_experience(app_row)
     _validate_address(app_row)
     _validate_employment(app_row)
+    _validate_documents(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

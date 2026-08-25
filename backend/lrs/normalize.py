@@ -49,13 +49,32 @@ def to_canonical_inputs(app: dict, payloads: list[dict]) -> dict[str, Any]:
             inputs.update(p)
 
     # Document availability flags consumed by pillars._doc_cap.
-    # A parameter with doc_required=true and no matching doc is capped at no_doc_max_score.
+    # A parameter with doc_required=true and no matching doc is capped at
+    # no_doc_max_score.
+    #
+    # NOTE: no scorecard parameter currently sets doc_required, so these flags
+    # are computed but unused. They are kept correct anyway — the day one is
+    # switched on, a wrong field name silently caps every applicant's score, and
+    # that is not a failure anyone would notice from the outside.
+    #
+    # This list must match what the FORM actually collects
+    # (app/loan-form/application/page.tsx). Two long-standing mismatches fixed:
+    #   * `income_proof_url` was checked but is collected by no form — dropped.
+    #   * `bank_statement_url` (singular) was checked while the form writes
+    #     `bank_statements_url` (plural). Both columns exist; v44 backfills the
+    #     singular, and the plural is now the one read.
     app = app or {}
     for _doc_field in (
         "aadhaar_front_url", "aadhaar_back_url", "pan_card_url",
-        "photo_url", "income_proof_url", "bank_statement_url",
+        "photo_url", "bank_statements_url", "salary_slips_url", "itr_form16_url",
+        "proof_of_identification_url", "proof_of_residence_url",
     ):
         inputs[f"_doc_{_doc_field}"] = bool(app.get(_doc_field))
+    # Back-compat: anything still keyed on the historical singular name keeps
+    # working, reading whichever column actually holds the file.
+    inputs["_doc_bank_statement_url"] = bool(
+        app.get("bank_statements_url") or app.get("bank_statement_url")
+    )
 
     requested_amount = _f(app.get("loan_amount_requested")) or 0.0
     nmi = _f(inputs.get("net_monthly_income")) \

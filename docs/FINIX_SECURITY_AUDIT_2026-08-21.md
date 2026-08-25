@@ -564,6 +564,77 @@ resume the platform or one named bank. `/batch-status` reports
 the three states.
 
 Backend tests: **430**.
+
+## 10. Full frontend walkthrough (2026-08-25) - `c4442af`
+
+Every screen and every button driven by hand as super admin, bank admin and
+bank officer. Three earlier fixes were re-verified by *forcing* the failure they
+were written for: `/ops/errors` on a 503 shows "Could not load errors... This is
+NOT an all-clear"; a rejected clipboard write shows "Copy failed" instead of a
+silent success; `/bank/calls` on a 500 says "this is not an empty day". A3 was
+exercised through the real UI - the officer's Emergency stop left NRCB dialing.
+
+Five new defects, all fixed and verified live on QA.
+
+**10.1 An inactive bank was offered as an assignment target.**
+`/api/admin/banks` is `SELECT *`, and both `/ops` pickers listed every row it
+returned - including suspended banks and the `LEGACY / UNASSIGNED` placeholder
+(`status='inactive'`). Work assigned to one of those would dial on behalf of a
+bank that is not supposed to be operating, and `upload-excel` would parse and
+insert the whole spreadsheet first. Both endpoints checked only that the bank
+row EXISTS; they now require `status='active'`:
+
+    POST /schedule-callback-manual  bank=LEGACY -> 400 "Bank is inactive - a callback cannot be assigned to it."
+    POST /upload-excel?bank_id=LEGACY           -> 400 (before the file is parsed)
+    POST /schedule-callback-manual  bank=BUCB   -> 200 (no regression)
+
+The two pickers filter the list as well, so the option is not offered at all.
+Confirmed in the browser: the dropdown now shows the five active banks only.
+
+**10.2 The scorecard editor wasted an officer's work.**
+`PUT /api/lrs/config` is `bank_admin`-only (added in round one - the weights and
+cut-offs behind every credit decision). The editor did not know that: an officer
+could edit every field, "Save changes" enabled itself, and the click came back
+403 with nothing on the page having warned them. The screen now resolves the
+role from `/api/auth/me`, shows a view-only notice **before** any editing,
+disables Save with the reason in its tooltip, and makes the value editors
+non-interactive. Browsing, expanding pillars and the formula popovers still
+work, because reading is allowed - `GET /config` admits officers deliberately so
+the editor loads. Verified both ways: officer gets
+`readonly=true, saveDisabled=true, banner shown`; bank admin gets no banner, an
+editable form, and Save that enables on the first edit exactly as before.
+
+**10.3 The bank Emergency stop confirm described the wrong blast radius.**
+It still read "EMERGENCY STOP: This will terminate ALL active calls immediately"
+- the old platform-wide switch. Since A3 the button stops the caller's bank
+only, which is the opposite reassurance. Now: "EMERGENCY STOP for your bank:
+every active and pending call for your bank stops immediately. Other banks keep
+calling. You can resume from this screen."
+
+**10.4 A stop with an empty queue was invisible.**
+`blocked_reason` is only set when `pending > 0` - there has to be work to block -
+and both banners keyed off it. So a bank that stopped itself with nothing queued
+saw no indication anywhere that its calling was off, and would find out when the
+next batch silently refused to dial. `/batch-status` now returns
+`platform_emergency_stop` and `bank_emergency_stop` as explicit booleans (plus
+`emergency_stopped_by` / `_at`) and both banners key off those. Reproduced and
+fixed on QA with BUCB's queue drained:
+
+    pending             = 0
+    blocked_reason      = None    <- what the old banner read: nothing shown
+    bank_emergency_stop = True    <- what the new banner reads
+
+and in the browser the officer sees "Emergency stop is active for your bank -
+nothing is queued right now, but no call will dial until you resume."
+
+**10.5** "1 batches", "1 minutes a day".
+
+Backend tests: **407 in the trimmed suite** after the fixture rewrite (the
+callback fake now answers the new `SELECT status FROM banks` lookup), plus a new
+parameterised test that an `inactive`/`suspended` bank is refused. `tsc` clean,
+eslint 0 errors. QA test identities and rows created for this pass were torn
+down afterwards; no bank is left stopped.
+
 ## 6. Recommended order
 
 1. Firewall allowlist (§5.1) — planned, with rollback.

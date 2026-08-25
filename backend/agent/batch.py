@@ -770,8 +770,19 @@ async def upload_excel(
         _bank_check_uuid = uuid.UUID(bank_id)
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid bank_id.")
-    if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", _bank_check_uuid):
+    # status, not just existence: the bank picker lists every bank the admin API
+    # returns, including suspended ones and the LEGACY / UNASSIGNED placeholder.
+    # A batch assigned to those would dial on behalf of a bank that is not
+    # supposed to be operating.
+    _bank_status = await _state.db_pool.fetchval(
+        "SELECT status FROM banks WHERE id = $1", _bank_check_uuid)
+    if _bank_status is None:
         raise HTTPException(status_code=404, detail="Bank not found.")
+    if _bank_status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bank is {_bank_status} - a batch cannot be assigned to it.",
+        )
 
     try:
         filename = file.filename.lower()
@@ -1138,6 +1149,13 @@ async def batch_status(
         "total": total_count,
         # Diagnostics for the "running but nothing dials" case:
         "emergency_stop": emergency_stop,
+        # The two switches, separately. blocked_reason is only set when there
+        # is pending work to block, so a bank that stopped itself with an empty
+        # queue needs these to show its state at all.
+        "platform_emergency_stop": _st["platform_stopped"],
+        "bank_emergency_stop": _st["bank_stopped"],
+        "emergency_stopped_by": _st["stopped_by"],
+        "emergency_stopped_at": _st["stopped_at"],
         "within_calling_hours": within_hours,
         "calling_window": f"{CALL_START_HOUR}:00–{CALL_END_HOUR % 24 or 24}:00 IST",
         "blocked_reason": blocked_reason,                   # 'emergency_stop' | 'outside_calling_hours' | null

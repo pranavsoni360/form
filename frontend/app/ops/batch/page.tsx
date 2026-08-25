@@ -121,7 +121,7 @@ export default function OpsBatchPage() {
   const [openBatchId, setOpenBatchId] = React.useState<string | null>(null);
 
   /* ─── Banks list (for bank assignment dropdown) ───────────────────────── */
-  const banks = useQuery<{ banks: Array<{ id: string; name: string }> }>({
+  const banks = useQuery<{ banks: Array<{ id: string; name: string; status?: string }> }>({
     queryKey: ["banks-list"],
     queryFn: () => opsFetch(`${API_URL}/api/admin/banks`, {
       headers: { Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('los_admin_token') || '' : ''}` }
@@ -486,7 +486,12 @@ export default function OpsBatchPage() {
                 onChange={setBankId}
                 options={[
                   { value: "", label: banks.isLoading ? "Loading banks…" : "Select a bank…" },
-                  ...(banks.data?.banks ?? []).map((b) => ({ value: b.id, label: b.name })),
+                  // Active banks only. The list includes suspended banks and the
+                  // LEGACY / UNASSIGNED placeholder; a batch assigned to one of
+                  // those is rejected by the backend, so do not offer it.
+                  ...(banks.data?.banks ?? [])
+                    .filter((b) => (b.status ?? "active") === "active")
+                    .map((b) => ({ value: b.id, label: b.name })),
                 ]}
               />
               {!bankId && (

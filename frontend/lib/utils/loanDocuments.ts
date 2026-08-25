@@ -107,17 +107,14 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "bank_statements_url",
     label: "Bank Statements (Last 6 months)",
     required: true,
-    // The statement is analysed by Digitap, not merely stored: it is the only
-    // document feeding the cash-flow pillar. Their parser template-matches the
-    // issuing bank's PDF layout, so a photo or screenshot yields nothing at all.
-    journey: "parse",
+    // Collected via VG Account Aggregator: the customer is redirected to the
+    // VG upload portal and returns; we receive the analysed report, not a raw
+    // file. The row renders an AA initiation button, not a file picker.
+    journey: "vendor",
     accept: ".pdf",
     extensions: PDF,
-    hint: "The PDF your bank issues — downloaded from net banking or their app. A photo of a statement cannot be read.",
+    hint: "Upload securely via Account Aggregator — last 6 months are fetched automatically.",
     journeyNote: "Analysed automatically to assess your cash flow",
-    // The officer-side Digitap journey exists (backend/routers/bsa.py) but is
-    // not reachable from this form yet, so we do not offer "connect your bank".
-    automationPending: "Automatic bank connection is not available yet — please upload the PDF.",
   },
   {
     key: "salary_slips_url",

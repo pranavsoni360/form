@@ -3859,6 +3859,9 @@ async def download_aadhaar(request: Request):
 # derived from VG_API_BASE by swapping VGKVerify.asmx → AcAggregator.asmx.
 
 def _aa_base_url() -> str:
+    vg_base = os.getenv("VG_DOCVERIFY_BASE_URL", "").rstrip("/")
+    if vg_base:
+        return f"{vg_base}/AcAggregator.asmx"
     return VG_API_BASE.replace("VGKVerify.asmx", "AcAggregator.asmx")
 
 

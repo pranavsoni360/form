@@ -2023,58 +2023,6 @@ export default function LoanApplication() {
                 </div>
               )}
               <div className="space-y-3">
-                {/* ── Bank Statement via Account Aggregator ─────────────────────────── */}
-                <div>
-                  <div className={`flex items-center justify-between p-4 rounded-xl border-2 ${(formData.bank_statements_url === 'verified_via_aa' || aaUploadState === 'complete') ? 'border-green-400/50 dark:border-green-800/40 bg-green-50 dark:bg-dark-section' : 'border-blue-200 dark:border-blue-800/40 bg-blue-50/30 dark:bg-dark-section'}`}>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                        Bank Statements (Last 6 months) <span className="text-red-500">*</span>
-                      </p>
-                      {(formData.bank_statements_url === 'verified_via_aa' || aaUploadState === 'complete') ? (
-                        <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
-                          <CheckCircle2 className="w-3 h-3" />Verified via Account Aggregator
-                        </p>
-                      ) : aaUploadState === 'polling' ? (
-                        <p className="text-xs text-blue-500 mt-1">Processing your bank statement…</p>
-                      ) : aaUploadState === 'initiating' ? (
-                        <p className="text-xs text-blue-500 mt-1">Generating secure upload link…</p>
-                      ) : (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Upload securely via Account Aggregator — last 6 months fetched automatically
-                        </p>
-                      )}
-                      {aaUploadError && (
-                        <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />{aaUploadError}
-                        </p>
-                      )}
-                    </div>
-                    {(formData.bank_statements_url === 'verified_via_aa' || aaUploadState === 'complete') ? (
-                      <button
-                        type="button"
-                        onClick={() => { onChange('bank_statements_url', ''); setAaUploadState('idle'); setAaUploadError(''); }}
-                        className="ml-3 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition"
-                      >
-                        Re-upload
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleAAStatementInitiate}
-                        disabled={aaUploadState === 'initiating' || aaUploadState === 'polling'}
-                        className="ml-3 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition"
-                      >
-                        {aaUploadState === 'initiating' ? 'Connecting…' : aaUploadState === 'polling' ? 'Processing…' : 'Upload via AA'}
-                      </button>
-                    )}
-                  </div>
-                  {errors.bank_statements_url && (
-                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" />{errors.bank_statements_url}
-                    </p>
-                  )}
-                </div>
-
                 {documentsFor(formData.consumer_loan_type).map(doc => {
                   // The row renders by JOURNEY, not by "has a file yet". A
                   // DigiLocker-fetched Aadhaar and a hand-picked salary slip are
@@ -2126,6 +2074,15 @@ export default function LoanApplication() {
                       {state !== 'done' && doc.journey === 'parse' && doc.journeyNote && (
                         <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>{doc.journeyNote}</p>
                       )}
+                      {doc.journey === 'vendor' && aaUploadState === 'initiating' && (
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>Generating secure upload link…</p>
+                      )}
+                      {doc.journey === 'vendor' && aaUploadState === 'polling' && (
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>Processing your bank statement…</p>
+                      )}
+                      {doc.journey === 'vendor' && aaUploadError && (
+                        <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}><AlertTriangle className="w-3 h-3" />{aaUploadError}</p>
+                      )}
                       {formData[doc.key] && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {isDigilocker ? (
@@ -2135,71 +2092,91 @@ export default function LoanApplication() {
                           </span>
                         ) : (
                           <p className="text-xs flex items-center gap-1" style={{ color: 'var(--fx-green)' }}><CheckCircle2 className="w-3 h-3" />
-                            {doc.journey === 'parse' ? 'Uploaded — will be analysed' : 'Uploaded'}
+                            {doc.journey === 'parse' ? 'Uploaded — will be analysed' : doc.journey === 'vendor' ? 'Verified via Account Aggregator' : 'Uploaded'}
                           </p>
                         )}
-                        <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>
+                        {doc.journey !== 'vendor' && <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>}
                       </div>
                     )}
                     </div>
-                    <label className="cursor-pointer">
-                      {/* accept comes from the document's own spec: a passport
-                          photo is images-only, a bank statement is PDF-only.
-                          One shared accept let customers attach a photo of a
-                          statement, which Digitap cannot parse at all. */}
-                      <input type="file" accept={doc.accept} className="hidden" disabled={!!uploading[doc.key]}
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          // Extension-based, not MIME: some Android pickers send
-                          // application/octet-stream for a valid PDF, and the old
-                          // MIME allow-list rejected those outright.
-                          const fileErr = validateDocFile(doc, file);
-                          if (fileErr) {
-                            setErrors((p: any) => ({ ...p, [doc.key]: fileErr }));
-                            e.target.value = '';
-                            return;
-                          }
-                          setErrors((p: any) => ({ ...p, [doc.key]: '' }));
-                          const fd = new FormData();
-                          fd.append('session_token', getSession() || '');
-                          fd.append('document_type', doc.key.replace('_url', ''));
-                          fd.append('file', file);
-                          setUploading((u: any) => ({ ...u, [doc.key]: true }));
-                          try {
-                            const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
-                            const data = await res.json().catch(() => ({}));
-                            if (res.ok && data.url) {
-                              onChange(doc.key, data.url);
-                            } else {
-                              // Show the server's reason verbatim — it names the
-                              // actual problem (wrong type, too large, not saved).
-                              setErrors((p: any) => ({ ...p, [doc.key]: data.detail || 'Upload failed. Please try again.' }));
+                    {doc.journey === 'vendor' ? (
+                      formData[doc.key] ? (
+                        <button type="button"
+                          onClick={() => { onChange(doc.key, ''); setAaUploadState('idle'); setAaUploadError(''); }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                          style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', border: '1px solid var(--fx-border)' }}>
+                          Re-upload
+                        </button>
+                      ) : (
+                        <button type="button"
+                          onClick={handleAAStatementInitiate}
+                          disabled={aaUploadState === 'initiating' || aaUploadState === 'polling'}
+                          className="px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60"
+                          style={{ background: 'var(--fx-accent)', color: '#fff' }}>
+                          {(aaUploadState === 'initiating' || aaUploadState === 'polling') && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                          {aaUploadState === 'initiating' ? 'Connecting…' : aaUploadState === 'polling' ? 'Processing…' : 'Upload via AA'}
+                        </button>
+                      )
+                    ) : (
+                      <label className="cursor-pointer">
+                        {/* accept comes from the document's own spec: a passport
+                            photo is images-only, a bank statement is PDF-only.
+                            One shared accept let customers attach a photo of a
+                            statement, which Digitap cannot parse at all. */}
+                        <input type="file" accept={doc.accept} className="hidden" disabled={!!uploading[doc.key]}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            // Extension-based, not MIME: some Android pickers send
+                            // application/octet-stream for a valid PDF, and the old
+                            // MIME allow-list rejected those outright.
+                            const fileErr = validateDocFile(doc, file);
+                            if (fileErr) {
+                              setErrors((p: any) => ({ ...p, [doc.key]: fileErr }));
                               e.target.value = '';
+                              return;
                             }
-                          } catch {
-                            setErrors((p: any) => ({ ...p, [doc.key]: 'Could not reach the server. Check your connection and try again.' }));
-                            e.target.value = '';
-                          } finally {
-                            setUploading((u: any) => ({ ...u, [doc.key]: false }));
-                          }
-                        }}
-                      />
-                      {/* The verb matches the journey. A `fetch` document that
-                          DigiLocker has not filled yet offers "Upload instead"
-                          — the manual fallback, not the expected path — so the
-                          customer is not told to go find a file we can retrieve. */}
-                      <span className={`px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 whitespace-nowrap ${uploading[doc.key] ? 'opacity-70 cursor-wait' : ''} ${formData[doc.key] ? 'bg-green-600 text-white' : state === 'awaiting' ? 'bg-gray-500 text-white hover:bg-gray-600' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                        {uploading[doc.key] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        {uploading[doc.key]
-                          ? 'Uploading'
-                          : formData[doc.key]
-                            ? 'Replace'
-                            : state === 'awaiting'
-                              ? 'Upload instead'
-                              : 'Upload'}
-                      </span>
-                    </label>
+                            setErrors((p: any) => ({ ...p, [doc.key]: '' }));
+                            const fd = new FormData();
+                            fd.append('session_token', getSession() || '');
+                            fd.append('document_type', doc.key.replace('_url', ''));
+                            fd.append('file', file);
+                            setUploading((u: any) => ({ ...u, [doc.key]: true }));
+                            try {
+                              const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
+                              const data = await res.json().catch(() => ({}));
+                              if (res.ok && data.url) {
+                                onChange(doc.key, data.url);
+                              } else {
+                                // Show the server's reason verbatim — it names the
+                                // actual problem (wrong type, too large, not saved).
+                                setErrors((p: any) => ({ ...p, [doc.key]: data.detail || 'Upload failed. Please try again.' }));
+                                e.target.value = '';
+                              }
+                            } catch {
+                              setErrors((p: any) => ({ ...p, [doc.key]: 'Could not reach the server. Check your connection and try again.' }));
+                              e.target.value = '';
+                            } finally {
+                              setUploading((u: any) => ({ ...u, [doc.key]: false }));
+                            }
+                          }}
+                        />
+                        {/* The verb matches the journey. A `fetch` document that
+                            DigiLocker has not filled yet offers "Upload instead"
+                            — the manual fallback, not the expected path — so the
+                            customer is not told to go find a file we can retrieve. */}
+                        <span className={`px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 whitespace-nowrap ${uploading[doc.key] ? 'opacity-70 cursor-wait' : ''} ${formData[doc.key] ? 'bg-green-600 text-white' : state === 'awaiting' ? 'bg-gray-500 text-white hover:bg-gray-600' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                          {uploading[doc.key] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                          {uploading[doc.key]
+                            ? 'Uploading'
+                            : formData[doc.key]
+                              ? 'Replace'
+                              : state === 'awaiting'
+                                ? 'Upload instead'
+                                : 'Upload'}
+                        </span>
+                      </label>
+                    )}
                   </div>
                   {errors[doc.key] && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{errors[doc.key]}</p>}
                   </div>

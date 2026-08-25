@@ -236,7 +236,7 @@ function ScheduleCallbackDialog({
   // bank's portal AND unbillable (billing short-circuits on a missing bank_id).
   // This is an operator page, so the bank has to be chosen — the same rule
   // /ops/batch already applies to an uploaded batch.
-  const banks = useQuery<{ banks: Array<{ id: string; name: string }> }>({
+  const banks = useQuery<{ banks: Array<{ id: string; name: string; status?: string }> }>({
     queryKey: ["banks-list"],
     queryFn: () => opsFetch(`${API_URL}/api/admin/banks`, { credentials: "include" }).then((r) => r.json()),
     enabled: open,
@@ -308,9 +308,12 @@ function ScheduleCallbackDialog({
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Bank *</label>
           <select className={inputCls} value={bankId} onChange={(e) => setBankId(e.target.value)}>
             <option value="">{banks.isLoading ? "Loading banks…" : "Select a bank…"}</option>
-            {(banks.data?.banks ?? []).map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
+            {/* Active banks only - see the same filter in /ops/batch. */}
+            {(banks.data?.banks ?? [])
+              .filter((b) => (b.status ?? "active") === "active")
+              .map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
           </select>
           {!bankId && (
             <p className="mt-1 text-[11px] text-muted-foreground">

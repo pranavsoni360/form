@@ -303,7 +303,9 @@ export default function BatchPage() {
     catch (err: any) { notify(err.message, false); } finally { setStarting(false); }
   };
   const emergencyStop = async () => {
-    if (!confirm('EMERGENCY STOP: This will terminate ALL active calls immediately.')) return;
+    // Scoped to this bank since A3 - the copy used to describe the old
+    // platform-wide switch, which is not what this button does.
+    if (!confirm('EMERGENCY STOP for your bank: every active and pending call for your bank stops immediately. Other banks keep calling. You can resume from this screen.')) return;
     setStopping(true);
     try { await apiPost('/api/agent/emergency-stop'); notify('Emergency stop sent for your bank'); refresh(); }
     catch (err: any) { notify(err.message, false); } finally { setStopping(false); }
@@ -399,13 +401,17 @@ export default function BatchPage() {
           <CardBody className="space-y-3">
             {/* Why isn't a running batch dialing? Make the silent hang visible. */}
             {/* Your bank's own stop — yours to clear. */}
-            {batchStatus?.blocked_reason === 'bank_emergency_stop' && (
+            {batchStatus?.bank_emergency_stop && (
               <div
                 className="flex flex-wrap items-center gap-3 rounded-[10px] px-4 py-3 text-[13px]"
                 style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)' }}
               >
                 <span>
-                  <b>Emergency stop is active for your bank</b> — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} won&apos;t dial until you resume. Other banks are unaffected.
+                  <b>Emergency stop is active for your bank</b> —{' '}
+                  {batchStatus.pending
+                    ? `${batchStatus.pending} pending call${batchStatus.pending === 1 ? '' : 's'} won't dial until you resume`
+                    : `nothing is queued right now, but no call will dial until you resume`}
+                  . Other banks are unaffected.
                 </span>
                 <span className="ml-auto">
                   <Button variant="danger" disabled={resuming} onClick={resumeCalling}>
@@ -416,13 +422,17 @@ export default function BatchPage() {
             )}
             {/* The platform switch. A bank cannot clear this, so do not offer
                 a Resume button that would only come back 409. */}
-            {batchStatus?.blocked_reason === 'platform_emergency_stop' && (
+            {batchStatus?.platform_emergency_stop && (
               <div
                 className="flex flex-wrap items-center gap-3 rounded-[10px] px-4 py-3 text-[13px]"
                 style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)' }}
               >
                 <span>
-                  <b>Calling is stopped platform-wide</b> — {batchStatus.pending} pending call{batchStatus.pending === 1 ? '' : 's'} won&apos;t dial. Only the Finix operations team can lift this; please contact them.
+                  <b>Calling is stopped platform-wide</b> —{' '}
+                  {batchStatus.pending
+                    ? `${batchStatus.pending} pending call${batchStatus.pending === 1 ? '' : 's'} won't dial`
+                    : `nothing is queued right now, but no call will dial`}
+                  . Only the Finix operations team can lift this; please contact them.
                 </span>
               </div>
             )}
@@ -583,7 +593,7 @@ export default function BatchPage() {
       <Card>
         <CardHeader
           title="Upload history"
-          qualifier={batches.length ? `${batches.length} batches · click a row to view calls` : undefined}
+          qualifier={batches.length ? `${batches.length} batch${batches.length === 1 ? '' : 'es'} · click a row to view calls` : undefined}
         />
         {loading ? (
           <LoadingState label="Loading batches…" rows={5} />

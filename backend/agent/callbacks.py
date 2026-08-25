@@ -120,8 +120,16 @@ async def schedule_callback_manual(request: Request, user: dict = Depends(_state
             bank_uuid = uuid.UUID(raw)
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="Invalid bank_id.")
-        if not await _state.db_pool.fetchval("SELECT 1 FROM banks WHERE id = $1", bank_uuid):
+        # status, not just existence - see the same check in agent/batch.py.
+        _st = await _state.db_pool.fetchval(
+            "SELECT status FROM banks WHERE id = $1", bank_uuid)
+        if _st is None:
             raise HTTPException(status_code=404, detail="Bank not found.")
+        if _st != "active":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bank is {_st} - a callback cannot be assigned to it.",
+            )
 
     call_uuid = uuid.uuid4()
     room_name = f"los_{secrets.token_hex(6)}_{int(time.time())}"

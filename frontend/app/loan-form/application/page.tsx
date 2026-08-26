@@ -7,6 +7,19 @@ import { useRouter } from 'next/navigation';
 
 import { API_URL, getCodeList } from '@/lib/api';
 import { documentsFor, missingRequired, validateDocFile, wasAutoFilled, journeyState } from '@/lib/utils/loanDocuments';
+
+// Absolute URL for a stored document/file path. Uploaded + DigiLocker files are
+// served by the BACKEND. On the nginx-fronted host only /api/* is proxied to the
+// backend, so a bare "/uploads/..." path resolves to the Next.js FRONTEND and
+// 404s (the document-preview eye showed a 404 page). Route those through
+// "/api/uploads" (also mounted on the backend) so previews work on every host.
+// Absolute URLs and already-/api paths pass through unchanged.
+const fileUrl = (p?: string | null): string => {
+  if (!p) return '';
+  if (/^https?:\/\//i.test(p)) return p;
+  if (p.startsWith('/uploads/')) return `${API_URL}/api${p}`;
+  return `${API_URL}${p}`;
+};
 // Server expires a loan session after LOAN_SESSION_INACTIVITY_SECONDS of
 // inactivity (backend main.py; /api/get-application, /api/autosave-session and
 // /api/session-keepalive all read the same constant).
@@ -1851,7 +1864,7 @@ export default function LoanApplication() {
                             <div className="flex items-center gap-2">
                               <CheckCircle2 className="w-4 h-4 text-green-600" />
                               <span className="text-sm font-medium" style={{ color: 'var(--fx-green)' }}>Quotation uploaded</span>
-                              <a href={`${API_URL}${formData.quotation_url}`} target="_blank" rel="noopener noreferrer">
+                              <a href={fileUrl(formData.quotation_url)} target="_blank" rel="noopener noreferrer">
                                 <Eye className="w-4 h-4 text-blue-500 hover:text-blue-700" />
                               </a>
                             </div>
@@ -2111,7 +2124,7 @@ export default function LoanApplication() {
                             {doc.journey === 'parse' ? 'Uploaded — will be analysed' : doc.journey === 'vendor' ? 'Verified via Account Aggregator' : 'Uploaded'}
                           </p>
                         )}
-                        {doc.journey !== 'vendor' && <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: `${API_URL}${formData[doc.key]}`, label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>}
+                        {doc.journey !== 'vendor' && <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: fileUrl(formData[doc.key]), label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>}
                       </div>
                     )}
                     </div>

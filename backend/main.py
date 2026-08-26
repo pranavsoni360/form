@@ -1192,8 +1192,14 @@ async def shutdown():
     if db_pool:
         await db_pool.close()
 
-# Mount uploads directory
+# Mount uploads directory. Two mount points serve the SAME files:
+#   /uploads       — legacy direct-to-backend hosts (virtualvaani:8200).
+#   /api/uploads   — nginx-fronted hosts (finix), where only /api/* is proxied to
+#                    the backend. Without this, a stored /uploads/... path routed
+#                    to the Next.js frontend and 404'd (e.g. the document-preview
+#                    eye). Mirrors the /api/recordings pattern below.
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+app.mount("/api/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads_api")
 
 # Mount recordings directory (LiveKit egress writes call audio .ogg files here).
 # Served under /api so nginx's existing /api -> backend route reaches it; the

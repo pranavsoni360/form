@@ -1310,9 +1310,9 @@ export default function LoanApplication() {
           {/* Top row: logo + name + autosave */}
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+              <div className="w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-2xl flex items-center justify-center flex-shrink-0"
                 style={{ background: 'var(--fx-surface2)', border: '1px solid var(--fx-border)', color: 'var(--fx-text)' }}>
-                <FinixLogoMark size={24} />
+                <FinixLogoMark size={34} />
               </div>
               <div>
                 <h1 className="font-bold leading-tight" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)', fontSize: '18px' }}>

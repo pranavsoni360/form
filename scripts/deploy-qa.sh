@@ -27,28 +27,32 @@ echo "deployed commit: $(git rev-parse --short HEAD)"
 echo "── 2. python deps (shared venv; installs only new) ──"
 "$PROD/backend/venv/bin/pip" install -q -r "$QA/backend/requirements.txt" || true
 
-echo "── 3. migrate QA database ($QADB) via tracked runner ──"
-# db_migrations.py records to _migrations, skips already-applied, and FAILS LOUDLY
-# (non-zero exit) — replacing the old `psql < file || true` loop that silently
-# swallowed migration errors (plan §50). A failed migration aborts the deploy so
-# services keep running the old code instead of restarting onto a broken schema.
+echo "── 3. rebuild QA frontend ──"
+# Build FIRST — before migrating the DB or restarting anything. A broken build
+# must never take QA down, and must never leave the database migrated onto a
+# schema that the new (failed) code was meant to match. If the build fails we
+# abort here, BEFORE the DB is touched, so QA keeps serving the old build on the
+# old schema. (A broken push is thus fully harmless — nothing is mutated.)
+cd "$QA/frontend"
+if ! PORT=3002 npm run build 2>&1 | tail -20; then
+  echo "❌ QA frontend build FAILED — aborting deploy, DB NOT migrated, services NOT restarted (old build still serving)"
+  exit 1
+fi
+if [ ! -f "$QA/frontend/.next/BUILD_ID" ]; then
+  echo "❌ .next/BUILD_ID missing after build — aborting deploy, DB NOT migrated, services NOT restarted"
+  exit 1
+fi
+
+echo "── 4. migrate QA database ($QADB) via tracked runner ──"
+# Runs only after a successful build. db_migrations.py records to _migrations,
+# skips already-applied, and FAILS LOUDLY (non-zero exit) — replacing the old
+# `psql < file || true` loop that silently swallowed migration errors (plan §50).
+# A failed migration aborts the deploy so services keep running the old code
+# instead of restarting onto a broken schema.
 export MIGRATION_DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' "$QA/backend/.env.qa" | head -1 | cut -d= -f2-)"
 export DATABASE_URL="$(grep -E '^DATABASE_URL=' "$QA/backend/.env.qa" | head -1 | cut -d= -f2-)"
 if ! ( cd "$QA/backend" && "$PROD/backend/venv/bin/python" db_migrations.py ); then
   echo "❌ QA migrations FAILED — aborting deploy, services NOT restarted (old build still serving)"
-  exit 1
-fi
-
-echo "── 4. rebuild QA frontend ──"
-# Build BEFORE restarting anything. If it fails, abort the deploy — the old
-# build keeps serving and QA stays up (a broken build must never take QA down).
-cd "$QA/frontend"
-if ! PORT=3002 npm run build 2>&1 | tail -20; then
-  echo "❌ QA frontend build FAILED — aborting deploy, services NOT restarted (old build still serving)"
-  exit 1
-fi
-if [ ! -f "$QA/frontend/.next/BUILD_ID" ]; then
-  echo "❌ .next/BUILD_ID missing after build — aborting deploy, services NOT restarted"
   exit 1
 fi
 

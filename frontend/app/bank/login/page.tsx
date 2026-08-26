@@ -159,92 +159,92 @@ export default function BankLoginPage() {
 
   return (
     <FinixThemeProvider>
-      <div className="finix-root flex h-screen overflow-hidden">
+      <div className="finix-root flex h-screen flex-col overflow-hidden">
+        {/* The two-column split fills all height above the shared footer strip. */}
+        <div className="flex min-h-0 flex-1">
 
-        {/* ── LEFT PANEL — marketing, hidden below lg ── */}
-        <div
-          className="relative hidden w-[46%] select-none flex-col justify-between overflow-hidden p-12 lg:flex"
-          style={{ background: 'var(--fx-surface)' }}
-        >
-          {/* Dot texture, same idiom as the legacy panel. */}
+          {/* ── LEFT PANEL — marketing, hidden below lg ── */}
           <div
-            className="pointer-events-none absolute inset-0 opacity-[0.5]"
-            style={{
-              backgroundImage: 'radial-gradient(circle, var(--fx-border) 1px, transparent 1px)',
-              backgroundSize: '28px 28px',
-            }}
-          />
+            className="relative hidden w-[46%] select-none flex-col overflow-hidden p-10 lg:flex"
+            style={{ background: 'var(--fx-surface)' }}
+          >
+            {/* Dot texture, same idiom as the legacy panel. */}
+            <div
+              className="pointer-events-none absolute inset-0 opacity-[0.5]"
+              style={{
+                backgroundImage: 'radial-gradient(circle, var(--fx-border) 1px, transparent 1px)',
+                backgroundSize: '28px 28px',
+              }}
+            />
 
-          <div className="relative z-10 flex items-center gap-3 text-fx-text">
-            <FinixLogo height={40} className="shrink-0" />
-            <div className="leading-tight">
-              <div className="text-[17px] font-semibold tracking-tight text-fx-text">Finix</div>
-              <div className="text-[11px] uppercase tracking-[0.18em] text-fx-text3">Bank officer portal</div>
+            <div className="relative z-10 flex items-center gap-3 text-fx-text">
+              <FinixLogo height={40} className="shrink-0" />
+              <div className="leading-tight">
+                <div className="text-[17px] font-semibold tracking-tight text-fx-text">Finix</div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-fx-text3">Bank officer portal</div>
+              </div>
+            </div>
+
+            {/* Hero centred in the space left between the brand row and the footer. */}
+            <div className="relative z-10 flex flex-1 flex-col justify-center py-8">
+              <div className="mb-4 text-[12px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--fx-accent)' }}>
+                Secure · Bank personnel only
+              </div>
+              <h1
+                className="mb-4 text-[38px] lg:text-[44px] font-semibold leading-[1.06] text-fx-text"
+                style={{ letterSpacing: '-0.03em' }}
+              >
+                Review and approve<br />loan applications<br />
+                <span style={{ color: 'var(--fx-accent)' }}>efficiently.</span>
+              </h1>
+              <p className="mb-8 max-w-md text-[15px] leading-relaxed text-fx-text2">
+                AI-assisted review pipeline with complete applicant profiles, document
+                verification, and one-click approval workflows.
+              </p>
+              <div className="space-y-3.5">
+                {FEATURES.map(({ icon: Icon, text }) => (
+                  <div key={text} className="flex items-center gap-3.5">
+                    <span
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
+                      style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)' }}
+                      aria-hidden
+                    >
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <p className="text-[15px] text-fx-text2">{text}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="relative z-10">
-            <div className="mb-5 text-[12px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--fx-accent)' }}>
-              Secure · Bank personnel only
-            </div>
-            <h1
-              className="mb-5 text-[44px] lg:text-[52px] font-semibold leading-[1.05] text-fx-text"
-              style={{ letterSpacing: '-0.03em' }}
-            >
-              Review and approve<br />loan applications<br />
-              <span style={{ color: 'var(--fx-accent)' }}>efficiently.</span>
-            </h1>
-            <p className="mb-11 max-w-md text-[16px] leading-relaxed text-fx-text2">
-              AI-assisted review pipeline with complete applicant profiles, document
-              verification, and one-click approval workflows.
-            </p>
-            <div className="space-y-4">
-              {FEATURES.map(({ icon: Icon, text }) => (
-                <div key={text} className="flex items-center gap-3.5">
-                  <span
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
-                    style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)' }}
+          {/* ── RIGHT PANEL — the form ── */}
+          <div className="relative flex min-w-0 flex-1 flex-col">
+            <div className="absolute right-5 top-5 z-20"><FinixThemeToggle /></div>
+            <div className="flex flex-1 items-center justify-center overflow-y-auto p-6 sm:p-10">
+              <div className="relative z-10 w-full max-w-md">
+                {/* Mobile logo */}
+                <div className="mb-8 flex items-center gap-3 text-fx-text lg:hidden">
+                  <FinixLogo height={32} className="shrink-0" />
+                  <span className="text-[17px] font-semibold text-fx-text">Finix</span>
+                </div>
+                <div className="mb-6">
+                  <div
+                    className="mb-5 grid h-14 w-14 place-items-center rounded-[16px] text-white"
+                    style={{ background: 'var(--fx-accent-grad)', boxShadow: 'var(--fx-accent-glow)' }}
                     aria-hidden
                   >
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <p className="text-[15px] text-fx-text2">{text}</p>
+                    <FileText className="h-6 w-6" />
+                  </div>
+                  <h1 className="text-[30px] font-semibold text-fx-text" style={{ letterSpacing: '-0.02em' }}>
+                    Bank portal
+                  </h1>
+                  <p className="mt-1.5 text-[15px] text-fx-text2">Sign in with your bank credentials</p>
                 </div>
-              ))}
-            </div>
-          </div>
 
-          <p className="relative z-10 text-[11px] text-fx-text3">
-            © 2026 Finix · Virtual Galaxy Infotech Limited · Authorized bank personnel only
-          </p>
-        </div>
-
-        {/* ── RIGHT PANEL — the form ── */}
-        <div className="relative flex flex-1 items-center justify-center overflow-y-auto p-8 lg:p-16">
-          <div className="absolute right-5 top-5 z-20"><FinixThemeToggle /></div>
-          <div className="relative z-10 w-full max-w-md">
-            {/* Mobile logo */}
-            <div className="mb-9 flex items-center gap-3 text-fx-text lg:hidden">
-              <FinixLogo height={32} className="shrink-0" />
-              <span className="text-[17px] font-semibold text-fx-text">Finix</span>
-            </div>
-            <div className="mb-7">
-              <div
-                className="mb-6 grid h-14 w-14 place-items-center rounded-[16px] text-white"
-                style={{ background: 'var(--fx-accent-grad)', boxShadow: 'var(--fx-accent-glow)' }}
-                aria-hidden
-              >
-                <FileText className="h-6 w-6" />
-              </div>
-              <h1 className="text-[30px] font-semibold text-fx-text" style={{ letterSpacing: '-0.02em' }}>
-                Bank portal
-              </h1>
-              <p className="mt-1.5 text-[15px] text-fx-text2">Sign in with your bank credentials</p>
-            </div>
-
-            <Card>
-              <CardBody className="p-6 sm:p-7">
-                <form onSubmit={handleLogin} className="space-y-5">
+                <Card>
+                  <CardBody className="p-6 sm:p-7">
+                    <form onSubmit={handleLogin} className="space-y-5">
                   <Field label="Username" htmlFor="bank-username" required>
                     <Input
                       id="bank-username"
@@ -332,11 +332,21 @@ export default function BankLoginPage() {
               </CardBody>
             </Card>
 
-            <p className="mt-6 text-center text-[12px] text-fx-text3">
-              Contact your administrator if you need access
-            </p>
+                <p className="mt-5 text-center text-[12px] text-fx-text3">
+                  Contact your administrator if you need access
+                </p>
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* ── SHARED FOOTER STRIP — full width, always visible ── */}
+        <footer
+          className="shrink-0 px-6 py-3.5 text-center text-[11px] text-fx-text3"
+          style={{ borderTop: '1px solid var(--fx-border)', background: 'var(--fx-surface)' }}
+        >
+          © 2026 Finix · Virtual Galaxy Infotech Limited
+        </footer>
 
         {showForgot && <ForgotPasswordModal onClose={() => setShowForgot(false)} />}
       </div>

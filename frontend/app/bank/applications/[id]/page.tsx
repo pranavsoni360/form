@@ -525,12 +525,7 @@ export default function ApplicationDetailPage() {
             <Card>
               <CardHeader title="Documents" qualifier={`${docsUploaded} of ${docs.length} uploaded`} />
               {docs.map(d => <DocRow key={d.label} label={d.label} url={d.url} />)}
-              <BankStatementPanel
-                token={token}
-                applicationId={appId}
-                app={app}
-                onRefresh={fetchDetail}
-              />
+              <BankStatementPanel applicationId={appId} />
             </Card>
           </div>
         )}

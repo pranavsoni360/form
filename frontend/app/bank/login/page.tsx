@@ -37,7 +37,15 @@ import {
   Modal,
   OverlayHeader,
 } from '@/components/finix';
+import { FinixThemeToggle } from '@/components/finix/ThemeToggleButton';
 import { FinixLogoMark } from '@/components/shared/FinixLogo';
+import { FileText, CheckCircle2, Clock, Eye, EyeOff } from 'lucide-react';
+
+const FEATURES = [
+  { icon: FileText,     text: 'View complete applicant profiles and documents' },
+  { icon: CheckCircle2, text: 'Officer and supervisor approval workflow' },
+  { icon: Clock,        text: 'Real-time status updates and notifications' },
+];
 
 function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
   return (
@@ -167,8 +175,8 @@ export default function BankLoginPage() {
             }}
           />
 
-          <div className="relative z-10 flex items-center gap-3">
-            <FinixLogoMark size={32} shieldColor="#1B2A4A" className="shrink-0" />
+          <div className="relative z-10 flex items-center gap-3 text-fx-text">
+            <FinixLogoMark size={32} className="shrink-0" />
             <div className="leading-tight">
               <div className="text-[13px] font-medium text-fx-text">Finix</div>
               <div className="text-[11px] text-fx-text3">Bank officer portal</div>
@@ -188,18 +196,14 @@ export default function BankLoginPage() {
               verification, and one-click approval workflows.
             </p>
             <div className="space-y-3">
-              {[
-                { glyph: '▤', text: 'View complete applicant profiles and documents' },
-                { glyph: '✓', text: 'Officer and supervisor approval workflow' },
-                { glyph: '◷', text: 'Real-time status updates and notifications' },
-              ].map(({ glyph, text }) => (
+              {FEATURES.map(({ icon: Icon, text }) => (
                 <div key={text} className="flex items-center gap-3">
                   <span
-                    className="fx-mono grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px] text-[12px] text-fx-text3"
-                    style={{ background: 'var(--fx-surface2)' }}
+                    className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px]"
+                    style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)' }}
                     aria-hidden
                   >
-                    {glyph}
+                    <Icon className="h-3.5 w-3.5" />
                   </span>
                   <p className="text-[13px] text-fx-text2">{text}</p>
                 </div>
@@ -214,14 +218,20 @@ export default function BankLoginPage() {
 
         {/* ── RIGHT PANEL — the form ── */}
         <div className="relative flex flex-1 items-center justify-center p-8 lg:p-16">
+          <div className="absolute right-5 top-5 z-20"><FinixThemeToggle /></div>
           <div className="relative z-10 w-full max-w-sm">
+            {/* Mobile logo */}
+            <div className="mb-8 flex items-center gap-3 text-fx-text lg:hidden">
+              <FinixLogoMark size={26} className="shrink-0" />
+              <span className="text-[15px] font-medium text-fx-text">Finix</span>
+            </div>
             <div className="mb-6">
               <div
-                className="mb-5 grid h-12 w-12 place-items-center rounded-[12px] text-[18px] text-white"
+                className="mb-5 grid h-12 w-12 place-items-center rounded-[12px] text-white"
                 style={{ background: 'var(--fx-accent-grad)', boxShadow: 'var(--fx-accent-glow)' }}
                 aria-hidden
               >
-                <span className="fx-mono">▤</span>
+                <FileText className="h-5 w-5" />
               </div>
               <h1 className="text-[22px] font-medium text-fx-text" style={{ letterSpacing: '-0.015em' }}>
                 Bank portal
@@ -279,9 +289,9 @@ export default function BankLoginPage() {
                           onClick={() => setShowPassword(v => !v)}
                           tabIndex={-1}
                           aria-label={showPassword ? 'Hide password' : 'Show password'}
-                          className="fx-mono absolute right-2.5 top-1/2 -translate-y-1/2 text-[13px] text-fx-text3 transition-colors hover:text-fx-text2"
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fx-text3 transition-colors hover:text-fx-text2"
                         >
-                          {showPassword ? '◎' : '◉'}
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </button>
                       </div>
                     </Field>

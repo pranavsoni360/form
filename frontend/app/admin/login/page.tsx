@@ -1,11 +1,32 @@
 'use client';
 
+// Admin (Operations Console) login — Finix design, unified with /bank/login.
+// Same theme-aware split-hero + card layout, fonts, spacing and components as the
+// bank login; only the copy, feature list and the email/password fields differ.
+// Theme-aware via FinixThemeProvider (light/dark toggle top-right).
+
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { adminLogin } from '@/lib/api';
 import { setAccessToken, setCurrentUser } from '@/lib/auth';
-import { Loader2, AlertTriangle, User, Lock, Shield, BarChart3, Settings, Eye, EyeOff, Radio } from 'lucide-react';
+import { Radio, BarChart3, Shield, Settings, Eye, EyeOff } from 'lucide-react';
+import {
+  FinixThemeProvider,
+  Button,
+  Card,
+  CardBody,
+  Field,
+  Input,
+} from '@/components/finix';
+import { FinixThemeToggle } from '@/components/finix/ThemeToggleButton';
 import { FinixLogoMark } from '@/components/shared/FinixLogo';
+
+const FEATURES = [
+  { icon: Radio,     text: 'Live call monitor — SSE-powered real-time feed' },
+  { icon: BarChart3, text: 'Lead funnel analytics across all banks' },
+  { icon: Shield,    text: 'Role-gated access · multi-bank scope control' },
+  { icon: Settings,  text: 'Batch upload · phone pool · worker queue' },
+];
 
 export default function AdminLoginPage() {
   return <Suspense><AdminLoginInner /></Suspense>;
@@ -44,179 +65,151 @@ function AdminLoginInner() {
   };
 
   return (
-    <div className="min-h-screen flex" style={{ background: '#06090F' }}>
+    <FinixThemeProvider>
+      <div className="finix-root flex min-h-screen">
 
-      {/* ── LEFT PANEL ── */}
-      <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
-        style={{ background: '#060A16', borderRight: '1px solid rgba(255,255,255,0.05)' }}>
-
-        {/* Subtle dot grid */}
-        <div className="absolute inset-0 opacity-[0.025]"
-          style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '28px 28px' }} />
-
-        {/* Aurora glows */}
-        <div className="absolute pointer-events-none"
-          style={{ top: '25%', left: '30%', width: '420px', height: '420px', transform: 'translate(-50%,-50%)', background: 'radial-gradient(circle, rgba(37,99,235,0.13) 0%, transparent 70%)', borderRadius: '50%' }} />
-        <div className="absolute bottom-0 right-0 pointer-events-none"
-          style={{ width: '280px', height: '280px', background: 'radial-gradient(circle at 100% 100%, rgba(14,165,233,0.07) 0%, transparent 70%)', borderRadius: '50%' }} />
-
-        {/* Logo */}
-        <div className="relative z-10 flex items-center gap-3">
-          <FinixLogoMark size={34} shieldColor="white" />
-          <div>
-            <div className="text-base font-bold text-white" style={{ fontFamily: 'var(--font-heading)', letterSpacing: '-0.02em' }}>Finix</div>
-            <div className="text-[10px] text-white opacity-35 uppercase tracking-widest" style={{ fontFamily: 'var(--font-body)' }}>Operations Console</div>
-          </div>
-        </div>
-
-        {/* Hero */}
-        <div className="relative z-10">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] mb-5" style={{ color: '#3B82F6' }}>
-            Internal · Authorized Access Only
-          </div>
-          <h1 className="text-[2.6rem] font-bold leading-[1.1] text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
-            Manage lending<br />operations<br />
-            <span style={{ color: '#60A5FA' }}>in real time.</span>
-          </h1>
-          <p className="text-base leading-relaxed mb-10" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>
-            Unified view of live calls, worker health, lead funnels, and multi-bank workflows — all in one dashboard.
-          </p>
-          <div className="space-y-3.5">
-            {[
-              { icon: Radio,    text: 'Live call monitor — SSE-powered real-time feed' },
-              { icon: BarChart3, text: 'Lead funnel analytics across all banks' },
-              { icon: Shield,   text: 'Role-gated access · multi-bank scope control' },
-              { icon: Settings, text: 'Batch upload · phone pool · worker queue' },
-            ].map(({ icon: Icon, text }) => (
-              <div key={text} className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.18)' }}>
-                  <Icon className="w-3.5 h-3.5" style={{ color: '#3B82F6' }} />
-                </div>
-                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.42)', fontFamily: 'var(--font-body)' }}>{text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.15)', fontFamily: 'var(--font-body)' }}>
-          © 2026 Finix · Virtual Galaxy Infotech Limited
-        </p>
-      </div>
-
-      {/* ── RIGHT PANEL ── */}
-      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative"
-        style={{ background: '#080D1A' }}>
-
-        {/* Dot grid */}
-        <div className="absolute inset-0 pointer-events-none"
-          style={{ backgroundImage: 'radial-gradient(circle, rgba(107,141,214,0.35) 1px, transparent 1px)', backgroundSize: '24px 24px', opacity: 0.12 }} />
-
-        {/* Glow top-right */}
-        <div className="absolute top-0 right-0 pointer-events-none"
-          style={{ width: '380px', height: '380px', background: 'radial-gradient(circle at 100% 0%, rgba(37,99,235,0.09) 0%, transparent 70%)' }} />
-
-        <div className="w-full max-w-sm relative z-10">
-
-          {/* Mobile logo */}
-          <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <FinixLogoMark size={26} shieldColor="white" />
-            <span className="font-bold text-white" style={{ fontFamily: 'var(--font-heading)' }}>Finix</span>
-          </div>
-
-          {/* Glass card */}
-          <div className="rounded-2xl p-8"
+        {/* ── LEFT PANEL — marketing, hidden below lg ── */}
+        <div
+          className="relative hidden w-[46%] select-none flex-col justify-between overflow-hidden p-12 lg:flex"
+          style={{ background: 'var(--fx-surface)' }}
+        >
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.5]"
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.07)',
-              backdropFilter: 'blur(20px)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)',
-            }}>
+              backgroundImage: 'radial-gradient(circle, var(--fx-border) 1px, transparent 1px)',
+              backgroundSize: '28px 28px',
+            }}
+          />
 
-            {/* Card header */}
-            <div className="mb-7">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5"
-                style={{ background: 'rgba(37,99,235,0.15)', border: '1px solid rgba(37,99,235,0.25)' }}>
-                <Shield className="w-5 h-5" style={{ color: '#60A5FA' }} />
-              </div>
-              <h1 className="text-xl font-bold mb-1" style={{ color: '#EFF4FF', fontFamily: 'var(--font-heading)' }}>
-                Operations Console
-              </h1>
-              <p className="text-sm" style={{ color: 'rgba(255,255,255,0.32)', fontFamily: 'var(--font-body)' }}>
-                Sign in with your admin credentials
-              </p>
+          <div className="relative z-10 flex items-center gap-3 text-fx-text">
+            <FinixLogoMark size={32} className="shrink-0" />
+            <div className="leading-tight">
+              <div className="text-[13px] font-medium text-fx-text">Finix</div>
+              <div className="text-[11px] text-fx-text3">Operations console</div>
+            </div>
+          </div>
+
+          <div className="relative z-10">
+            <div className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: 'var(--fx-accent)' }}>
+              Internal · Authorized access only
+            </div>
+            <h1 className="mb-4 text-[34px] font-medium leading-[1.15] text-fx-text" style={{ letterSpacing: '-0.02em' }}>
+              Manage lending<br />operations<br />
+              <span style={{ color: 'var(--fx-accent)' }}>in real time.</span>
+            </h1>
+            <p className="mb-9 max-w-md text-[13px] leading-relaxed text-fx-text2">
+              Unified view of live calls, worker health, lead funnels, and multi-bank workflows — all in one dashboard.
+            </p>
+            <div className="space-y-3">
+              {FEATURES.map(({ icon: Icon, text }) => (
+                <div key={text} className="flex items-center gap-3">
+                  <span
+                    className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[8px]"
+                    style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)' }}
+                    aria-hidden
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </span>
+                  <p className="text-[13px] text-fx-text2">{text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="relative z-10 text-[11px] text-fx-text3">
+            © 2026 Finix · Virtual Galaxy Infotech Limited
+          </p>
+        </div>
+
+        {/* ── RIGHT PANEL — the form ── */}
+        <div className="relative flex flex-1 items-center justify-center p-8 lg:p-16">
+          <div className="absolute right-5 top-5 z-20"><FinixThemeToggle /></div>
+
+          <div className="relative z-10 w-full max-w-sm">
+            {/* Mobile logo */}
+            <div className="mb-8 flex items-center gap-3 text-fx-text lg:hidden">
+              <FinixLogoMark size={26} className="shrink-0" />
+              <span className="text-[15px] font-medium text-fx-text">Finix</span>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              {/* Email */}
-              <div>
-                <label className="block text-xs font-medium mb-1.5 uppercase tracking-[0.08em]"
-                  style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>
-                  Email Address
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'rgba(255,255,255,0.22)' }} />
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus
-                    className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all"
-                    style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', fontFamily: 'var(--font-body)', color: '#EFF4FF' }}
-                    onFocus={e => { e.target.style.borderColor = 'rgba(59,130,246,0.5)'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.1)'; e.target.style.background = 'rgba(255,255,255,0.06)'; }}
-                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; e.target.style.boxShadow = 'none'; e.target.style.background = 'rgba(255,255,255,0.04)'; }}
-                    placeholder="admin@finix.in" />
-                </div>
+            <div className="mb-6">
+              <div
+                className="mb-5 grid h-12 w-12 place-items-center rounded-[12px] text-white"
+                style={{ background: 'var(--fx-accent-grad)', boxShadow: 'var(--fx-accent-glow)' }}
+                aria-hidden
+              >
+                <Shield className="h-5 w-5" />
               </div>
+              <h1 className="text-[22px] font-medium text-fx-text" style={{ letterSpacing: '-0.015em' }}>
+                Operations console
+              </h1>
+              <p className="mt-1 text-[12px] text-fx-text2">Sign in with your admin credentials</p>
+            </div>
 
-              {/* Password */}
-              <div>
-                <label className="block text-xs font-medium mb-1.5 uppercase tracking-[0.08em]"
-                  style={{ color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-body)' }}>
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'rgba(255,255,255,0.22)' }} />
-                  <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
-                    className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all"
-                    style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', fontFamily: 'var(--font-body)', color: '#EFF4FF' }}
-                    onFocus={e => { e.target.style.borderColor = 'rgba(59,130,246,0.5)'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.1)'; e.target.style.background = 'rgba(255,255,255,0.06)'; }}
-                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; e.target.style.boxShadow = 'none'; e.target.style.background = 'rgba(255,255,255,0.04)'; }}
-                    placeholder="••••••••" />
-                  <button type="button" onClick={() => setShowPassword(v => !v)} tabIndex={-1}
-                    className="absolute right-3 top-1/2 -translate-y-1/2"
-                    style={{ color: 'rgba(255,255,255,0.28)' }}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}>
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
+            <Card>
+              <CardBody>
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <Field label="Email address" htmlFor="admin-email" required>
+                    <Input
+                      id="admin-email"
+                      type="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      required
+                      autoFocus
+                      autoComplete="off"
+                      placeholder="admin@finix.in"
+                      className="h-[34px]"
+                    />
+                  </Field>
 
-              {/* Error */}
-              {error && (
-                <div className="flex items-start gap-2.5 rounded-xl p-3"
-                  style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#F87171' }} />
-                  <p className="text-sm" style={{ color: '#FCA5A5', fontFamily: 'var(--font-body)' }}>{error}</p>
-                </div>
-              )}
+                  <Field label="Password" htmlFor="admin-password" required>
+                    <div className="relative">
+                      <Input
+                        id="admin-password"
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        required
+                        autoComplete="off"
+                        placeholder="••••••••"
+                        className="h-[34px] pr-9"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(v => !v)}
+                        tabIndex={-1}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fx-text3 transition-colors hover:text-fx-text2"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </Field>
 
-              {/* Submit */}
-              <button type="submit" disabled={loading}
-                className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-1"
-                style={{
-                  background: loading ? 'rgba(37,99,235,0.6)' : 'linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%)',
-                  boxShadow: loading ? 'none' : '0 4px 20px rgba(37,99,235,0.3)',
-                  fontFamily: 'var(--font-heading)',
-                }}
-                onMouseEnter={e => { if (!loading) { e.currentTarget.style.background = 'linear-gradient(135deg, #1E40AF 0%, #1D4ED8 100%)'; e.currentTarget.style.boxShadow = '0 4px 24px rgba(37,99,235,0.42)'; } }}
-                onMouseLeave={e => { if (!loading) { e.currentTarget.style.background = 'linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(37,99,235,0.3)'; } }}>
-                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Signing in...</> : 'Sign in to Console'}
-              </button>
-            </form>
+                  {error && (
+                    <div
+                      className="rounded-[10px] px-3 py-2.5 text-[12px]"
+                      style={{ background: 'var(--fx-red-tint)', color: 'var(--fx-red)' }}
+                      role="alert"
+                    >
+                      {error}
+                    </div>
+                  )}
+
+                  <Button type="submit" variant="primary" disabled={loading} className="h-[34px] w-full">
+                    {loading ? 'Signing in…' : 'Sign in to console'}
+                  </Button>
+                </form>
+              </CardBody>
+            </Card>
+
+            <p className="mt-5 text-center text-[11px] text-fx-text3">
+              Authorized personnel only · Virtual Galaxy Infotech Limited
+            </p>
           </div>
-
-          <p className="text-xs text-center mt-5" style={{ color: 'rgba(255,255,255,0.15)', fontFamily: 'var(--font-body)' }}>
-            Authorized personnel only · Virtual Galaxy Infotech Limited
-          </p>
         </div>
       </div>
-    </div>
+    </FinixThemeProvider>
   );
 }

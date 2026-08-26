@@ -1,6 +1,7 @@
 ﻿'use client';
 import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import { FinixLogoMark } from '@/components/shared/FinixLogo';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -1309,9 +1310,9 @@ export default function LoanApplication() {
           {/* Top row: logo + name + autosave */}
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0"
-                style={{ background: 'var(--fx-accent-grad)', fontFamily: 'var(--font-heading)', fontSize: '14px', boxShadow: 'var(--fx-accent-glow)' }}>
-                VV
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ background: 'var(--fx-surface2)', border: '1px solid var(--fx-border)', color: 'var(--fx-text)' }}>
+                <FinixLogoMark size={24} />
               </div>
               <div>
                 <h1 className="font-bold leading-tight" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)', fontSize: '18px' }}>

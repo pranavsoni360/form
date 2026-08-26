@@ -26,15 +26,15 @@ export function FinixLogo({
 }) {
   const light = `/brand/finix-${variant}.png`;
   const dark = `/brand/finix-${variant}-dark.png`;
+  // NB: `display` is controlled by the .fx-logo-{light,dark} CSS rules keyed on
+  // <html data-theme> — do NOT set `display` inline here, or the inline style
+  // (highest specificity) beats the CSS and BOTH variants render side by side.
   return (
-    <span
-      className={className}
-      style={{ display: "inline-flex", height, lineHeight: 0 }}
-    >
+    <span className={className} style={{ display: "inline-flex", height, lineHeight: 0 }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={light} alt={alt} className="fx-logo-light" style={{ height, width: "auto", display: "block" }} />
+      <img src={light} alt={alt} className="fx-logo-light" style={{ height, width: "auto" }} />
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={dark} alt="" aria-hidden className="fx-logo-dark" style={{ height, width: "auto", display: "block" }} />
+      <img src={dark} alt="" aria-hidden className="fx-logo-dark" style={{ height, width: "auto" }} />
     </span>
   );
 }

@@ -1288,10 +1288,10 @@ export default function LoanApplication() {
         </div>
       )}
 
-      <div className="max-w-[680px] mx-auto">
+      <div className="max-w-5xl mx-auto w-full px-3 sm:px-6 pb-10">
 
         {/* ── HEADER CARD — sticky ── */}
-        <div className="sticky top-0 z-20 mb-3 sm:mb-4 sm:mt-4 sm:mx-4 sm:rounded-2xl px-4 sm:px-5 py-3 sm:py-4"
+        <div className="sticky top-0 z-20 mb-3 sm:mb-4 sm:mt-4 rounded-none sm:rounded-2xl px-4 sm:px-5 py-3 sm:py-4"
           style={{ background: 'var(--fx-surface)', borderBottom: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
           {/* Top row: logo + name + autosave */}
           <div className="flex items-center justify-between mb-5">
@@ -1426,8 +1426,9 @@ export default function LoanApplication() {
           </div>
         </div>
 
-        {/* ── FORM CONTENT ── */}
-        <div className="space-y-3 sm:space-y-4 px-3 sm:px-4 pb-8">
+        {/* ── FORM CONTENT — one rounded surface panel (Finix nested-panel shell) ── */}
+        <div className="space-y-3 sm:space-y-4 rounded-2xl px-4 sm:px-6 py-5 sm:py-7 mb-10"
+          style={{ background: 'var(--fx-surface)', border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
 
           {currentStep === 1 && (
             <div className="space-y-4 animate-[fadeIn_0.3s_ease-out]">

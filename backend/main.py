@@ -5223,7 +5223,11 @@ async def submit_form_session(session_token: str, request: Request):
     _validate_experience(app_row)
     _validate_address(app_row)
     _validate_employment(app_row)
-    _validate_documents(app_row)
+    # QA/demo: skip the required-documents gate on the QA database only, so the
+    # test team can submit without uploading every file. Production (los_form)
+    # still enforces it. Mirrors the client-side isQaEnv() bypass on step 2.
+    if not await _is_qa_db():
+        _validate_documents(app_row)
     # ── Atomic transaction: both writes succeed or both roll back ──
     async with db_pool.acquire() as conn:
         async with conn.transaction():

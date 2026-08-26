@@ -1056,6 +1056,21 @@ export default function LoanApplication() {
    * the bank statement left to do.
    */
   const step2Valid = () => {
+    // QA-only: let testers/demos walk past the Documents step WITHOUT uploading
+    // the required files. Gated to the QA host (finix.vgipl.com:8445 /
+    // NEXT_PUBLIC_LOS_ENV='qa') via isQaEnv() — it can NEVER trigger on
+    // production, which keeps enforcing document uploads. Clears any lingering
+    // per-document errors so the step passes cleanly.
+    if (isQaEnv()) {
+      setErrors((p: any) => {
+        const next = { ...p };
+        documentsFor(formData.consumer_loan_type).forEach(d => { delete next[d.key]; });
+        return next;
+      });
+      setDocError('');
+      console.warn('[QA] Documents step gate bypassed — QA environment only.');
+      return true;
+    }
     const missing = missingRequired(formData.consumer_loan_type, formData);
     setErrors((p: any) => {
       const next = { ...p };

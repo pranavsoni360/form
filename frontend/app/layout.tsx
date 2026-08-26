@@ -76,7 +76,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `(function() {
               try {
                 var t = localStorage.getItem('los-theme');
-                if (t === 'dark') document.documentElement.classList.add('dark');
 
                 // Finix theme, persisted under 'finix.theme' and applied to
                 // <html data-theme> pre-paint so the oklch token layer resolves
@@ -98,6 +97,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   localStorage.setItem('finix.theme', f);
                 }
                 document.documentElement.setAttribute('data-theme', f);
+                // Keep the legacy .dark class in lockstep with the resolved
+                // Finix theme so the old unscoped ".dark input" rules never
+                // paint Finix inputs black in light mode (and vice-versa).
+                document.documentElement.classList.toggle('dark', f === 'dark');
               } catch(e) {
                 // Storage blocked (private mode): fall back to light to match
                 // the app's historical default rather than the spec default.

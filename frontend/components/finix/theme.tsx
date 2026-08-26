@@ -53,7 +53,17 @@ export function FinixThemeProvider({
 
   const apply = React.useCallback((t: FinixTheme) => {
     if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-theme", t);
+      const el = document.documentElement;
+      el.setAttribute("data-theme", t);
+      // Keep the LEGACY `.dark` class in sync with the Finix theme. The old,
+      // unscoped `.dark input/select/textarea` rules in globals.css (spec 0,1,1)
+      // otherwise win over the `bg-fx-surface2` utility (0,1,0) and paint Finix
+      // inputs black even in light mode whenever `.dark` is left stale on <html>
+      // (the head script adds it from `los-theme`). Syncing both keeps the two
+      // theme systems from contradicting each other on every Finix screen.
+      el.classList.toggle("dark", t === "dark");
+      // Mirror to the legacy key so unmigrated public pages agree too.
+      try { localStorage.setItem("los-theme", t); } catch { /* storage disabled */ }
     }
   }, []);
 

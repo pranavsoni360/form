@@ -1,4 +1,45 @@
 /**
+ * Finix brand logo — the real raster artwork (public/brand/*.png), trimmed to a
+ * transparent background. Two ink variants ship so the navy wordmark/shield stay
+ * legible on dark surfaces:
+ *   • finix-{mark,lockup}.png       — navy + teal, for light surfaces
+ *   • finix-{mark,lockup}-dark.png  — white + teal, for dark surfaces
+ *
+ * The variant is chosen by CSS keyed on <html data-theme> (see .fx-logo-* rules
+ * in globals.css), so this works on ANY page — inside a FinixThemeProvider or on
+ * the plain public pages — with no hook/context dependency and no hydration flash
+ * (the pre-paint head script sets data-theme before first paint).
+ *
+ *   <FinixLogo height={34} />                 — shield mark only
+ *   <FinixLogo variant="lockup" height={48} /> — mark + FINIX wordmark
+ */
+export function FinixLogo({
+  variant = "mark",
+  height = 34,
+  className,
+  alt = "Finix",
+}: {
+  variant?: "mark" | "lockup";
+  height?: number;
+  className?: string;
+  alt?: string;
+}) {
+  const light = `/brand/finix-${variant}.png`;
+  const dark = `/brand/finix-${variant}-dark.png`;
+  return (
+    <span
+      className={className}
+      style={{ display: "inline-flex", height, lineHeight: 0 }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={light} alt={alt} className="fx-logo-light" style={{ height, width: "auto", display: "block" }} />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={dark} alt="" aria-hidden className="fx-logo-dark" style={{ height, width: "auto", display: "block" }} />
+    </span>
+  );
+}
+
+/**
  * Finix shield logo mark — recreated from brand asset.
  * Shield stroke uses `currentColor` so it adapts to light/dark theme.
  * The teal arrow is always #00C4B4 (brand teal).

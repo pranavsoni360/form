@@ -195,6 +195,13 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Finix raster logo (components/shared/FinixLogo.tsx): show the navy-ink art on
+   light themes, the white-ink art on dark. Keyed on <html data-theme> so it is
+   independent of any React provider and matches the pre-paint head script. */
+.fx-logo-dark { display: none; }
+[data-theme="dark"] .fx-logo-light { display: none; }
+[data-theme="dark"] .fx-logo-dark { display: block; }
+
 .dark { color-scheme: dark; }
 .dark select {
   background-color: hsl(222 40% 11%);

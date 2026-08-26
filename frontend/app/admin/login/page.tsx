@@ -19,7 +19,7 @@ import {
   Input,
 } from '@/components/finix';
 import { FinixThemeToggle } from '@/components/finix/ThemeToggleButton';
-import { FinixLogoMark } from '@/components/shared/FinixLogo';
+import { FinixLogo } from '@/components/shared/FinixLogo';
 
 const FEATURES = [
   { icon: Radio,     text: 'Live call monitor — SSE-powered real-time feed' },
@@ -66,7 +66,7 @@ function AdminLoginInner() {
 
   return (
     <FinixThemeProvider>
-      <div className="finix-root flex min-h-screen">
+      <div className="finix-root flex h-screen overflow-hidden">
 
         {/* ── LEFT PANEL — marketing, hidden below lg ── */}
         <div
@@ -82,10 +82,10 @@ function AdminLoginInner() {
           />
 
           <div className="relative z-10 flex items-center gap-3 text-fx-text">
-            <FinixLogoMark size={40} className="shrink-0" />
+            <FinixLogo height={40} className="shrink-0" />
             <div className="leading-tight">
-              <div className="text-[16px] font-semibold text-fx-text">Finix</div>
-              <div className="text-[11px] uppercase tracking-widest text-fx-text3">Operations console</div>
+              <div className="text-[17px] font-semibold tracking-tight text-fx-text">Finix</div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-fx-text3">Operations console</div>
             </div>
           </div>
 
@@ -122,13 +122,13 @@ function AdminLoginInner() {
         </div>
 
         {/* ── RIGHT PANEL — the form ── */}
-        <div className="relative flex flex-1 items-center justify-center p-8 lg:p-16">
+        <div className="relative flex flex-1 items-center justify-center overflow-y-auto p-8 lg:p-16">
           <div className="absolute right-5 top-5 z-20"><FinixThemeToggle /></div>
 
           <div className="relative z-10 w-full max-w-md">
             {/* Mobile logo */}
             <div className="mb-9 flex items-center gap-3 text-fx-text lg:hidden">
-              <FinixLogoMark size={32} className="shrink-0" />
+              <FinixLogo height={32} className="shrink-0" />
               <span className="text-[17px] font-semibold text-fx-text">Finix</span>
             </div>
 

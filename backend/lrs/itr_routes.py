@@ -44,7 +44,16 @@ from lrs.providers.vg_docverify import _parse_lenient_json
 logger = logging.getLogger("lrs-itr-routes")
 router = APIRouter()
 
-_BASE_URL = os.getenv("VG_DOCVERIFY_BASE_URL", "https://vpays.in/VGDocverify").rstrip("/")
+# Import the resolved base URL rather than re-deriving it. Declaring a second
+# os.getenv with its OWN default was a real bug: with VG_DOCVERIFY_BASE_URL
+# unset, this module defaulted to vpays.in (production) while vg_docverify.py
+# defaulted to 10.200.10.43 (UAT). Credentials are chosen FROM the host
+# (_creds_for), and this module imports those credentials — so it sent UAT
+# user 33 to the production host, which has no such user, and every fetch came
+# back "no return found". One source of truth for the host, always paired with
+# the credentials that belong to it.
+from lrs.providers.vg_docverify import _BASE_URL  # noqa: E402
+
 _VGK_BASE = f"{_BASE_URL}/VGKVerify.asmx"
 _TIMEOUT = float(os.getenv("VG_DOCVERIFY_TIMEOUT", "30"))
 _DEFAULT_YEARS = os.getenv("ITR_DEFAULT_YEARS", "3")

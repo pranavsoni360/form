@@ -144,3 +144,41 @@ def test_unexpected_fields_are_refused():
     with pytest.raises(Exception):
         ItrGenerateRequest(session_token="t", username="u", password="p",
                            number_of_years="3", store_password=True)
+
+
+# ── host / credential pairing ───────────────────────────────────────────────
+
+def test_itr_uses_the_same_host_as_its_credentials():
+    """The ITR endpoint must be built from the host the credentials belong to.
+
+    This module originally declared its own
+    `os.getenv("VG_DOCVERIFY_BASE_URL", "https://vpays.in/VGDocverify")`, while
+    vg_docverify.py defaulted to the UAT host. With the variable unset — which is
+    how every environment currently runs — the two disagreed. Credentials are
+    chosen FROM the host by `_creds_for`, and itr_routes imports those
+    credentials, so it sent UAT user 33 to the production host. VG answered with
+    no result and the customer saw "No income-tax return was found for those
+    credentials" no matter what they typed.
+
+    A second os.getenv for the same variable is the bug. Assert the single
+    source of truth instead.
+    """
+    from lrs import itr_routes
+    from lrs.providers import vg_docverify
+
+    assert itr_routes._VGK_BASE.startswith(vg_docverify._BASE_URL), (
+        "ITR endpoint host must match the host the credentials were resolved for"
+    )
+
+
+def test_credentials_match_the_resolved_host():
+    """Whichever host is configured, the credential set must belong to it."""
+    from lrs.providers import vg_docverify as vg
+
+    expected = vg._creds_for(vg._BASE_URL)
+    # Env overrides win by design; only compare when they are not set.
+    import os
+    if not os.getenv("VG_DOCVERIFY_USER_ID"):
+        assert vg._USER_ID == expected["user_id"]
+    if not os.getenv("VG_DOCVERIFY_BANK_SHORT_CODE"):
+        assert vg._BANK_SHORT_CODE == expected["bank_short_code"]

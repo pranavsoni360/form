@@ -10,8 +10,9 @@ plausible candidates that mean very different things:
   totalProfitBeforeTax   profit
   compToEmplys.salWages  what the filer PAID staff — NOT income, easy to misread
 
-Fixtures come from a real UAT capture (2026-08-27, user 33), so the nesting is
-the vendor's actual shape rather than one inferred from a doc.
+Fixtures use the vendor's ACTUAL response nesting — confirmed against a live
+UAT call — with synthetic amounts. The structure is what matters for derivation
+and is reproduced faithfully; no real taxpayer's figures are stored here.
 """
 from __future__ import annotations
 
@@ -26,37 +27,37 @@ if str(BACKEND) not in sys.path:
 
 from lrs.itr_routes import ItrGenerateRequest, derive_itr_income  # noqa: E402
 
-# Trimmed from the real capture, exact nesting and values preserved.
-REAL_SELF_EMPLOYED = {"itrData": {"assmtYr": [{"financialYear": "2025-26", "finInfo": {
+# Vendor's real nesting, synthetic amounts.
+SELF_EMPLOYED_44ADA = {"itrData": {"assmtYr": [{"financialYear": "2025-26", "finInfo": {
     "plDtld": {"plAcct": {
-        "presumpInc44AD": {"slNo": [{"grsTrnovrGrsRecpts": {"othMode": 598300, "ttl": 598300},
-                                     "presInc": {"8PrcntOfGrsTrnOthMode": 236608, "ttl": 236608}}]},
-        "presumpInc44ADA": {"slNo": [{"grsRecpts": 185700, "presInc": 157940}]},
-        "grsPrftTrfdFrmTrdgAcct": 394548, "pat": 394548}},
-    "plSumm": {"inc": {"revenueFromOperations": 185700, "totalIncome": 185700},
-               "totalProfitBeforeTax": 394548}}}]}}
+        "presumpInc44AD": {"slNo": [{"grsTrnovrGrsRecpts": {"othMode": 720000, "ttl": 720000},
+                                     "presInc": {"8PrcntOfGrsTrnOthMode": 288000, "ttl": 288000}}]},
+        "presumpInc44ADA": {"slNo": [{"grsRecpts": 240000, "presInc": 204000}]},
+        "grsPrftTrfdFrmTrdgAcct": 450000, "pat": 450000}},
+    "plSumm": {"inc": {"revenueFromOperations": 240000, "totalIncome": 240000},
+               "totalProfitBeforeTax": 450000}}}]}}
 
 
-def test_real_capture_prefers_44ADA_presumptive_income():
+def test_prefers_44ADA_presumptive_income():
     """44ADA presumptive income is the truest figure for a self-employed filer.
 
-    The same return also carries totalIncome 185700 and profitBeforeTax 394548.
+    The same return also carries totalIncome 240000 and profitBeforeTax 450000.
     Picking either would misstate earning capacity — receipts are not income, and
     profit before tax on a presumptive return is not what the filer declared.
     """
-    out = derive_itr_income(REAL_SELF_EMPLOYED)
+    out = derive_itr_income(SELF_EMPLOYED_44ADA)
     assert out["itr_income_basis"] == "presumptive_44ADA"
-    assert out["annual_income"] == 157940.0
-    assert out["net_monthly_income"] == 13161.67
+    assert out["annual_income"] == 204000.0
+    assert out["net_monthly_income"] == 17000.0
     assert out["itr_financial_year"] == "2025-26"
 
 
 def test_44AD_used_when_44ADA_absent():
     data = {"itrData": {"assmtYr": [{"financialYear": "2025-26", "finInfo": {
-        "plDtld": {"plAcct": {"presumpInc44AD": {"slNo": [{"presInc": {"ttl": 236608}}]}}}}}]}}
+        "plDtld": {"plAcct": {"presumpInc44AD": {"slNo": [{"presInc": {"ttl": 288000}}]}}}}}]}}
     out = derive_itr_income(data)
     assert out["itr_income_basis"] == "presumptive_44AD"
-    assert out["annual_income"] == 236608.0
+    assert out["annual_income"] == 288000.0
 
 
 def test_salaried_style_return_uses_total_income():

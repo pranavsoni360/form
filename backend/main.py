@@ -3929,7 +3929,6 @@ async def aa_statement_initiate(request: Request):
             "txn_completed_cburl": callback_url,
             "start_month": start_month,
             "end_month": end_month,
-            "institution_id": "",
             "destination": "statementupload",
             "return_url": return_url,
             "acceptance_policy": "atLeastOneTransactionInRange",

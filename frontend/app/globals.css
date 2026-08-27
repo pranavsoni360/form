@@ -217,9 +217,16 @@
 [data-theme="light"] .fx-logo-light { display: block; }
 [data-theme="light"] .fx-logo-dark  { display: none; }
 
-/* Sidebar is always dark — always show the white logo, beats any page theme */
-.finix-sidebar-logo .fx-logo-light { display: none !important; }
-.finix-sidebar-logo .fx-logo-dark  { display: block !important; }
+/* Sidebar logo follows the sidebar's own dark/light state, not the page theme.
+   Light sidebar (default) → navy logo. Dark sidebar → white logo. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .finix-sidebar-logo .fx-logo-light { display: none !important; }
+  :root:not([data-theme="light"]) .finix-sidebar-logo .fx-logo-dark  { display: block !important; }
+}
+[data-theme="dark"]  .finix-sidebar-logo .fx-logo-light { display: none !important; }
+[data-theme="dark"]  .finix-sidebar-logo .fx-logo-dark  { display: block !important; }
+[data-theme="light"] .finix-sidebar-logo .fx-logo-light { display: block !important; }
+[data-theme="light"] .finix-sidebar-logo .fx-logo-dark  { display: none !important; }
 
 .dark { color-scheme: dark; }
 .dark select {
@@ -664,24 +671,50 @@ body:has(.finix-root) {
   background: var(--fx-bg);
 }
 
-/* ── Admin sidebar — always dark, regardless of page theme ───────────────────
-   The sidebar has its own fixed-dark palette so it anchors the layout even in
-   light mode. These are not theme-responsive by design. */
+/* ── Admin sidebar — theme-adaptive palette ──────────────────────────────────
+   Light mode: clean blue-gray surface (matches brand palette).
+   Dark mode:  slate-navy ink panel. Both share the teal accent bar. */
+
+/* Light mode (default) */
 .finix-root {
-  --fx-sidebar-bg:       #1C2333;   /* refined slate-navy — less harsh than deep navy */
-  --fx-sidebar-bg2:      #26304A;   /* hover / active item fill */
-  --fx-sidebar-text:     #EEF2F8;   /* primary nav label — crisp white */
-  --fx-sidebar-text2:    #8FA5C2;   /* inactive label, secondary */
-  --fx-sidebar-border:   rgba(255,255,255,0.09);
-  --fx-sidebar-accent:   #10BDA8;   /* brighter teal — visible against slate */
-  /* Teal — seat meter fills, positive data state. NOT used for buttons. */
-  --fx-teal:             oklch(0.58 0.13 185);
-  --fx-teal-tint:        oklch(0.58 0.13 185 / 0.10);
+  --fx-sidebar-bg:      #EFF4FA;             /* cool blue-gray — professional light */
+  --fx-sidebar-bg2:     rgba(26,50,80,0.08); /* active item bg */
+  --fx-sidebar-hover:   rgba(26,50,80,0.04); /* hover bg */
+  --fx-sidebar-text:    #1A3250;             /* dark navy label */
+  --fx-sidebar-text2:   #5B7A9A;             /* muted secondary label */
+  --fx-sidebar-border:  rgba(26,50,80,0.08);
+  --fx-sidebar-accent:  #0E9A8A;             /* teal accent bar */
+  /* Teal — seat meter, positive data state */
+  --fx-teal:            oklch(0.58 0.13 185);
+  --fx-teal-tint:       oklch(0.58 0.13 185 / 0.10);
 }
+
+/* Dark mode (system) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .finix-root {
+    --fx-sidebar-bg:      #1C2333;
+    --fx-sidebar-bg2:     rgba(255,255,255,0.10);
+    --fx-sidebar-hover:   rgba(255,255,255,0.05);
+    --fx-sidebar-text:    #EEF2F8;
+    --fx-sidebar-text2:   #8FA5C2;
+    --fx-sidebar-border:  rgba(255,255,255,0.09);
+    --fx-sidebar-accent:  #10BDA8;
+    --fx-teal:            oklch(0.67 0.13 185);
+    --fx-teal-tint:       oklch(0.67 0.13 185 / 0.16);
+  }
+}
+
+/* Dark mode (explicit toggle) */
 [data-theme="dark"] .finix-root {
-  --fx-teal:             oklch(0.67 0.13 185);
-  --fx-teal-tint:        oklch(0.67 0.13 185 / 0.16);
-  /* Sidebar tokens remain unchanged in dark mode — sidebar is always dark. */
+  --fx-sidebar-bg:      #1C2333;
+  --fx-sidebar-bg2:     rgba(255,255,255,0.10);
+  --fx-sidebar-hover:   rgba(255,255,255,0.05);
+  --fx-sidebar-text:    #EEF2F8;
+  --fx-sidebar-text2:   #8FA5C2;
+  --fx-sidebar-border:  rgba(255,255,255,0.09);
+  --fx-sidebar-accent:  #10BDA8;
+  --fx-teal:            oklch(0.67 0.13 185);
+  --fx-teal-tint:       oklch(0.67 0.13 185 / 0.16);
 }
 
 /* Popover entrance — small rise + fade + scale, quick and quiet. */

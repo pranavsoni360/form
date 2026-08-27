@@ -76,6 +76,36 @@ function initials(name: string) {
   return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
+// Clean status indicator — dot + label, no filled background pill.
+// Avoids the "AI-generated" look of large colored badge pills.
+function StatusDot({
+  tone,
+  label,
+  sub,
+}: {
+  tone: "green" | "amber" | "neutral" | "accent";
+  label: string;
+  sub?: string;
+}) {
+  const dotColor =
+    tone === "green"  ? "var(--fx-green)"  :
+    tone === "amber"  ? "var(--fx-amber)"  :
+    tone === "accent" ? "var(--fx-accent)" :
+    "var(--fx-text3)";
+  return (
+    <div>
+      <div className="flex items-center gap-[7px]">
+        <span
+          className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
+          style={{ background: dotColor, boxShadow: `0 0 0 2.5px color-mix(in srgb, ${dotColor} 18%, transparent)` }}
+        />
+        <span className="text-[13px] font-medium text-fx-text">{label}</span>
+      </div>
+      {sub && <p className="mt-[2px] pl-[14px] text-[11px] text-fx-text3">{sub}</p>}
+    </div>
+  );
+}
+
 function lastActive(u: BankUser): string {
   if (u.status === "suspended") return "suspended";
   if (!u.last_login_at) return "never signed in";
@@ -269,19 +299,15 @@ export default function UsersPage() {
       header: "Status",
       render: (r) =>
         r.kind === "invite" ? (
-          <TwoLine
-            primary={<Pill tone="accent">Invited</Pill>}
-            secondary={`expires ${formatDate(r.i.expires_at)}`}
-          />
+          <StatusDot tone="accent" label="Invited" sub={`expires ${formatDate(r.i.expires_at)}`} />
         ) : r.u.status === "active" && !r.u.last_login_at ? (
-          // Account exists and holds a seat, but has never been used — amber, not green.
-          <TwoLine primary={<Pill tone="amber">Not signed in</Pill>} secondary="account ready" />
+          <StatusDot tone="amber" label="Not signed in" sub="account ready" />
         ) : r.u.status === "active" ? (
-          <TwoLine primary={<Pill tone="green">Active</Pill>} secondary={lastActive(r.u)} />
+          <StatusDot tone="green" label="Active" sub={lastActive(r.u)} />
         ) : r.u.status === "invited" ? (
-          <Pill tone="accent">Invited</Pill>
+          <StatusDot tone="accent" label="Invited" />
         ) : (
-          <TwoLine primary={<Pill tone="neutral">Suspended</Pill>} secondary="seat freed" />
+          <StatusDot tone="neutral" label="Suspended" sub="seat freed" />
         ),
     },
     {

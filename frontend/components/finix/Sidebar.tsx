@@ -105,7 +105,7 @@ export function Sidebar({
             collapsed && "mx-auto",
           )}
           style={{ color: "var(--fx-sidebar-text2)" }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--fx-sidebar-bg2)")}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--fx-sidebar-hover)")}
           onMouseLeave={(e) => (e.currentTarget.style.background = "")}
         >
           {collapsed ? (
@@ -148,16 +148,15 @@ export function Sidebar({
                   style={
                     active
                       ? {
-                          background: "rgba(255,255,255,0.10)",
+                          background: "var(--fx-sidebar-bg2)",
                           color: "var(--fx-sidebar-text)",
-                          // 3-px teal accent bar on the left edge
                           boxShadow: "inset 3px 0 0 var(--fx-sidebar-accent)",
                         }
                       : { color: "var(--fx-sidebar-text2)" }
                   }
                   onMouseEnter={(e) => {
                     if (!active) {
-                      e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+                      e.currentTarget.style.background = "var(--fx-sidebar-hover)";
                       e.currentTarget.style.color = "var(--fx-sidebar-text)";
                     }
                   }}

@@ -196,12 +196,37 @@
 }
 
 /* Finix raster logo (components/shared/FinixLogo.tsx): show the navy-ink art on
-   light themes, the white-ink art on dark. Keyed on <html data-theme> so it is
-   independent of any React provider and matches the pre-paint head script. */
+   light themes, the white-ink art on dark. Three cases:
+     1. Explicit light  → [data-theme="light"]  → light logo
+     2. Explicit dark   → [data-theme="dark"]   → dark logo
+     3. System default  → no data-theme, rely on prefers-color-scheme
+   Plus a sidebar-specific override: the sidebar is always dark so it always
+   needs the white logo regardless of the page theme. */
 .fx-logo-light { display: block; }
 .fx-logo-dark  { display: none; }
-[data-theme="dark"] .fx-logo-light { display: none; }
-[data-theme="dark"] .fx-logo-dark  { display: block; }
+
+/* System dark mode (no data-theme stamp) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .fx-logo-light { display: none; }
+  :root:not([data-theme="light"]) .fx-logo-dark  { display: block; }
+}
+
+/* Explicit theme stamps */
+[data-theme="dark"]  .fx-logo-light { display: none; }
+[data-theme="dark"]  .fx-logo-dark  { display: block; }
+[data-theme="light"] .fx-logo-light { display: block; }
+[data-theme="light"] .fx-logo-dark  { display: none; }
+
+/* Sidebar logo follows the sidebar's own dark/light state, not the page theme.
+   Light sidebar (default) → navy logo. Dark sidebar → white logo. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .finix-sidebar-logo .fx-logo-light { display: none !important; }
+  :root:not([data-theme="light"]) .finix-sidebar-logo .fx-logo-dark  { display: block !important; }
+}
+[data-theme="dark"]  .finix-sidebar-logo .fx-logo-light { display: none !important; }
+[data-theme="dark"]  .finix-sidebar-logo .fx-logo-dark  { display: block !important; }
+[data-theme="light"] .finix-sidebar-logo .fx-logo-light { display: block !important; }
+[data-theme="light"] .finix-sidebar-logo .fx-logo-dark  { display: none !important; }
 
 .dark { color-scheme: dark; }
 .dark select {
@@ -644,6 +669,52 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
    Scoped with :has() so pages still on the legacy design are untouched. */
 body:has(.finix-root) {
   background: var(--fx-bg);
+}
+
+/* ── Admin sidebar — theme-adaptive palette ──────────────────────────────────
+   Light mode: clean blue-gray surface (matches brand palette).
+   Dark mode:  slate-navy ink panel. Both share the teal accent bar. */
+
+/* Light mode (default) */
+.finix-root {
+  --fx-sidebar-bg:      #EFF4FA;             /* cool blue-gray — professional light */
+  --fx-sidebar-bg2:     rgba(26,50,80,0.08); /* active item bg */
+  --fx-sidebar-hover:   rgba(26,50,80,0.04); /* hover bg */
+  --fx-sidebar-text:    #1A3250;             /* dark navy label */
+  --fx-sidebar-text2:   #5B7A9A;             /* muted secondary label */
+  --fx-sidebar-border:  rgba(26,50,80,0.08);
+  --fx-sidebar-accent:  #0E9A8A;             /* teal accent bar */
+  /* Teal — seat meter, positive data state */
+  --fx-teal:            oklch(0.58 0.13 185);
+  --fx-teal-tint:       oklch(0.58 0.13 185 / 0.10);
+}
+
+/* Dark mode (system) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .finix-root {
+    --fx-sidebar-bg:      #1C2333;
+    --fx-sidebar-bg2:     rgba(255,255,255,0.10);
+    --fx-sidebar-hover:   rgba(255,255,255,0.05);
+    --fx-sidebar-text:    #EEF2F8;
+    --fx-sidebar-text2:   #8FA5C2;
+    --fx-sidebar-border:  rgba(255,255,255,0.09);
+    --fx-sidebar-accent:  #10BDA8;
+    --fx-teal:            oklch(0.67 0.13 185);
+    --fx-teal-tint:       oklch(0.67 0.13 185 / 0.16);
+  }
+}
+
+/* Dark mode (explicit toggle) */
+[data-theme="dark"] .finix-root {
+  --fx-sidebar-bg:      #1C2333;
+  --fx-sidebar-bg2:     rgba(255,255,255,0.10);
+  --fx-sidebar-hover:   rgba(255,255,255,0.05);
+  --fx-sidebar-text:    #EEF2F8;
+  --fx-sidebar-text2:   #8FA5C2;
+  --fx-sidebar-border:  rgba(255,255,255,0.09);
+  --fx-sidebar-accent:  #10BDA8;
+  --fx-teal:            oklch(0.67 0.13 185);
+  --fx-teal-tint:       oklch(0.67 0.13 185 / 0.16);
 }
 
 /* Popover entrance — small rise + fade + scale, quick and quiet. */

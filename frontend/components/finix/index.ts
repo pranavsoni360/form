@@ -57,6 +57,7 @@ export {
   type SidebarAction,
 } from "./Sidebar";
 export { FinixShell } from "./Shell";
+export { UserMenu, type UserMenuProps } from "./UserMenu";
 export {
   SessionTimer,
   STAFF_IDLE_LOGOUT_MS,

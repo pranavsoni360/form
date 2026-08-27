@@ -39,7 +39,6 @@ import {
   formatPct,
   type Column,
   type Segment,
-  type SidebarAction,
 } from "@/components/finix";
 import {
   getQuota,
@@ -118,11 +117,6 @@ export default function UsagePage() {
     }
   }
 
-  // Sidebar action flips to a red "Request quota increase" when exceeded.
-  const action: SidebarAction = exceeded
-    ? { title: "Request quota increase", subtitle: "Calling is halted", tone: "red", onClick: () => setQuotaOpen(true) }
-    : { title: "Export CSV", subtitle: "This period's calls", onClick: doExport };
-
   const outcomeSegments: Segment[] = (summary?.outcomes || []).map((o) => {
     const tone = OUTCOME_TONE[o.status];
     return { label: callStatusMeta(o.status).label, value: o.count, ...(tone === "neutral" || !tone ? { neutral: true } : { tone }) };
@@ -139,7 +133,7 @@ export default function UsagePage() {
   ];
 
   return (
-    <BankAdminShell action={action}>
+    <BankAdminShell>
       <Toolbar
         left={<><PeriodChip>{quota ? `${quota.period.from} – ${quota.period.to}` : "This month"}</PeriodChip><Breadcrumb>usage & call statistics</Breadcrumb></>}
         right={<Button variant="primary" onClick={doExport}>Export CSV</Button>}
@@ -152,7 +146,7 @@ export default function UsagePage() {
         <Card><ErrorState title="Could not load usage" detail={error} onRetry={load} /></Card>
       ) : (
         <>
-          {exceeded && <QuotaExceededBanner quota={quota!} />}
+          {exceeded && <QuotaExceededBanner quota={quota!} onRequestIncrease={() => setQuotaOpen(true)} />}
 
           {/* Quota + credit */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2.4fr_1fr]">
@@ -324,7 +318,7 @@ function CreditCard({ quota }: { quota: QuotaInfo }) {
 }
 
 // ── quota-exceeded banner ────────────────────────────────────────────────────
-function QuotaExceededBanner({ quota }: { quota: QuotaInfo }) {
+function QuotaExceededBanner({ quota, onRequestIncrease }: { quota: QuotaInfo; onRequestIncrease: () => void }) {
   return (
     <div className="rounded-[14px] p-4" style={{ background: "var(--fx-red-tint)", boxShadow: "inset 0 0 0 1px var(--fx-red)" }}>
       <div className="text-[15px] font-medium" style={{ color: "var(--fx-red)" }}>
@@ -335,7 +329,7 @@ function QuotaExceededBanner({ quota }: { quota: QuotaInfo }) {
       </p>
       <div className="mt-3 flex gap-2">
         <Button variant="quiet">View paused campaigns</Button>
-        <Button variant="danger">Request quota increase</Button>
+        <Button variant="danger" onClick={onRequestIncrease}>Request quota increase</Button>
       </div>
     </div>
   );

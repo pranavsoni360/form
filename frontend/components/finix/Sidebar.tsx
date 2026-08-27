@@ -1,35 +1,38 @@
 "use client";
 
-// Finix sidebar (design_handoff_finix/README.md §Sidebar).
+// Finix admin sidebar (design overhaul §1.2 / §1.3).
 //
-// 264px expanded, 64px collapsed. Own column with 12px gutters, sticky, full
-// viewport height. Composition top→bottom: logo row, identity block (avatar,
-// theme pill, weekday+date, name, tenant · role), nav panel (inset, 34px items,
-// glyph column, right-aligned counts, active = surface2), spacer, ONE
-// accent-gradient action card, collapse row. Collapsed: only glyphs remain.
+// Always-dark (#0A1B2D) so it anchors the layout regardless of the page theme.
+// Composition top→bottom: logo + collapse button row, grouped nav, spacer.
+// Collapsed = 64px (icons only with tooltip); expanded = 240px.
+// Collapsed state persists in localStorage under "finix.sidebar.collapsed".
+//
+// The user identity card, session timer, and Invite action have all moved out:
+// identity → AppBar UserMenu; action button → removed per spec §2.2.
 
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { PanelLeft, PanelLeftClose } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useFinixTheme } from "./theme";
-import { formatDate } from "./format";
 import { FinixLogo } from "@/components/shared/FinixLogo";
 
 export type FinixNavItem = {
   href: string;
   label: string;
-  /** Monospace glyph stand-in; replace with a real icon set later. */
+  /** Monospace glyph stand-in; used as the icon in collapsed state. */
   glyph: string;
   count?: number;
+  /** Optional group label ("Manage", "Insight"). Items without a group render first, ungrouped. */
+  group?: string;
 };
 
+// Kept for shells that still pass it; Sidebar no longer renders it.
 export type SidebarIdentity = {
   name: string;
   initials: string;
   tenant: string;
   role: string;
-  /** Weekday + date line. Defaults to today. */
   date?: Date;
 };
 
@@ -38,189 +41,160 @@ export type SidebarAction = {
   subtitle?: string;
   onClick?: () => void;
   href?: string;
-  /** Red-tinted read-only variant (e.g. quota-exceeded "Request quota increase"). */
   tone?: "accent" | "red";
 };
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-function ThemePill() {
-  const { theme, setTheme } = useFinixTheme();
-  return (
-    <div className="flex items-center gap-0.5 rounded-full bg-fx-bg p-0.5">
-      <button
-        type="button"
-        aria-label="Dark theme"
-        aria-pressed={theme === "dark"}
-        onClick={() => setTheme("dark")}
-        className={cn(
-          "fx-tap grid h-6 w-6 place-items-center rounded-full text-[12px]",
-          theme === "dark" ? "bg-fx-surface text-fx-text shadow-sm" : "text-fx-text3 hover:text-fx-text2",
-        )}
-      >
-        ☾
-      </button>
-      <button
-        type="button"
-        aria-label="Light theme"
-        aria-pressed={theme === "light"}
-        onClick={() => setTheme("light")}
-        className={cn(
-          "fx-tap grid h-6 w-6 place-items-center rounded-full text-[12px]",
-          theme === "light" ? "bg-fx-surface text-fx-text shadow-sm" : "text-fx-text3 hover:text-fx-text2",
-        )}
-      >
-        ☀
-      </button>
-    </div>
-  );
-}
-
 export function Sidebar({
   nav,
-  identity,
-  identityFooter,
-  action,
   collapsed,
   onToggleCollapse,
-  onLogout,
 }: {
   nav: FinixNavItem[];
-  identity: SidebarIdentity;
-  /** Rendered inside the identity card, below the tenant/role line. */
-  identityFooter?: React.ReactNode;
-  action?: SidebarAction;
   collapsed: boolean;
   onToggleCollapse: () => void;
-  onLogout?: () => void;
 }) {
   const pathname = usePathname();
-  const date = identity.date ?? new Date();
-  const dateLine = `${WEEKDAYS[date.getDay()]} · ${formatDate(date)}`;
+
+  // Build ordered group list preserving insertion order.
+  const groups = React.useMemo(() => {
+    const map = new Map<string, FinixNavItem[]>();
+    for (const item of nav) {
+      const g = item.group ?? "";
+      if (!map.has(g)) map.set(g, []);
+      map.get(g)!.push(item);
+    }
+    return Array.from(map.entries());
+  }, [nav]);
 
   return (
     <aside
-      className="sticky top-0 flex h-screen shrink-0 flex-col gap-3 p-3"
-      style={{ width: collapsed ? 64 : 264 }}
+      className="sticky top-0 flex h-screen shrink-0 flex-col overflow-hidden"
+      style={{
+        width: collapsed ? 64 : 240,
+        background: "var(--fx-sidebar-bg)",
+        transition: "width 200ms cubic-bezier(0.22,1,0.36,1)",
+        willChange: "width",
+      }}
     >
-      {/* Logo row */}
-      <div className="flex items-center gap-2.5 px-1">
-        <FinixLogo height={30} className="shrink-0" />
-        {!collapsed && <span className="text-[15px] font-medium text-fx-text">Finix</span>}
-      </div>
-
-      {/* Identity block */}
-      {!collapsed && (
-        <div className="rounded-[14px] p-3" style={{
-          background: "var(--fx-accent-tint)",
-          border: "1px solid var(--fx-border)",
-          backdropFilter: "blur(8px)",
-        }}>
-          <div className="flex items-center gap-2">
-            <span className="grid h-[34px] w-[34px] place-items-center rounded-[10px] bg-fx-surface2 text-[13px] font-medium text-fx-text">
-              {identity.initials}
-            </span>
-            <div className="ml-auto">
-              <ThemePill />
-            </div>
-          </div>
-          <div className="mt-2 text-[11px] text-fx-text3">{dateLine}</div>
-          <div className="text-[16px] font-medium text-fx-text">{identity.name}</div>
-          <div className="text-[12px] text-fx-text3">
-            {identity.tenant} · {identity.role}
-          </div>
-          {identityFooter && <div className="mt-2">{identityFooter}</div>}
-        </div>
-      )}
-
-      {/* Nav panel */}
-      <nav className="rounded-[14px] p-2" style={{
-        background: "var(--fx-accent-tint)",
-        border: "1px solid var(--fx-border)",
-        backdropFilter: "blur(8px)",
-      }}>
-        {nav.map((item) => {
-          const active = item.href === pathname || (item.href !== "/" && pathname?.startsWith(item.href));
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "fx-tap flex h-[34px] items-center gap-2 rounded-[10px] px-2",
-                active
-                  ? "bg-fx-surface2 text-fx-text shadow-[inset_0_0_0_1px_var(--fx-border)]"
-                  : "text-fx-text2 hover:bg-fx-surface2 hover:text-fx-text",
-              )}
+      {/* ── Logo + collapse button row ── */}
+      <div
+        className="flex h-14 shrink-0 items-center gap-3 px-3"
+        style={{ borderBottom: "1px solid var(--fx-sidebar-border)" }}
+      >
+        {!collapsed && (
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            <FinixLogo height={26} className="shrink-0" />
+            <span
+              className="truncate text-[14px] font-medium"
+              style={{ color: "var(--fx-sidebar-text)" }}
             >
-              <span className="fx-mono grid w-[14px] shrink-0 place-items-center text-[13px]">{item.glyph}</span>
-              {!collapsed && (
-                <>
-                  <span className="text-[13px]">{item.label}</span>
-                  {item.count != null && (
-                    <span className="fx-mono ml-auto text-[11px] text-fx-text3">{item.count}</span>
-                  )}
-                </>
-              )}
-            </Link>
-          );
-        })}
-      </nav>
-
-      <div className="flex-1" />
-
-      {/* One primary action card */}
-      {action && !collapsed && (
-        <ActionCard action={action} />
-      )}
-
-      {/* Sign out */}
-      {onLogout && (
+              Finix
+            </span>
+          </div>
+        )}
         <button
           type="button"
-          onClick={onLogout}
-          className="fx-tap flex h-[30px] items-center gap-2 rounded-[10px] px-2 text-fx-text3 hover:text-fx-red"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className={cn(
+            "grid h-8 w-8 shrink-0 place-items-center rounded-[8px] transition-colors",
+            collapsed && "mx-auto",
+          )}
+          style={{ color: "var(--fx-sidebar-text2)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--fx-sidebar-bg2)")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "")}
         >
-          <span className="fx-mono text-[13px]">⎋</span>
-          {!collapsed && <span className="text-[13px]">Sign out</span>}
+          {collapsed ? (
+            <PanelLeft className="h-[15px] w-[15px]" />
+          ) : (
+            <PanelLeftClose className="h-[15px] w-[15px]" />
+          )}
         </button>
-      )}
+      </div>
 
-      {/* Collapse row */}
-      <button
-        type="button"
-        onClick={onToggleCollapse}
-        className="flex h-[30px] items-center gap-2 px-2 text-fx-text3 hover:text-fx-text2"
-      >
-        <span className="fx-mono text-[13px]">{collapsed ? "»" : "«"}</span>
-        {!collapsed && <span className="text-[13px]">Collapse</span>}
-      </button>
+      {/* ── Grouped nav ── */}
+      <nav className="flex flex-1 flex-col overflow-y-auto py-3">
+        {groups.map(([groupLabel, items]) => (
+          <div key={groupLabel || "__ungrouped"} className={cn("px-2", groupLabel && "mb-1")}>
+            {/* Group label — shown only when expanded */}
+            {groupLabel && !collapsed && (
+              <div
+                className="mb-1 px-2 py-0.5 text-[10px] font-semibold uppercase"
+                style={{
+                  color: "var(--fx-sidebar-text2)",
+                  letterSpacing: "0.11em",
+                  opacity: 0.7,
+                }}
+              >
+                {groupLabel}
+              </div>
+            )}
+
+            {items.map((item) => {
+              const active =
+                item.href === pathname ||
+                (item.href !== "/" && pathname?.startsWith(item.href));
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  title={collapsed ? item.label : undefined}
+                  className="relative flex h-10 items-center gap-3 rounded-[8px] px-2.5 text-[13px] transition-colors"
+                  style={
+                    active
+                      ? {
+                          background: "rgba(255,255,255,0.10)",
+                          color: "var(--fx-sidebar-text)",
+                          // 3-px teal accent bar on the left edge
+                          boxShadow: "inset 3px 0 0 var(--fx-sidebar-accent)",
+                        }
+                      : { color: "var(--fx-sidebar-text2)" }
+                  }
+                  onMouseEnter={(e) => {
+                    if (!active) {
+                      e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+                      e.currentTarget.style.color = "var(--fx-sidebar-text)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) {
+                      e.currentTarget.style.background = "";
+                      e.currentTarget.style.color = "var(--fx-sidebar-text2)";
+                    }
+                  }}
+                >
+                  {/* Glyph — centred in collapsed mode */}
+                  <span
+                    className={cn(
+                      "grid shrink-0 place-items-center text-[13px]",
+                      collapsed ? "w-full" : "w-4",
+                    )}
+                    aria-hidden
+                  >
+                    {item.glyph}
+                  </span>
+
+                  {!collapsed && (
+                    <>
+                      <span className="truncate">{item.label}</span>
+                      {item.count != null && (
+                        <span
+                          className="ml-auto text-[11px]"
+                          style={{ color: "var(--fx-sidebar-text2)" }}
+                        >
+                          {item.count}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
     </aside>
-  );
-}
-
-function ActionCard({ action }: { action: SidebarAction }) {
-  const red = action.tone === "red";
-  const inner = (
-    <div
-      className="fx-action-card rounded-[14px] p-3"
-      style={
-        red
-          ? { background: "var(--fx-red-tint)", boxShadow: "inset 0 0 0 1px var(--fx-red)" }
-          : { background: "var(--fx-accent-grad)", boxShadow: "var(--fx-accent-glow)" }
-      }
-    >
-      <div className={cn("text-[13px] font-medium", red ? "text-fx-red" : "text-white")}>{action.title}</div>
-      {action.subtitle && (
-        <div className="mt-0.5 text-[11px]" style={{ color: red ? "var(--fx-red)" : "oklch(0.95 0.02 265 / 0.75)" }}>
-          {action.subtitle}
-        </div>
-      )}
-    </div>
-  );
-  if (action.href) return <Link href={action.href}>{inner}</Link>;
-  return (
-    <button type="button" onClick={action.onClick} className="w-full text-left">
-      {inner}
-    </button>
   );
 }

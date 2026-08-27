@@ -9,19 +9,15 @@ import * as React from "react";
 import { BankAdminShell } from "../shell";
 import {
   Toolbar,
-  PeriodChip,
   Breadcrumb,
   PageTitle,
   FilterPills,
-  Card,
-  CardHeader,
   Pill,
   Button,
   Table,
   TwoLine,
   RowMenu,
   PermissionGrid,
-  SplitBar,
   Modal,
   SidePanel,
   OverlayHeader,
@@ -86,11 +82,45 @@ function lastActive(u: BankUser): string {
   return `last active ${formatDate(u.last_login_at)}`;
 }
 
+// ── Seat meter ────────────────────────────────────────────────────────────────
+// Segmented tick strip — one tick per contracted seat, coloured by state.
+// active = teal fill · invited = teal outline · free = faint border
+function SeatMeter({ cap, active, invited }: { cap: number; active: number; invited: number }) {
+  const free = Math.max(0, cap - active - invited);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1">
+        {Array.from({ length: cap }).map((_, i) => {
+          const state =
+            i < active ? "active" : i < active + invited ? "invited" : "free";
+          return (
+            <div
+              key={i}
+              className="h-2 w-2 rounded-full"
+              style={
+                state === "active"
+                  ? { background: "var(--fx-teal)" }
+                  : state === "invited"
+                  ? { border: "1.5px solid var(--fx-teal)", background: "transparent" }
+                  : { background: "var(--fx-border)" }
+              }
+            />
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[11px] text-fx-text3">
+        {active} active · {invited} invited · {free} free
+      </p>
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const [data, setData] = React.useState<UsersResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState<FilterKey>("all");
+  const [search, setSearch] = React.useState("");
 
   const [invite, setInvite] = React.useState(false);
   const [create, setCreate] = React.useState(false);
@@ -120,11 +150,29 @@ export default function UsersPage() {
     if (!data) return [];
     const users: Row[] = data.users.map((u) => ({ kind: "user", u }));
     const invites: Row[] = data.pending_invites.map((i) => ({ kind: "invite", i }));
-    const all = [...users, ...invites];
-    if (filter === "all") return all;
-    if (filter === "invited") return all.filter((r) => (r.kind === "invite") || r.u.status === "invited");
-    return all.filter((r) => r.kind === "user" && r.u.status === filter);
-  }, [data, filter]);
+    let all = [...users, ...invites];
+    if (filter !== "all") {
+      if (filter === "invited") all = all.filter((r) => r.kind === "invite" || r.u?.status === "invited");
+      else all = all.filter((r) => r.kind === "user" && r.u.status === filter);
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      all = all.filter((r) => {
+        if (r.kind === "user") {
+          return (
+            r.u.full_name.toLowerCase().includes(q) ||
+            r.u.username.toLowerCase().includes(q) ||
+            (r.u.email ?? "").toLowerCase().includes(q)
+          );
+        }
+        return (
+          r.i.full_name.toLowerCase().includes(q) ||
+          r.i.email.toLowerCase().includes(q)
+        );
+      });
+    }
+    return all;
+  }, [data, filter, search]);
 
   const seats = data?.seats;
   const counts = data?.counts;
@@ -225,6 +273,9 @@ export default function UsersPage() {
             primary={<Pill tone="accent">Invited</Pill>}
             secondary={`expires ${formatDate(r.i.expires_at)}`}
           />
+        ) : r.u.status === "active" && !r.u.last_login_at ? (
+          // Account exists and holds a seat, but has never been used — amber, not green.
+          <TwoLine primary={<Pill tone="amber">Not signed in</Pill>} secondary="account ready" />
         ) : r.u.status === "active" ? (
           <TwoLine primary={<Pill tone="green">Active</Pill>} secondary={lastActive(r.u)} />
         ) : r.u.status === "invited" ? (
@@ -250,121 +301,108 @@ export default function UsersPage() {
   ];
 
   return (
-    <BankAdminShell
-      action={{
-        // Kept as the sidebar CTA: inviting is the frequent action, and it now
-        // opens Create user already switched to invite mode.
-        title: "Invite user",
-        subtitle: seats ? `${seats.free} free seats` : undefined,
-        onClick: () => setInvite(true),
-      }}
-    >
+    <BankAdminShell>
+      {/* ── Page header ── */}
       <Toolbar
-        left={
-          <>
-            <PeriodChip>01 Aug – 31 Aug 2026</PeriodChip>
-            <Breadcrumb>users</Breadcrumb>
-          </>
-        }
+        left={<Breadcrumb>users</Breadcrumb>}
         right={
           <>
-            {/* Settings replaces the old Invite button. Inviting is not lost —
-                it is a mode inside Create user, so both flows survive and the
-                role-management surface is no longer buried in a form. */}
             <Button variant="quiet" onClick={() => setSettings(true)}>Settings</Button>
-            <Button variant="primary" onClick={() => setCreate(true)}>Create user</Button>
+            {/* Split button: primary Create user, secondary Invite by email */}
+            <div className="flex items-center">
+              <Button
+                variant="primary"
+                onClick={() => setCreate(true)}
+                disabled={seats?.free === 0}
+                className="rounded-r-none"
+                title={seats?.free === 0 ? "No free seats — suspend a user or contact Virtual Galaxy" : undefined}
+              >
+                Create user
+              </Button>
+              <button
+                type="button"
+                onClick={() => setInvite(true)}
+                disabled={seats?.free === 0}
+                className="fx-btn fx-btn-primary flex h-[30px] w-7 shrink-0 items-center justify-center rounded-l-none border-l text-white"
+                style={{ borderColor: "rgba(255,255,255,0.25)" }}
+                aria-label="Invite by email"
+                title="Invite by email"
+              >
+                <span className="text-[10px]">▾</span>
+              </button>
+            </div>
           </>
         }
       />
+
       <PageTitle
         title="Users"
         subtitle="Manage your bank's officers and supervisors. Suspending frees the seat immediately and keeps history; deleting removes access permanently but the audit record survives."
       />
 
-      {/* Metric row — uniform blue glass cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-        {/* Seats */}
-        <div className="rounded-2xl p-4 md:col-span-1" style={{
-          background: "rgba(59,130,246,0.04)",
-          border: "1px solid rgba(59,130,246,0.12)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
-        }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Seats</div>
-          <div className="mt-1.5 flex items-baseline gap-1.5">
-            <span className="text-[26px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
-              {seats ? `${seats.used} of ${seats.cap}` : "—"}
-            </span>
-            {seats && <span className="text-[12px] text-fx-text2">· {seats.free} free</span>}
-          </div>
-          {seats && (
-            <div className="mt-3">
-              <SplitBar filled={seats.cap ? seats.active / seats.cap : 0} outlined={seats.cap ? seats.invited / seats.cap : 0} />
+      {/* ── Seat panel — replaces the four redundant metric cards ── */}
+      {seats && (
+        <div
+          className="rounded-[14px] p-5"
+          style={{ background: "var(--fx-surface2)", border: "1px solid var(--fx-border)" }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2">
+                <span
+                  className="text-[28px] font-semibold leading-none text-fx-text"
+                  style={{ letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}
+                >
+                  {seats.used} of {seats.cap}
+                </span>
+                <span className="text-[13px] text-fx-text2">seats used</span>
+              </div>
+              <div className="mt-3">
+                <SeatMeter cap={seats.cap} active={seats.active} invited={seats.invited} />
+              </div>
             </div>
-          )}
-          <div className="mt-2 text-[11px] text-fx-text3">
-            {seats ? `${seats.active} active · ${seats.invited} invited · suspended users hold no seat` : ""}
+            {counts?.suspended != null && counts.suspended > 0 && (
+              <div className="rounded-[10px] px-3 py-2" style={{ background: "var(--fx-amber-tint)" }}>
+                <span className="text-[13px] font-medium" style={{ color: "var(--fx-amber)" }}>
+                  {counts.suspended} suspended
+                </span>
+              </div>
+            )}
           </div>
-          <div className="mt-1 text-[11px] text-fx-text3">
-            Seat cap is set by Virtual Galaxy under your contract; everything else on this page is yours to change.
+        </div>
+      )}
+
+      {/* ── User table ── */}
+      <div>
+        {/* Filter bar: search + status tabs */}
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <input
+            type="search"
+            placeholder="Search by name, username or email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="fx-input fx-input-ok h-[30px] min-w-[220px] rounded-[10px] px-3 text-[13px]"
+          />
+          <div className="ml-auto flex items-center gap-2">
+            {counts && (
+              <span className="text-[12px] text-fx-text3">
+                {counts.all} total
+              </span>
+            )}
+            <FilterPills options={filterOptions} value={filter} onChange={setFilter} />
           </div>
         </div>
 
-        {/* Active users */}
-        <div className="rounded-2xl p-4" style={{
-          background: "rgba(59,130,246,0.04)",
-          border: "1px solid rgba(59,130,246,0.12)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
-        }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Active users</div>
-          <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
-            {counts?.active ?? "—"}
-          </div>
-          <div className="mt-2 text-[12px] text-fx-text3">signed-in accounts</div>
-        </div>
-
-        {/* Pending invites */}
-        <div className="rounded-2xl p-4" style={{
-          background: "rgba(59,130,246,0.04)",
-          border: "1px solid rgba(59,130,246,0.12)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
-        }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Pending invites</div>
-          <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
-            {counts?.invited ?? "—"}
-          </div>
-          <div className="mt-2 text-[12px] text-fx-text3">awaiting acceptance</div>
-        </div>
-
-        {/* Free seats */}
-        <div className="rounded-2xl p-4" style={{
-          background: "rgba(59,130,246,0.04)",
-          border: "1px solid rgba(59,130,246,0.12)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "0 2px 16px rgba(59,130,246,0.05), inset 0 1px 0 rgba(255,255,255,0.5)",
-        }}>
-          <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "rgba(59,130,246,0.7)" }}>Free seats</div>
-          <div className="mt-1.5 text-[32px] font-semibold leading-none text-fx-text" style={{ letterSpacing: "-0.02em" }}>
-            {seats?.free ?? "—"}
-          </div>
-          <div className="mt-2 text-[12px] text-fx-text3">
-            {seats?.free === 0 ? "at capacity" : "available to assign"}
-          </div>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader
-          title="Users"
-          qualifier={counts ? `${counts.all} total` : undefined}
-          right={<FilterPills options={filterOptions} value={filter} onChange={setFilter} />}
-        />
         {loading ? (
           <LoadingState label="Loading users…" rows={6} />
         ) : error ? (
           <ErrorState title="Could not load users" detail={error} onRetry={load} />
+        ) : rows.length === 0 && search ? (
+          <EmptyState
+            title={`No users match "${search}"`}
+            description=""
+            action={<Button variant="quiet" onClick={() => setSearch("")}>Clear search</Button>}
+          />
         ) : rows.length === 0 ? (
           <EmptyState
             title="No users yet"
@@ -373,9 +411,14 @@ export default function UsersPage() {
             secondary={<Button variant="quiet" onClick={() => setSettings(true)}>Settings</Button>}
           />
         ) : (
-          <Table columns={cols} rows={rows} rowKey={(r) => (r.kind === "user" ? r.u.id : `inv-${r.i.id}`)} />
+          <div
+            className="overflow-hidden rounded-[12px]"
+            style={{ border: "1px solid var(--fx-border)" }}
+          >
+            <Table columns={cols} rows={rows} rowKey={(r) => (r.kind === "user" ? r.u.id : `inv-${r.i.id}`)} />
+          </div>
         )}
-      </Card>
+      </div>
 
       {invite && (
         <InvitePanel

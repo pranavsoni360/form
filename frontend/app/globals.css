@@ -646,6 +646,26 @@ body:has(.finix-root) {
   background: var(--fx-bg);
 }
 
+/* ── Admin sidebar — always dark, regardless of page theme ───────────────────
+   The sidebar has its own fixed-dark palette so it anchors the layout even in
+   light mode. These are not theme-responsive by design. */
+.finix-root {
+  --fx-sidebar-bg:       #0A1B2D;   /* deep navy — sidebar fill */
+  --fx-sidebar-bg2:      #122338;   /* hover / active item fill */
+  --fx-sidebar-text:     #E2EBF4;   /* primary nav label */
+  --fx-sidebar-text2:    #8CA4BC;   /* inactive label, secondary */
+  --fx-sidebar-border:   rgba(255,255,255,0.07);
+  --fx-sidebar-accent:   #0E9A8A;   /* teal — 3-px active left bar */
+  /* Teal — seat meter fills, positive data state. NOT used for buttons. */
+  --fx-teal:             oklch(0.58 0.13 185);
+  --fx-teal-tint:        oklch(0.58 0.13 185 / 0.10);
+}
+[data-theme="dark"] .finix-root {
+  --fx-teal:             oklch(0.67 0.13 185);
+  --fx-teal-tint:        oklch(0.67 0.13 185 / 0.16);
+  /* Sidebar tokens remain unchanged in dark mode — sidebar is always dark. */
+}
+
 /* Popover entrance — small rise + fade + scale, quick and quiet. */
 @keyframes fx-pop-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.98); }

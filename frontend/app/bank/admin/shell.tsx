@@ -87,6 +87,10 @@ export function BankAdminShell({
           }}
         />
       }
+      onLogout={() => {
+        logout("bank");
+        router.replace("/bank/login");
+      }}
       action={action}
       headerRight={<BankNotificationBell auditHref="/bank/admin/audit" />}
     >

@@ -146,7 +146,7 @@ export default function UsagePage() {
         <Card><ErrorState title="Could not load usage" detail={error} onRetry={load} /></Card>
       ) : (
         <>
-          {exceeded && <QuotaExceededBanner quota={quota!} />}
+          {exceeded && <QuotaExceededBanner quota={quota!} onRequestIncrease={() => setQuotaOpen(true)} />}
 
           {/* Quota + credit */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2.4fr_1fr]">
@@ -318,7 +318,7 @@ function CreditCard({ quota }: { quota: QuotaInfo }) {
 }
 
 // ── quota-exceeded banner ────────────────────────────────────────────────────
-function QuotaExceededBanner({ quota }: { quota: QuotaInfo }) {
+function QuotaExceededBanner({ quota, onRequestIncrease }: { quota: QuotaInfo; onRequestIncrease: () => void }) {
   return (
     <div className="rounded-[14px] p-4" style={{ background: "var(--fx-red-tint)", boxShadow: "inset 0 0 0 1px var(--fx-red)" }}>
       <div className="text-[15px] font-medium" style={{ color: "var(--fx-red)" }}>
@@ -329,7 +329,7 @@ function QuotaExceededBanner({ quota }: { quota: QuotaInfo }) {
       </p>
       <div className="mt-3 flex gap-2">
         <Button variant="quiet">View paused campaigns</Button>
-        <Button variant="danger">Request quota increase</Button>
+        <Button variant="danger" onClick={onRequestIncrease}>Request quota increase</Button>
       </div>
     </div>
   );

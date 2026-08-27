@@ -83,7 +83,10 @@ export function Sidebar({
       >
         {!collapsed && (
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
-            <FinixLogo height={26} className="shrink-0" />
+            {/* finix-sidebar-logo forces the white-ink logo variant — sidebar is always dark */}
+            <span className="finix-sidebar-logo shrink-0 inline-flex">
+              <FinixLogo height={26} />
+            </span>
             <span
               className="truncate text-[14px] font-medium"
               style={{ color: "var(--fx-sidebar-text)" }}

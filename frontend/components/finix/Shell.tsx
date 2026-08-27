@@ -16,6 +16,7 @@ export function FinixShell({
   identityFooter,
   action,
   headerRight,
+  onLogout,
   children,
 }: {
   nav: FinixNavItem[];
@@ -25,6 +26,7 @@ export function FinixShell({
   action?: SidebarAction;
   /** Rendered top-right of the content panel (e.g. the notification bell). */
   headerRight?: React.ReactNode;
+  onLogout?: () => void;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
@@ -39,6 +41,7 @@ export function FinixShell({
             action={action}
             collapsed={collapsed}
             onToggleCollapse={() => setCollapsed((v) => !v)}
+            onLogout={onLogout}
           />
           {/* Content column: one 18px panel, right/top/bottom gutter of 12px. */}
           <main className="min-w-0 flex-1 py-3 pr-3">

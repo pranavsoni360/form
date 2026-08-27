@@ -83,6 +83,7 @@ export function Sidebar({
   action,
   collapsed,
   onToggleCollapse,
+  onLogout,
 }: {
   nav: FinixNavItem[];
   identity: SidebarIdentity;
@@ -91,6 +92,7 @@ export function Sidebar({
   action?: SidebarAction;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  onLogout?: () => void;
 }) {
   const pathname = usePathname();
   const date = identity.date ?? new Date();
@@ -110,10 +112,9 @@ export function Sidebar({
       {/* Identity block */}
       {!collapsed && (
         <div className="rounded-[14px] p-3" style={{
-          background: "rgba(59,130,246,0.04)",
-          border: "1px solid rgba(59,130,246,0.10)",
-          backdropFilter: "blur(16px)",
-          boxShadow: "0 2px 12px rgba(59,130,246,0.04), inset 0 1px 0 rgba(255,255,255,0.5)",
+          background: "var(--fx-accent-tint)",
+          border: "1px solid var(--fx-border)",
+          backdropFilter: "blur(8px)",
         }}>
           <div className="flex items-center gap-2">
             <span className="grid h-[34px] w-[34px] place-items-center rounded-[10px] bg-fx-surface2 text-[13px] font-medium text-fx-text">
@@ -134,10 +135,9 @@ export function Sidebar({
 
       {/* Nav panel */}
       <nav className="rounded-[14px] p-2" style={{
-        background: "rgba(59,130,246,0.04)",
-        border: "1px solid rgba(59,130,246,0.10)",
-        backdropFilter: "blur(16px)",
-        boxShadow: "0 2px 12px rgba(59,130,246,0.04), inset 0 1px 0 rgba(255,255,255,0.5)",
+        background: "var(--fx-accent-tint)",
+        border: "1px solid var(--fx-border)",
+        backdropFilter: "blur(8px)",
       }}>
         {nav.map((item) => {
           const active = item.href === pathname || (item.href !== "/" && pathname?.startsWith(item.href));
@@ -171,6 +171,18 @@ export function Sidebar({
       {/* One primary action card */}
       {action && !collapsed && (
         <ActionCard action={action} />
+      )}
+
+      {/* Sign out */}
+      {onLogout && (
+        <button
+          type="button"
+          onClick={onLogout}
+          className="fx-tap flex h-[30px] items-center gap-2 rounded-[10px] px-2 text-fx-text3 hover:text-fx-red"
+        >
+          <span className="fx-mono text-[13px]">⎋</span>
+          {!collapsed && <span className="text-[13px]">Sign out</span>}
+        </button>
       )}
 
       {/* Collapse row */}

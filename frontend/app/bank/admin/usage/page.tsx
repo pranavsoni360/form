@@ -327,8 +327,12 @@ function QuotaExceededBanner({ quota, onRequestIncrease }: { quota: QuotaInfo; o
       <p className="mt-1 max-w-3xl text-[12px] text-fx-text2">
         {quota.quota.toLocaleString("en-IN")} of {quota.quota.toLocaleString("en-IN")} minutes used. Campaigns are paused and scheduled calls are waiting; inbound is unaffected. Overage billing is off, so calling resumes only on a quota raise or the next period rollover.
       </p>
+      {/* No "View paused campaigns" button: there is no such view a bank ADMIN
+          can reach. Batches live at /bank/batch, and BankUserShell bounces a
+          bank_admin off that route back to /bank/admin/users, so the button
+          could only ever bounce or 404. The paragraph above already states
+          that campaigns are paused. */}
       <div className="mt-3 flex gap-2">
-        <Button variant="quiet">View paused campaigns</Button>
         <Button variant="danger" onClick={onRequestIncrease}>Request quota increase</Button>
       </div>
     </div>

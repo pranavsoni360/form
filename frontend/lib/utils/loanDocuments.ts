@@ -66,6 +66,16 @@ export interface LoanDocSpec {
    * automatic option the customer cannot actually use. Set to the reason.
    */
   automationPending?: string;
+  /**
+   * This document can ALSO be fetched from source, in addition to being
+   * uploaded. Distinct from `journey: "fetch"`, where fetching is the expected
+   * path — here upload stays a first-class equal, because the fetch costs the
+   * customer something (ITR needs their income-tax portal password) and must
+   * never be the only way through.
+   */
+  canGenerate?: boolean;
+  /** Shown on the credential form, explaining what will and will not be kept. */
+  generateNote?: string;
   /** Only shown for consumer-durable applications. */
   consumerDurableOnly?: boolean;
 }
@@ -140,9 +150,14 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     // proportion to an optional document. Form 26AS (no password) is the route
     // to revisit; until then this is an upload we parse, not a login we ask for.
     journey: "upload",
+    // Fetching is OFFERED but never required: ITR_Advance authenticates with the
+    // applicant's income-tax portal password, so upload must remain an equal
+    // path for anyone unwilling to type it — which is a reasonable choice.
+    canGenerate: true,
+    generateNote: "We use your income-tax portal login once to fetch your return, then discard it. It is never saved.",
     accept: ".pdf",
     extensions: PDF,
-    hint: "Optional. The PDF from the income-tax portal or your employer.",
+    hint: "Optional. Upload the PDF, or generate it from the income-tax portal.",
   },
   {
     key: "proof_of_identification_url",

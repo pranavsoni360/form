@@ -251,6 +251,13 @@ app.include_router(lrs_router, prefix="/api/lrs", tags=["lrs"])
 from lrs.aa_routes import router as aa_router  # noqa: E402
 app.include_router(aa_router, prefix="/api/aa", tags=["aa"])
 
+# Customer-facing ITR fetch ("Generate" beside the ITR upload button). Kept in
+# its own module because it is the ONLY endpoint that handles an applicant's
+# income-tax portal password, and that handling has rules the rest of the app
+# does not need — see the module docstring.
+from lrs.itr_routes import router as itr_router  # noqa: E402
+app.include_router(itr_router, prefix="/api/itr", tags=["itr"])
+
 # Bank admin portal — self-serve, bank-scoped (design_handoff_finix Job 1).
 # Schema in migration_v26_bank_admin.sql; JWTs are the standard bank_user token
 # and the local get_bank_admin dependency requires role='bank_admin'.

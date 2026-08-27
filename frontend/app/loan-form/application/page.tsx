@@ -126,6 +126,63 @@ export default function LoanApplication() {
   // Per-document upload in flight — without this the customer can tap Upload
   // repeatedly on a slow connection and race several writes to the same column.
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
+
+  // ── ITR "Generate" ───────────────────────────────────────────────────────
+  // Fetches the applicant's return from the income-tax portal via VG. The
+  // password is held in component state ONLY while the modal is open and is
+  // cleared the moment the call finishes, succeeds or fails. It is never put in
+  // formData — formData is autosaved to the server every few seconds.
+  const [itrModal, setItrModal] = useState(false);
+  const [itrUser, setItrUser] = useState('');
+  const [itrPass, setItrPass] = useState('');
+  const [itrShowPass, setItrShowPass] = useState(false);
+  const [itrBusy, setItrBusy] = useState(false);
+  const [itrError, setItrError] = useState('');
+  const [itrResult, setItrResult] = useState<{annual_income: number; net_monthly_income: number; financial_year?: string} | null>(null);
+
+  const closeItrModal = () => {
+    setItrModal(false);
+    setItrUser(''); setItrPass('');      // drop the credential on close
+    setItrShowPass(false); setItrError('');
+  };
+
+  const handleItrGenerate = async () => {
+    if (!itrUser.trim()) { setItrError('Enter your income-tax portal user ID (usually your PAN).'); return; }
+    if (!itrPass) { setItrError('Enter your income-tax portal password.'); return; }
+    setItrBusy(true); setItrError('');
+    try {
+      const res = await fetch(`${API_URL}/api/itr/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_token: getSession() || '',
+          username: itrUser.trim(),
+          password: itrPass,
+          number_of_years: '3',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setItrError(data.detail || 'Could not fetch your return. Please try again or upload the PDF.');
+        return;
+      }
+      setItrResult({
+        annual_income: data.annual_income,
+        net_monthly_income: data.net_monthly_income,
+        financial_year: data.financial_year,
+      });
+      // Record that ITR income is on file, so the row reads as satisfied.
+      onChange('itr_income_annual', data.annual_income);
+      onChange('itr_financial_year', data.financial_year || '');
+      setItrModal(false);
+      setItrUser(''); setItrPass(''); setItrShowPass(false);
+    } catch {
+      setItrError('Could not reach the server. Check your connection, or upload the PDF instead.');
+    } finally {
+      setItrBusy(false);
+      setItrPass('');                    // never linger, even on success
+    }
+  };
   // The REAL inactivity window, learned from the server on load.
   // SESSION_TIMEOUT_MS is only a first-paint default: the backend reads
   // LOAN_SESSION_INACTIVITY_SECONDS from the environment, so if that is ever
@@ -1265,6 +1322,92 @@ export default function LoanApplication() {
         </div>
       )}
 
+      {/* ── ITR credential modal ──────────────────────────────────────────
+          The ONLY place this application asks for a third-party password. The
+          copy states plainly what happens to it, because a customer typing
+          their tax-portal password deserves to know before they type, not in a
+          privacy policy. `autoComplete="off"` keeps it out of the browser's
+          password manager, which would otherwise offer to save it. */}
+      {itrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.55)' }}
+          onClick={(e) => { if (e.target === e.currentTarget && !itrBusy) closeItrModal(); }}>
+          <div className="rounded-2xl w-full max-w-md p-6"
+            style={{ background: 'var(--fx-surface)', border: '1px solid var(--fx-border)', boxShadow: 'var(--fx-elevation)' }}>
+            <div className="flex items-start justify-between gap-3 mb-1">
+              <h3 className="text-lg font-bold" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-heading)' }}>
+                Generate ITR
+              </h3>
+              <button type="button" onClick={closeItrModal} disabled={itrBusy}
+                className="p-1 disabled:opacity-40" style={{ color: 'var(--fx-text3)' }} aria-label="Close">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm mb-4" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+              We&apos;ll sign in to the income-tax portal once to fetch your return.
+            </p>
+
+            <div className="rounded-xl p-3 mb-4 flex items-start gap-2.5"
+              style={{ background: 'var(--fx-amber-tint)', border: '1px solid color-mix(in oklch, var(--fx-amber) 35%, var(--fx-border))' }}>
+              <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--fx-amber)' }} />
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+                Your password is used for this one request and then discarded. It is
+                <strong> never saved, never logged, and never shown to bank staff.</strong>
+                {' '}Prefer not to share it? Close this and upload the PDF instead — it works just as well.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium block mb-1" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-body)' }}>
+                  Income-tax portal user ID
+                </label>
+                <input type="text" value={itrUser} autoComplete="off"
+                  onChange={(e) => setItrUser(e.target.value.toUpperCase())}
+                  className={inp('')} placeholder="Usually your PAN" disabled={itrBusy} />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1" style={{ color: 'var(--fx-text)', fontFamily: 'var(--font-body)' }}>
+                  Password
+                </label>
+                <div className="relative">
+                  <input type={itrShowPass ? 'text' : 'password'} value={itrPass}
+                    autoComplete="off" autoCorrect="off" spellCheck={false}
+                    onChange={(e) => setItrPass(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !itrBusy) handleItrGenerate(); }}
+                    className={inp('')} placeholder="Income-tax portal password" disabled={itrBusy} />
+                  <button type="button" onClick={() => setItrShowPass(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--fx-text3)' }}
+                    aria-label={itrShowPass ? 'Hide password' : 'Show password'}>
+                    {itrShowPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {itrError && (
+              <p className="text-xs mt-3 flex items-start gap-1.5" style={{ color: 'var(--fx-red)', fontFamily: 'var(--font-body)' }}>
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />{itrError}
+              </p>
+            )}
+
+            <div className="flex gap-3 mt-5">
+              <button type="button" onClick={closeItrModal} disabled={itrBusy}
+                className="flex-1 rounded-xl font-semibold text-sm h-11 disabled:opacity-40"
+                style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', border: '1.5px solid var(--fx-border)', fontFamily: 'var(--font-heading)' }}>
+                Cancel
+              </button>
+              <button type="button" onClick={handleItrGenerate} disabled={itrBusy}
+                className="flex-1 rounded-xl font-semibold text-white text-sm h-11 inline-flex items-center justify-center gap-2 disabled:opacity-60"
+                style={{ background: 'var(--fx-accent)', fontFamily: 'var(--font-heading)' }}>
+                {itrBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+                {itrBusy ? 'Fetching…' : 'Generate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Inactivity warning — countdown + Continue / Logout */}
       {inactivityWarning && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" style={{ background: 'rgba(15,23,42,0.45)' }}>
@@ -2104,6 +2247,14 @@ export default function LoanApplication() {
                       {state !== 'done' && doc.journey === 'parse' && doc.journeyNote && (
                         <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>{doc.journeyNote}</p>
                       )}
+                      {/* Generated (not uploaded): show what was fetched, since
+                          there is no file to preview. */}
+                      {doc.canGenerate && !formData[doc.key] && formData.itr_income_annual > 0 && (
+                        <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-green)' }}>
+                          <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                          Fetched from income-tax portal — ₹{Number(formData.itr_income_annual).toLocaleString('en-IN')} for {formData.itr_financial_year || 'the latest year'}
+                        </p>
+                      )}
                       {doc.journey === 'vendor' && aaUploadState === 'initiating' && (
                         <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>Generating secure upload link…</p>
                       )}
@@ -2148,6 +2299,18 @@ export default function LoanApplication() {
                         </button>
                       )
                     ) : (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* A document that can also be fetched shows Generate
+                          ALONGSIDE Upload, never instead of it: the fetch costs
+                          the customer their tax-portal password, so declining it
+                          must leave a normal way through. */}
+                      {doc.canGenerate && !formData[doc.key] && !(formData.itr_income_annual > 0) && (
+                        <button type="button" onClick={() => { setItrError(''); setItrModal(true); }}
+                          className="px-4 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap"
+                          style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)', border: '1px solid var(--fx-accent)' }}>
+                          Generate
+                        </button>
+                      )}
                       <label className="cursor-pointer">
                         {/* accept comes from the document's own spec: a passport
                             photo is images-only, a bank statement is PDF-only.
@@ -2206,6 +2369,7 @@ export default function LoanApplication() {
                                 : 'Upload'}
                         </span>
                       </label>
+                      </div>
                     )}
                   </div>
                   {errors[doc.key] && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{errors[doc.key]}</p>}

@@ -39,7 +39,6 @@ import {
   formatPct,
   type Column,
   type Segment,
-  type SidebarAction,
 } from "@/components/finix";
 import {
   getQuota,
@@ -118,11 +117,6 @@ export default function UsagePage() {
     }
   }
 
-  // Sidebar action flips to a red "Request quota increase" when exceeded.
-  const action: SidebarAction = exceeded
-    ? { title: "Request quota increase", subtitle: "Calling is halted", tone: "red", onClick: () => setQuotaOpen(true) }
-    : { title: "Export CSV", subtitle: "This period's calls", onClick: doExport };
-
   const outcomeSegments: Segment[] = (summary?.outcomes || []).map((o) => {
     const tone = OUTCOME_TONE[o.status];
     return { label: callStatusMeta(o.status).label, value: o.count, ...(tone === "neutral" || !tone ? { neutral: true } : { tone }) };
@@ -139,7 +133,7 @@ export default function UsagePage() {
   ];
 
   return (
-    <BankAdminShell action={action}>
+    <BankAdminShell>
       <Toolbar
         left={<><PeriodChip>{quota ? `${quota.period.from} – ${quota.period.to}` : "This month"}</PeriodChip><Breadcrumb>usage & call statistics</Breadcrumb></>}
         right={<Button variant="primary" onClick={doExport}>Export CSV</Button>}

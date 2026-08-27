@@ -3939,7 +3939,7 @@ async def aa_statement_initiate(request: Request):
         raise HTTPException(status_code=502, detail=f"Could not reach statement service: {e}")
 
     if result.get("status") != "success":
-        raise HTTPException(status_code=502, detail="Statement service error")
+        raise HTTPException(status_code=502, detail=f"Statement service error: {result}")
 
     request_id = str(result["request_id"])
     await db_pool.execute(

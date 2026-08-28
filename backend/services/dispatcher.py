@@ -277,6 +277,10 @@ class Dispatcher:
         concurrency: int = DEFAULT_CONCURRENCY,
         preferred_phone_id: Optional[str] = None,
         bank_id: Optional[str] = None,
+        # Raw is_emergency_stop_active(bank_id) — used for the PER-CALL tenant
+        # gate when this batch has no single bank (the shared manual-callbacks
+        # batch that mixes every tenant's due callbacks). See _call_bank_stopped.
+        bank_emergency_stop_fn=None,
     ) -> None:
         self.batch_id_uuid = batch_id_uuid
         self.call_batch_id = call_batch_id
@@ -299,6 +303,7 @@ class Dispatcher:
         # Which tenant this batch belongs to. Lets an emergency stop raised by
         # one bank signal only that bank's dispatchers instead of every one.
         self.bank_id = str(bank_id) if bank_id else None
+        self._bank_stop_fn = bank_emergency_stop_fn
 
         self.semaphore = asyncio.Semaphore(concurrency)
         self._stopped = False
@@ -308,6 +313,32 @@ class Dispatcher:
     def stop(self) -> None:
         """Signal: stop picking up new work. In-flight tasks finish naturally."""
         self._stopped = True
+
+    async def _call_bank_stopped(self, call: dict) -> bool:
+        """Per-call tenant emergency-stop gate.
+
+        `self.is_emergency_stop_active` is bound to THIS batch's bank (or, when
+        the batch has no bank, only the platform flag). That is correct for a
+        normal single-bank batch, but the shared manual-callbacks batch mixes
+        every tenant's due callbacks under bank_id=NULL — so the batch gate alone
+        would keep dialling one bank's callbacks through that bank's own
+        Emergency stop. Here we consult each call's OWN bank.
+
+        Only runs for the bank-less mixed batch (self.bank_id is None); a normal
+        batch's calls all share its bank, which the batch gate already covers, so
+        we skip the extra per-call read there.
+        """
+        if self._bank_stop_fn is None or self.bank_id is not None:
+            return False
+        cbid = call.get("bank_id")
+        if not cbid:
+            return False
+        try:
+            return await self._bank_stop_fn(str(cbid))
+        except Exception:
+            # Fail-open only for this ancillary check; the batch-level and
+            # platform gates still apply.
+            return False
 
     async def _bump(self, key: str) -> None:
         async with self._counts_lock:
@@ -504,6 +535,12 @@ class Dispatcher:
             if await self.is_emergency_stop_active():
                 logger.warning("Skipping %s: emergency stop", call.get("id"))
                 return
+            if await self._call_bank_stopped(call):
+                logger.warning(
+                    "Skipping %s: bank %s emergency stop (shared callback batch)",
+                    call.get("id"), call.get("bank_id"),
+                )
+                return
 
             call_uuid = uuid.UUID(call["id"])
             name = call.get("customer_name") or "Customer"
@@ -606,7 +643,9 @@ class Dispatcher:
             # gates before dialing so a parked call never dials past the calling
             # window or after an emergency stop. Release the trunk and leave the
             # call Pending so it dials in the next window.
-            if self._stopped or not self.is_within_calling_hours() or await self.is_emergency_stop_active():
+            if (self._stopped or not self.is_within_calling_hours()
+                    or await self.is_emergency_stop_active()
+                    or await self._call_bank_stopped(call)):
                 logger.info(
                     "Aborting call %s after trunk wait: window closed / stopped / emergency-stop",
                     call_uuid,

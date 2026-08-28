@@ -3158,8 +3158,16 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, request
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found or not in your bank")
     current_status = app_row["status"]
-    if current_status not in ("officer_approved", "approved", "documents_submitted"):
-        raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'officer_approved', 'approved' or 'documents_submitted'.")
+    # Idempotency guard (BNK-11): once a file is approved for disbursement — or
+    # funds are already out, tracked by disbursed_at — a second press must be
+    # REFUSED, not silently re-run. Previously 'approved' was an accepted input
+    # status, so pressing Disburse again re-stamped the row AND re-sent the
+    # borrower a duplicate "loan disbursed" WhatsApp, while returning the same
+    # "Disbursement initiated" success.
+    if current_status == "approved" or app_row.get("disbursed_at") is not None:
+        raise HTTPException(status_code=409, detail="This application has already been disbursed. A second disbursement is not allowed.")
+    if current_status not in ("officer_approved", "documents_submitted"):
+        raise HTTPException(status_code=400, detail=f"Cannot initiate disbursement for application with status '{current_status}'. Must be 'officer_approved' or 'documents_submitted'.")
     # Maker-checker. get_bank_officer admits bank_supervisor, so one supervisor
     # could officer-approve and then land here on the same file. The v38 CHECK
     # (officer_id <> supervisor_id) does stop the write, but as an unhandled
@@ -3172,9 +3180,11 @@ async def initiate_disbursement(app_id: str, body: OfficerReviewRequest, request
            SET status = 'approved', approved_at = $1, supervisor_id = $2, supervisor_notes = $3
            WHERE id = $4 AND bank_id = $5 AND status = ANY($6::text[])""",
         now_utc(), supervisor_id, body.notes, uuid.UUID(app_id), bank_id,
-        ["officer_approved", "approved", "documents_submitted"]
+        ["officer_approved", "documents_submitted"]
     )
     if _rows_affected(_u) == 0:
+        # Lost the race — another request already moved it out of a disbursable
+        # state (defense in depth alongside the explicit guard above).
         raise HTTPException(status_code=409, detail="Application status changed — please refresh and retry.")
     await record_transition(uuid.UUID(app_id), current_status, "approved", "bank_supervisor", supervisor_id, body.notes)
     if app_row["phone"] and AISENSY_API_KEY:

@@ -31,6 +31,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from services import acaggregator as ac
+# Auth + tenant scoping. Every officer-facing BSA route below is gated by
+# get_current_bank_user (bank officer/supervisor/admin, or a platform operator)
+# and scoped to the caller's bank_id via _bank_uuid — WITHOUT these the router
+# was fully open: an anonymous caller could trigger billable vendor fetches and
+# read another bank's journey metadata. The /callback route stays unauthenticated
+# by necessity (see its docstring) — the vendor calls it and its contract is
+# unconfirmed, so it reveals nothing and always returns 200.
+from agent.state import get_current_bank_user, _bank_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +105,10 @@ class StartFetch(BaseModel):
 # ── institutions ─────────────────────────────────────────────────────────────
 
 @router.get("/institutions")
-async def list_institutions(refresh: bool = False):
+async def list_institutions(
+    refresh: bool = False,
+    user: dict = Depends(get_current_bank_user),
+):
     """
     Banks a borrower can pick, newest cache first.
 
@@ -163,13 +174,23 @@ async def list_institutions(refresh: bool = False):
 # ── start a journey (vendor call 1 of 3) ─────────────────────────────────────
 
 @router.post("/fetches")
-async def start_fetch(body: StartFetch, request: Request):
+async def start_fetch(
+    body: StartFetch,
+    request: Request,
+    user: dict = Depends(get_current_bank_user),
+):
     """Issue a borrower upload link and record the journey."""
     app_row = await _db().fetchrow(
         "SELECT id, bank_id, loan_id FROM loan_applications WHERE id = $1",
         uuid.UUID(body.application_id),
     )
     if not app_row:
+        raise HTTPException(404, "Application not found.")
+    # Tenant scope: a bank user may only start a (billable) fetch against their
+    # own bank's application. Operators (bank_id None) act cross-bank. 404 rather
+    # than 403 so a foreign id cannot be used to probe which applications exist.
+    caller_bank = _bank_uuid(user)
+    if caller_bank is not None and app_row["bank_id"] != caller_bank:
         raise HTTPException(404, "Application not found.")
     bank_id = str(app_row["bank_id"]) if app_row["bank_id"] else None
     cfg = await _config_for(bank_id)
@@ -260,15 +281,20 @@ async def bsa_callback(request: Request):
 # ── advance a journey (vendor calls 2 and 3) ─────────────────────────────────
 
 @router.post("/fetches/{fetch_id}/advance")
-async def advance(fetch_id: str):
+async def advance(fetch_id: str, user: dict = Depends(get_current_bank_user)):
     """
     Move one journey forward: statuscheck, then retrievereport if ready.
 
-    Called by the callback path and by the stale sweep. Safe to call repeatedly —
-    a completed row short-circuits.
+    Triggered by the officer's Refresh; the stale sweep calls `_advance_row`
+    directly (not this route). Safe to call repeatedly — a completed row
+    short-circuits.
     """
     row = await _db().fetchrow("SELECT * FROM bsa_fetches WHERE id = $1", uuid.UUID(fetch_id))
     if not row:
+        raise HTTPException(404, "Fetch not found.")
+    # Same tenant scope as start_fetch — 404 (not 403) on a foreign fetch id.
+    caller_bank = _bank_uuid(user)
+    if caller_bank is not None and row["bank_id"] != caller_bank:
         raise HTTPException(404, "Fetch not found.")
     return {"fetch": _public(await _advance_row(dict(row)))}
 
@@ -364,10 +390,18 @@ async def _store_report(f, txn_id, report, txn_raw):
 # ── read ─────────────────────────────────────────────────────────────────────
 
 @router.get("/applications/{application_id}/fetches")
-async def list_for_application(application_id: str):
+async def list_for_application(
+    application_id: str,
+    user: dict = Depends(get_current_bank_user),
+):
+    # Tenant scope: a bank user only ever sees their own bank's journeys.
+    # Operators (caller_bank None) see all. A foreign application_id simply
+    # returns an empty list — no row leaks and no existence oracle.
+    caller_bank = _bank_uuid(user)
     rows = await _db().fetch(
-        "SELECT * FROM bsa_fetches WHERE application_id = $1 ORDER BY created_at DESC",
-        uuid.UUID(application_id),
+        "SELECT * FROM bsa_fetches WHERE application_id = $1 "
+        "AND ($2::uuid IS NULL OR bank_id = $2) ORDER BY created_at DESC",
+        uuid.UUID(application_id), caller_bank,
     )
     return {"fetches": [_public(dict(r)) for r in rows]}
 

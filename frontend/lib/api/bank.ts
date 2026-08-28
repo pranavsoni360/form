@@ -192,12 +192,21 @@ export interface BsaFetch {
   completed_at?: string | null;
 }
 
+// The /api/bsa/* routes are bank-scoped and now require the bank bearer token
+// (they were previously unauthenticated). Attach it the same way the bank-admin
+// client does, so the officer's session credential reaches the server.
+async function bsaHeaders(): Promise<HeadersInit> {
+  const { getAccessToken } = await import("@/lib/auth");
+  const token = getAccessToken("bank");
+  return token ? authHeaders(token) : { "Content-Type": "application/json" };
+}
+
 export async function bsaInstitutions(refresh = false): Promise<{ institutions: BsaInstitution[]; cached: boolean; stale?: boolean }> {
-  return apiFetch(`/api/bsa/institutions${refresh ? "?refresh=true" : ""}`);
+  return apiFetch(`/api/bsa/institutions${refresh ? "?refresh=true" : ""}`, { headers: await bsaHeaders() });
 }
 
 export async function bsaListFetches(applicationId: string): Promise<{ fetches: BsaFetch[] }> {
-  return apiFetch(`/api/bsa/applications/${applicationId}/fetches`);
+  return apiFetch(`/api/bsa/applications/${applicationId}/fetches`, { headers: await bsaHeaders() });
 }
 
 export async function bsaStartFetch(body: {
@@ -206,10 +215,10 @@ export async function bsaStartFetch(body: {
   institution_name?: string;
   months?: number;
 }): Promise<{ fetch: BsaFetch }> {
-  return apiFetch(`/api/bsa/fetches`, { method: "POST", body: JSON.stringify(body) });
+  return apiFetch(`/api/bsa/fetches`, { method: "POST", headers: await bsaHeaders(), body: JSON.stringify(body) });
 }
 
 /** Force a statuscheck now. Used by the officer's Refresh, not on a timer. */
 export async function bsaAdvance(fetchId: string): Promise<{ fetch: BsaFetch }> {
-  return apiFetch(`/api/bsa/fetches/${fetchId}/advance`, { method: "POST" });
+  return apiFetch(`/api/bsa/fetches/${fetchId}/advance`, { method: "POST", headers: await bsaHeaders() });
 }

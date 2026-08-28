@@ -460,3 +460,52 @@ def test_the_resume_endpoint_reports_503_when_it_could_not_clear(monkeypatch):
     with pytest.raises(HTTPException) as e:
         asyncio.run(batch_mod.resume_calling(bank_id=None, user=_officer(BANK_A)))
     assert e.value.status_code == 503
+
+
+# ── ISO-04: per-call tenant stop for the shared, bank-less callback batch ──────
+# The manual-callbacks batch runs with bank_id=NULL but aggregates every
+# tenant's due callbacks, so a single batch-level stop gate cannot hold one
+# bank's calls. Dispatcher._call_bank_stopped consults each call's OWN bank —
+# but only for the bank-less mixed batch, so normal single-bank batches pay no
+# extra per-call read.
+
+def _disp_for_gate(batch_bank, stopped_banks):
+    """A Dispatcher with only the attributes _call_bank_stopped touches."""
+    d = disp_mod.Dispatcher.__new__(disp_mod.Dispatcher)
+    d.bank_id = batch_bank
+
+    async def _stop(bid):
+        return str(bid) in stopped_banks
+
+    d._bank_stop_fn = _stop
+    return d
+
+
+def test_bankless_batch_holds_a_stopped_banks_callback():
+    d = _disp_for_gate(None, {str(BANK_A)})
+    assert asyncio.run(d._call_bank_stopped({"bank_id": str(BANK_A)})) is True
+
+
+def test_bankless_batch_dials_an_unstopped_banks_callback():
+    d = _disp_for_gate(None, {str(BANK_A)})
+    assert asyncio.run(d._call_bank_stopped({"bank_id": str(BANK_B)})) is False
+
+
+def test_bankless_batch_call_without_a_bank_is_not_held():
+    d = _disp_for_gate(None, {str(BANK_A)})
+    assert asyncio.run(d._call_bank_stopped({"bank_id": None})) is False
+
+
+def test_single_bank_batch_skips_the_per_call_read():
+    # A normal batch's calls all share its bank, which the batch-level gate
+    # already covers, so the per-call gate is a deliberate no-op even when that
+    # bank is stopped.
+    d = _disp_for_gate(str(BANK_A), {str(BANK_A)})
+    assert asyncio.run(d._call_bank_stopped({"bank_id": str(BANK_A)})) is False
+
+
+def test_missing_stop_fn_is_not_held():
+    d = disp_mod.Dispatcher.__new__(disp_mod.Dispatcher)
+    d.bank_id = None
+    d._bank_stop_fn = None
+    assert asyncio.run(d._call_bank_stopped({"bank_id": str(BANK_A)})) is False

@@ -552,6 +552,12 @@ async def process_batch_run(batch_uuid_str: str = None):
             max_retries=MAX_RETRIES,
             preferred_phone_id=preferred_phone_id,
             bank_id=str(_batch_bank_id) if _batch_bank_id else None,
+            # Per-call tenant stop gate: for the shared, bank-less manual-callbacks
+            # batch (which mixes every tenant's due callbacks) the dispatcher
+            # consults each call's OWN bank so one bank's Emergency stop holds its
+            # callbacks without touching another bank's. No-op for single-bank
+            # batches (the batch gate above already covers them).
+            bank_emergency_stop_fn=is_emergency_stop_active,
         )
         dispatcher_mgr.register(batch_id, dispatcher)
         try:

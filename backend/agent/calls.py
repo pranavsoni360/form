@@ -680,6 +680,10 @@ async def get_analytics(user: dict = Depends(get_current_bank_user)):
 # EXPORT ENDPOINTS
 # ============================================================================
 
+# Spreadsheet formula-injection guard (SEC-08) — shared helper in lib/exportsafe.
+from lib.exportsafe import harden_df as _harden_df  # noqa: E402
+
+
 @router.get("/export/daily-report")
 async def export_daily_report(
     request: Request,
@@ -732,7 +736,7 @@ async def export_daily_report(
             "Call Time": str(c.get("started_at", ""))[:19] if c.get("started_at") else "",
         })
 
-    df = pd.DataFrame(report_rows)
+    df = _harden_df(pd.DataFrame(report_rows))
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Daily Report")
@@ -752,9 +756,18 @@ async def export_all_calls(
     category: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    lead_quality: Optional[str] = None,
+    form_sent: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
-    """Comprehensive Excel export with all call data (bank-scoped for bank users)."""
+    """Comprehensive Excel export with all call data (bank-scoped for bank users).
+
+    Accepts the SAME filters as GET /calls (status, category, date range,
+    lead_quality, form_sent) so an export always matches the on-screen list
+    (OPS-08). Previously lead_quality and form_sent were silently ignored, so an
+    export taken under a Hot/Warm/Cold or Form-sent filter returned more rows
+    than the screen showed.
+    """
     # A full export of the bank's call records in one request - throttle
     # repeated pulls per user.
     _ratelimit.check("export", str(user.get("user_id") or "unknown"))
@@ -766,7 +779,8 @@ async def export_all_calls(
         _state.db_pool, request, actor=_audit.decode_actor(request), action="export_all_calls",
         entity_type="agent_calls",
         details={"bank_id": (str(bank_uuid) if bank_uuid else None), "status": status,
-                 "category": category, "date_from": date_from, "date_to": date_to})
+                 "category": category, "date_from": date_from, "date_to": date_to,
+                 "lead_quality": lead_quality, "form_sent": form_sent})
     if bank_uuid:
         conditions.append(f"bank_id = ${idx}")
         params.append(bank_uuid)
@@ -788,6 +802,15 @@ async def export_all_calls(
         conditions.append(f"category = ${idx}")
         params.append(category)
         idx += 1
+    # Mirror GET /calls exactly (OPS-08).
+    if lead_quality:
+        conditions.append(f"call_analysis->>'lead_quality' = ${idx}")
+        params.append(lead_quality)
+        idx += 1
+    if form_sent in ("yes", "true"):
+        conditions.append("form_sent = true")
+    elif form_sent in ("no", "false"):
+        conditions.append("form_sent = false")
     if date_from:
         try:
             conditions.append(f"created_at >= ${idx}")
@@ -854,7 +877,7 @@ async def export_all_calls(
             "Created At": str(c.get("created_at", ""))[:19] if c.get("created_at") else "",
         })
 
-    df = pd.DataFrame(export_rows)
+    df = _harden_df(pd.DataFrame(export_rows))
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="All Calls")

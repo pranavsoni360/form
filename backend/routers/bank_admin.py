@@ -29,6 +29,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from services import permissions as perms
+from lib.exportsafe import formula_guard as _fg  # SEC-08 spreadsheet guard
 
 logger = logging.getLogger("bank-admin")
 security = HTTPBearer()
@@ -1171,14 +1172,15 @@ async def usage_export(
     w = csv.writer(buf)
     w.writerow(["When", "Customer", "Phone", "Loan type", "Loan amount", "Status", "Category", "Duration (s)", "Form sent"])
     for r in rows:
-        w.writerow([
+        # Formula-injection guard (SEC-08) on the customer-supplied cells.
+        w.writerow([_fg(x) for x in [
             r["when_ts"].isoformat() if r["when_ts"] else "",
             r["customer_name"] or "", r["phone"] or "", r["loan_type"] or "",
             float(r["loan_amount"]) if r["loan_amount"] is not None else "",
             r["status"] or "", r["category"] or "",
             r["call_duration"] if r["call_duration"] is not None else "",
             "yes" if r["form_sent"] else "no",
-        ])
+        ]])
     buf.seek(0)
     fname = f"calls_{lo.strftime('%Y%m%d')}_{(hi - timedelta(days=1)).strftime('%Y%m%d')}.csv"
     return StreamingResponse(

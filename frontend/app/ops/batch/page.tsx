@@ -271,8 +271,11 @@ export default function OpsBatchPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Retry is ALWAYS scoped to one explicit batch (OPS-20) — never a server-side
+  // "most recent" fallback. The caller passes the batch id.
   const retry = useMutation({
-    mutationFn: postJson("/api/agent/batch-retry"),
+    mutationFn: (batchId: string) =>
+      postJson("/api/agent/batch-retry", () => ({ batch_id: batchId }))(),
     onSuccess: (d) => { toast.success(d?.message || "Retry queued"); refreshBatchViews(); },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -536,7 +539,11 @@ export default function OpsBatchPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => retry.mutate()}
+                onClick={() =>
+                  openBatchId
+                    ? retry.mutate(openBatchId)
+                    : toast.error("Open the batch you want to retry (click its row), then retry it.")
+                }
                 disabled={retry.isPending}
               >
                 {retry.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
@@ -605,6 +612,8 @@ export default function OpsBatchPage() {
                 onRowClick={(u) => setOpenBatchId(u.id || u._id || null)}
                 onStop={(u) => stopBatch.mutate(u.id || u._id || "")}
                 stopping={stopBatch.isPending}
+                onRetry={(u) => retry.mutate(u.id || u._id || "")}
+                retrying={retry.isPending}
               />
             )}
           </CardContent>
@@ -699,14 +708,20 @@ function UploadsTable({
   onRowClick,
   onStop,
   stopping,
+  onRetry,
+  retrying,
 }: {
   uploads: Upload[];
   onRowClick: (u: Upload) => void;
   onStop: (u: Upload) => void;
   stopping: boolean;
+  onRetry: (u: Upload) => void;
+  retrying: boolean;
 }) {
   // A batch can be stopped only while it still has work queued/dialing.
   const STOPPABLE = new Set(["running", "paused", "pending"]);
+  // A finished batch is where failed calls can be re-queued.
+  const RETRIABLE = new Set(["completed", "stopped"]);
   const columns: ReadonlyArray<DataTableColumn<Upload>> = [
     {
       key: "file",
@@ -761,25 +776,47 @@ function UploadsTable({
       key: "actions",
       header: "",
       align: "right",
-      render: (u) =>
-        STOPPABLE.has((u.status || "").toLowerCase()) ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={stopping}
-            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={(e) => {
-              // Don't let the click bubble to the row (which opens the batch).
-              e.stopPropagation();
-              if (window.confirm("Stop this batch? In-flight calls end and pending calls are cancelled.")) {
-                onStop(u);
-              }
-            }}
-          >
-            {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CircleStop className="h-3.5 w-3.5" />}
-            Stop
-          </Button>
-        ) : null,
+      render: (u) => {
+        const st = (u.status || "").toLowerCase();
+        if (STOPPABLE.has(st)) {
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={stopping}
+              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={(e) => {
+                // Don't let the click bubble to the row (which opens the batch).
+                e.stopPropagation();
+                if (window.confirm("Stop this batch? In-flight calls end and pending calls are cancelled.")) {
+                  onStop(u);
+                }
+              }}
+            >
+              {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CircleStop className="h-3.5 w-3.5" />}
+              Stop
+            </Button>
+          );
+        }
+        if (RETRIABLE.has(st)) {
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={retrying}
+              onClick={(e) => {
+                // Retry THIS batch's failed calls — never a "most recent" guess.
+                e.stopPropagation();
+                onRetry(u);
+              }}
+            >
+              {retrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              Retry failed
+            </Button>
+          );
+        }
+        return null;
+      },
     },
   ];
   return (

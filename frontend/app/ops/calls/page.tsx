@@ -149,6 +149,13 @@ export default function OpsCallsPage() {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (categoryFilter !== "all") params.set("category", categoryFilter);
+      // Mirror the list's server-side filters so the export matches the screen
+      // (OPS-08). Lead quality and form-sent were previously dropped, so an
+      // export under a Hot/Warm/Cold or Form-sent filter had more rows than
+      // shown. (The name/phone search is client-only — see OPS-06 — so it can't
+      // be reflected in a full server-side export.)
+      if (leadFilter !== "all") params.set("lead_quality", leadFilter);
+      if (formFilter !== "all") params.set("form_sent", formFilter);
       if (dateFilter) {
         params.set("date_from", dateFilter);
         params.set("date_to", dateFilter);
@@ -168,7 +175,7 @@ export default function OpsCallsPage() {
     } finally {
       setExporting(false);
     }
-  }, [statusFilter, categoryFilter, dateFilter, exporting]);
+  }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter, exporting]);
 
   React.useEffect(() => {
     const handler = () => handleExport();

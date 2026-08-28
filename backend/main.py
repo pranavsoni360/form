@@ -2973,6 +2973,11 @@ async def officer_reject(app_id: str, body: OfficerRejectRequest, request: Reque
     current_status = app_row["status"]
     if current_status not in ("submitted", "system_reviewed"):
         raise HTTPException(status_code=400, detail=f"Cannot reject application with status '{current_status}'. Must be 'submitted' or 'system_reviewed'.")
+    # A rejection reason is REQUIRED (BNK-07). The UI enforces this, but the check
+    # must live on the server too — otherwise a direct API call rejects a file
+    # with no reason for the supervisor/auditor to read.
+    if not (body.rejection_reason or "").strip():
+        raise HTTPException(status_code=422, detail="A rejection reason is required.")
     rejection_notes = body.notes or ""
     if body.rejection_reason:
         rejection_notes = f"[Reason: {body.rejection_reason}] {rejection_notes}".strip()
@@ -3083,6 +3088,9 @@ async def supervisor_reject(app_id: str, body: OfficerRejectRequest, request: Re
     # Same maker-checker rule as supervisor-approve (see the v38 CHECK).
     if app_row.get("officer_id") is not None and app_row["officer_id"] == supervisor_id:
         raise HTTPException(status_code=403, detail="Maker-checker: you reviewed this as the officer and cannot also reject it as supervisor.")
+    # A rejection reason is required server-side too (BNK-07, same as officer-reject).
+    if not (body.rejection_reason or "").strip():
+        raise HTTPException(status_code=422, detail="A rejection reason is required.")
     rejection_notes = body.notes or ""
     if body.rejection_reason:
         rejection_notes = f"[Reason: {body.rejection_reason}] {rejection_notes}".strip()

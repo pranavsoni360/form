@@ -21,6 +21,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR
 
 from . import state as _state
+from lib.exportsafe import formula_guard as _fg  # SEC-08 spreadsheet guard
 from .state import (
     get_current_bank_user, _bank_uuid, _rows_affected,
     now_ist, now_ist_str, is_within_calling_hours,
@@ -1174,7 +1175,7 @@ async def trigger_batch_retry(
     batch_id: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
-    """Retry failed/not-answered calls in a specific batch (or most recent completed batch).
+    """Retry failed/not-answered calls in a SPECIFIC batch.
     Resets failed calls to 'Pending' (if retry_count < MAX_RETRIES) and sets batch back to 'running'."""
     if not is_within_calling_hours():
         raise HTTPException(
@@ -1182,15 +1183,23 @@ async def trigger_batch_retry(
             detail=f"Calling not allowed outside {CALL_START_HOUR}AM-{CALL_END_HOUR % 24 or 12}AM IST.",
         )
 
+    # A retry MUST target one explicit batch (OPS-20). Previously a missing
+    # batch_id fell back to the most-recent COMPLETED batch, so "Retry failed"
+    # with no batch open silently re-queued whatever finished last — often the
+    # wrong batch entirely. Require the caller to name the batch.
+    if not batch_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Open the batch you want to retry (click its row), then retry it — a retry must target a specific batch.",
+        )
+
     # Find the batch. batch_id may be the UUID (agent_batches.id) OR the string
-    # batch_id the frontend uses as its row key — accept both.
+    # batch_id the frontend uses as its row key — accept both. Scoped to the
+    # caller's bank (operators are cross-bank).
     bank_uuid = _bank_uuid(user)  # operator (admin) -> None (all banks)
     batch_row = await _fetch_batch_scoped(batch_id, bank_uuid, statuses=("completed",))
-    if batch_id and not batch_row:
-        raise HTTPException(status_code=404, detail=f"Batch not found: {batch_id}")
-
     if not batch_row:
-        raise HTTPException(status_code=404, detail="No completed batch found to retry.")
+        raise HTTPException(status_code=404, detail=f"Batch not found: {batch_id}")
 
     batch = _row_to_dict(batch_row)
     bid = batch["id"]
@@ -1622,7 +1631,8 @@ async def download_batch_csv(batch_id: str, user: dict = Depends(get_current_ban
         for r in rows:
             buf = io.StringIO()
             writer = csv.writer(buf)
-            writer.writerow([
+            # Formula-injection guard (SEC-08) on the customer-supplied cells.
+            writer.writerow([_fg(x) for x in [
                 r["customer_name"] or "",
                 r["phone"] or "",
                 r["loan_type"] or "",
@@ -1635,7 +1645,7 @@ async def download_batch_csv(batch_id: str, user: dict = Depends(get_current_ban
                 r["form_link"] or "",
                 r["started_at"].isoformat() if r["started_at"] else "",
                 r["ended_at"].isoformat() if r["ended_at"] else "",
-            ])
+            ]])
             yield buf.getvalue()
 
     safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in batch_filename)

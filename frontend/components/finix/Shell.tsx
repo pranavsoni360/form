@@ -46,8 +46,16 @@ function AppBar({
       {/* Left spacer so right controls push to the edge */}
       <div className="flex-1" />
 
-      {/* Right controls: theme toggle · bell · user menu */}
-      <div className="flex items-center gap-2">
+      {/* Right controls: idle countdown · theme toggle · bell · user menu */}
+      <div className="flex items-center gap-3">
+        {/* Idle-session countdown + warning modal. MUST live here, in the
+            always-mounted AppBar — not inside the UserMenu dropdown, which
+            unmounts when closed. Rendering it in the (closed-by-default) menu
+            silently disabled the entire idle mechanism: the countdown interval,
+            the activity-reset listeners and the warning modal only ran while the
+            menu was open, and re-mounting on open reset the deadline, so a staff
+            session never timed out for inactivity. */}
+        {identityFooter}
         <FinixThemeToggle />
         {right}
         <UserMenu
@@ -56,7 +64,6 @@ function AppBar({
           role={identity.role}
           tenant={identity.tenant}
           onLogout={onLogout}
-          sessionTimer={identityFooter}
         />
       </div>
     </header>

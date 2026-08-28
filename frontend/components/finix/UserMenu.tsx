@@ -1,8 +1,13 @@
 "use client";
 
 // UserMenu — circular avatar in the AppBar that opens a dropdown.
-// Contains: identity header, session timer row, account settings, sign out.
+// Contains: identity header, account settings, sign out.
 // Keyboard accessible: Enter/Space opens, Arrow keys navigate items, Escape closes.
+//
+// NOTE: the idle-session countdown/warning (<SessionTimer>) is deliberately NOT
+// rendered here. This dropdown unmounts when closed, and SessionTimer owns the
+// whole idle mechanism (timer + activity listeners + warning modal), so it must
+// live in the always-mounted AppBar. It is rendered in Shell.tsx's AppBar.
 
 import * as React from "react";
 import Link from "next/link";
@@ -13,8 +18,6 @@ export type UserMenuProps = {
   role: string;
   tenant: string;
   onLogout: () => void;
-  /** Rendered as the "Session ends in …" row — pass <SessionTimer>. */
-  sessionTimer?: React.ReactNode;
 };
 
 export function UserMenu({
@@ -23,7 +26,6 @@ export function UserMenu({
   role,
   tenant,
   onLogout,
-  sessionTimer,
 }: UserMenuProps) {
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
@@ -115,14 +117,6 @@ export function UserMenu({
               {tenant} · {role}
             </div>
           </div>
-
-          {/* Session timer row */}
-          {sessionTimer && (
-            <div className="flex items-center gap-1.5 px-3 pb-2 text-[11px] text-fx-text3">
-              <span>Session ends in</span>
-              {sessionTimer}
-            </div>
-          )}
 
           <div className="my-1 h-px" style={{ background: "var(--fx-border)" }} />
 

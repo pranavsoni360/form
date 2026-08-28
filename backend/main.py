@@ -406,6 +406,13 @@ AISENSY_APPROVAL_CAMPAIGN = os.getenv("AISENSY_APPROVAL_CAMPAIGN", "loan_approve
 # lets the session die with no warning at all.
 LOAN_SESSION_INACTIVITY_SECONDS = int(os.getenv("LOAN_SESSION_INACTIVITY_SECONDS", "900"))
 LOAN_SESSION_INACTIVITY_MINUTES = LOAN_SESSION_INACTIVITY_SECONDS // 60
+# Absolute session ceiling (CUS-07). Set at OTP verify and ROLLED FORWARD on
+# every activity (get-application / keepalive / autosave), so the 15-min
+# inactivity window above is the single binding, client-warned timeout and a
+# continuously-active applicant is never cut off mid-form with no warning. It was
+# previously fixed at OTP+30min and never extended, so an active user was 401'd
+# at 30 minutes with no warning.
+LOAN_SESSION_ABSOLUTE_SECONDS = int(os.getenv("LOAN_SESSION_ABSOLUTE_SECONDS", "1800"))
 
 AISENSY_DISBURSEMENT_CAMPAIGN = os.getenv("AISENSY_DISBURSEMENT_CAMPAIGN", "loan_disbursement_initiated")
 
@@ -4874,7 +4881,11 @@ async def get_application(session_token: str, request: Request):
         last_activity = last_activity.replace(tzinfo=timezone.utc)
     if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
         raise HTTPException(status_code=401, detail=f"Session inactive for {LOAN_SESSION_INACTIVITY_MINUTES} minutes. Please re-verify.")
-    await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
+    new_expiry = now_utc() + timedelta(seconds=LOAN_SESSION_ABSOLUTE_SECONDS)
+    await db_pool.execute(
+        "UPDATE loan_sessions SET last_activity_at = $1, expires_at = $2 WHERE id = $3",
+        now_utc(), new_expiry, session["id"],
+    )
     app_row = await db_pool.fetchrow("SELECT * FROM loan_applications WHERE id = $1", session["application_id"])
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found.")
@@ -4882,7 +4893,12 @@ async def get_application(session_token: str, request: Request):
     # Map aadhaar_number_encrypted back to aadhaar_number for frontend
     if app_dict.get("aadhaar_number_encrypted"):
         app_dict["aadhaar_number"] = decrypt_aadhaar(app_dict["aadhaar_number_encrypted"])
-    return {"status": "success", "data": app_dict, "session_valid_until": expires_at.isoformat()}
+    # The client seeds its idle countdown from `inactivity_seconds` (the binding,
+    # warned timeout) — NOT session_valid_until (the looser absolute cap). Both
+    # are returned: the cap is informational.
+    return {"status": "success", "data": app_dict,
+            "session_valid_until": new_expiry.isoformat(),
+            "inactivity_seconds": LOAN_SESSION_INACTIVITY_SECONDS}
 
 @app.post("/api/withdraw-application")
 async def withdraw_application(body: WithdrawApplicationRequest):
@@ -4948,7 +4964,12 @@ async def session_keepalive(request: Request):
         last_activity = last_activity.replace(tzinfo=timezone.utc)
     if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
         raise HTTPException(status_code=401, detail="Session expired due to inactivity. Please verify again.")
-    await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
+    # Roll the absolute cap forward too, so "Continue Session" keeps a genuinely
+    # active applicant working past the original OTP+30min stamp (CUS-07).
+    await db_pool.execute(
+        "UPDATE loan_sessions SET last_activity_at = $1, expires_at = $2 WHERE id = $3",
+        now_utc(), now_utc() + timedelta(seconds=LOAN_SESSION_ABSOLUTE_SECONDS), session["id"],
+    )
     return {"status": "extended", "inactivity_window_seconds": LOAN_SESSION_INACTIVITY_SECONDS}
 
 
@@ -4970,7 +4991,12 @@ async def autosave_session(request: Request):
         last_activity = last_activity.replace(tzinfo=timezone.utc)
     if (now_utc() - last_activity).total_seconds() > LOAN_SESSION_INACTIVITY_SECONDS:
         raise HTTPException(status_code=401, detail="Session expired due to inactivity")
-    await db_pool.execute("UPDATE loan_sessions SET last_activity_at = $1 WHERE id = $2", now_utc(), session["id"])
+    # Typing is activity: roll both timers forward so autosave and get-application
+    # never disagree about whether the session is alive (CUS-07).
+    await db_pool.execute(
+        "UPDATE loan_sessions SET last_activity_at = $1, expires_at = $2 WHERE id = $3",
+        now_utc(), now_utc() + timedelta(seconds=LOAN_SESSION_ABSOLUTE_SECONDS), session["id"],
+    )
     safe_data = {k: _coerce_value(k, v) for k, v in form_data.items() if k in AUTOSAVE_COLUMNS}
     # Ensure highest_step only goes up, never down
     if "highest_step" in safe_data:

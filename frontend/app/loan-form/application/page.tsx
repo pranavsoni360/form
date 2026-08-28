@@ -758,12 +758,15 @@ export default function LoanApplication() {
       if (res.status === 401) { logout(); return; }
       const data = await res.json();
       if (data.status === 'success') {
-        // Derive the true idle window from the server's own expiry stamp.
-        // Guarded: only accept a sane value (1–120 min) so a clock skew or a
-        // malformed timestamp can never shorten the session to nothing.
-        if (data.session_valid_until) {
-          const ms = new Date(data.session_valid_until).getTime() - Date.now();
-          if (Number.isFinite(ms) && ms > 60_000 && ms < 120 * 60_000) {
+        // Seed the idle countdown from the server's INACTIVITY window — the
+        // timeout that actually resets on activity and is the one the server
+        // enforces. Using session_valid_until (the absolute ~30-min cap) here was
+        // the CUS-07 bug: an idle user's timer showed ~28 min left while the
+        // server killed the session at 15 min of inactivity, so it expired with
+        // no warning. Guarded to a sane range so clock skew can't zero it.
+        if (Number.isFinite(data.inactivity_seconds)) {
+          const ms = data.inactivity_seconds * 1000;
+          if (ms >= 60_000 && ms <= 120 * 60_000) {
             timeoutMsRef.current = ms;
           }
         }

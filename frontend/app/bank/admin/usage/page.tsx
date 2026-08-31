@@ -105,11 +105,11 @@ export default function UsagePage() {
 
   async function doExport() {
     try {
-      const blob = await exportUsageCsv();
+      const { blob, filename } = await exportUsageCsv();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "calls.csv";
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {

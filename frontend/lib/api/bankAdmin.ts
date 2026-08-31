@@ -238,7 +238,7 @@ export async function getUsageCalls(
 // CSV export — returns the endpoint URL to open (the browser handles the download
 // via the auth cookie). The token is sent as a header by authFetch, but for a
 // direct download we hit the URL through fetch and build a blob.
-export async function exportUsageCsv(r?: DateRange, status?: string): Promise<Blob> {
+export async function exportUsageCsv(r?: DateRange, status?: string): Promise<{ blob: Blob; filename: string }> {
   const { API_URL } = await import("@/lib/api");
   const { getAccessToken } = await import("@/lib/auth");
   const token = getAccessToken("bank");
@@ -247,7 +247,12 @@ export async function exportUsageCsv(r?: DateRange, status?: string): Promise<Bl
     credentials: "include",
   });
   if (!res.ok) throw new Error("Export failed");
-  return res.blob();
+  // Use the server's range-based filename (calls_YYYYMMDD_YYYYMMDD.csv) rather
+  // than a hardcoded "calls.csv", so the download reflects the exported period.
+  const cd = res.headers.get("content-disposition") || "";
+  const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  const filename = m ? decodeURIComponent(m[1].replace(/"$/, "")) : "usage_calls.csv";
+  return { blob: await res.blob(), filename };
 }
 
 // ── settings (Step 4c) ───────────────────────────────────────────────────────

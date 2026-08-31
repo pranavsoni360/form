@@ -201,6 +201,31 @@ async function bsaHeaders(): Promise<HeadersInit> {
   return token ? authHeaders(token) : { "Content-Type": "application/json" };
 }
 
+// ── INVITE ACCEPTANCE (public — invitee has no account yet) ─────────
+export interface InviteInfo {
+  email: string;
+  full_name: string;
+  bank_name: string;
+  role: string;
+  branch?: string | null;
+}
+
+export async function getInviteInfo(token: string): Promise<InviteInfo> {
+  return apiFetch(`/api/bank/admin/invites/accept?token=${encodeURIComponent(token)}`);
+}
+
+export async function acceptInvite(
+  token: string,
+  username: string,
+  password: string,
+): Promise<{ status: string; username: string }> {
+  return apiFetch(`/api/bank/admin/invites/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, username, password }),
+  });
+}
+
 export async function bsaInstitutions(refresh = false): Promise<{ institutions: BsaInstitution[]; cached: boolean; stale?: boolean }> {
   return apiFetch(`/api/bsa/institutions${refresh ? "?refresh=true" : ""}`, { headers: await bsaHeaders() });
 }

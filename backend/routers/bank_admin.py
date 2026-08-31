@@ -621,6 +621,102 @@ async def revoke_invite(invite_id: str, admin: dict = Depends(get_bank_admin)):
     return {"status": "revoked", "seats": await _seat_usage(bank_id)}
 
 
+# ── invite acceptance (PUBLIC — the invitee has no account yet) ────────────────
+# BAD-03: invite emails link to /bank/accept-invite?token=…, but there was no
+# page and no endpoint, so an invited user could never sign in and the seat their
+# pending invite held was wasted. These two routes are deliberately UNauthenticated
+# — gated only by the unguessable 32-byte token — because the person accepting is
+# not yet a user. They reveal only what the accept form must show and create the
+# account exactly as create_user does (same hashing, role/branch/permission-override
+# copy), then mark the invite accepted.
+
+class AcceptInvite(BaseModel):
+    token: str
+    username: str
+    password: str
+
+
+def _invite_expired(row) -> bool:
+    exp = row["expires_at"]
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    return bool(exp and exp < _now())
+
+
+@router.get("/invites/accept")
+async def invite_accept_info(token: str):
+    """Public: what the accept form needs to greet the invitee, by token."""
+    row = await _db().fetchrow(
+        "SELECT bi.email, bi.full_name, bi.role, bi.custom_role_label, bi.branch, "
+        "       bi.status, bi.expires_at, b.name AS bank_name "
+        "FROM bank_invites bi JOIN banks b ON b.id = bi.bank_id WHERE bi.token = $1",
+        token,
+    )
+    if not row or row["status"] != "pending":
+        raise HTTPException(404, "This invite link is invalid or has already been used.")
+    if _invite_expired(row):
+        raise HTTPException(410, "This invite link has expired. Ask your administrator to send a new one.")
+    return {
+        "email": row["email"],
+        "full_name": row["full_name"],
+        "bank_name": row["bank_name"],
+        "role": row["custom_role_label"] or row["role"],
+        "branch": row["branch"],
+    }
+
+
+@router.post("/invites/accept")
+async def invite_accept(body: AcceptInvite):
+    """Public: turn a pending invite into an active bank_user with the invitee's
+    own username + password. Idempotent-safe via a FOR UPDATE re-check."""
+    token = (body.token or "").strip()
+    username = (body.username or "").strip().lower()
+    password = body.password or ""
+    if not USERNAME_RE.match(username):
+        raise HTTPException(400, "Username must be 3–50 characters: lowercase letters, digits or underscore.")
+    if len(password) < 8:
+        raise HTTPException(400, "Choose a password of at least 8 characters.")
+
+    row = await _db().fetchrow("SELECT * FROM bank_invites WHERE token = $1", token)
+    if not row or row["status"] != "pending":
+        raise HTTPException(404, "This invite link is invalid or has already been used.")
+    if _invite_expired(row):
+        raise HTTPException(410, "This invite link has expired. Ask your administrator to send a new one.")
+
+    # Username is unique across all banks (matches create_user).
+    if await _db().fetchrow("SELECT 1 FROM bank_users WHERE username = $1", username):
+        raise HTTPException(400, f"The username '{username}' is taken. Please pick another.")
+
+    pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    overrides = row["permission_overrides"]
+    if isinstance(overrides, str):
+        overrides = json.loads(overrides) if overrides else None
+
+    async with _db().acquire() as conn:
+        async with conn.transaction():
+            # Close the accept-twice race: lock the invite row and re-check pending.
+            locked = await conn.fetchrow(
+                "SELECT status FROM bank_invites WHERE id = $1 FOR UPDATE", row["id"]
+            )
+            if not locked or locked["status"] != "pending":
+                raise HTTPException(409, "This invite has already been used.")
+            user = await conn.fetchrow(
+                "INSERT INTO bank_users (bank_id, username, email, password_hash, full_name, role, "
+                " branch, employee_id, status, custom_role_id, custom_role_label) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10) RETURNING id",
+                row["bank_id"], username, row["email"], pw_hash, row["full_name"], row["role"],
+                row["branch"], row["employee_id"], row["custom_role_id"], row["custom_role_label"],
+            )
+            await perms.apply_invite_permissions(conn, str(user["id"]), row["role"], overrides)
+            # status flips out of 'pending' → the seat the invite held now belongs
+            # to the active user, so seat accounting is unchanged.
+            await conn.execute(
+                "UPDATE bank_invites SET status = 'accepted', accepted_at = $1, seat_held = false WHERE id = $2",
+                _now(), row["id"],
+            )
+    return {"status": "accepted", "username": username}
+
+
 # ── activity ─────────────────────────────────────────────────────────────────
 # ── custom roles ("profiles") ───────────────────────────────────
 # An admin defines a named profile once — "Recovery caller" — with its own

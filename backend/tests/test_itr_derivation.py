@@ -226,3 +226,33 @@ def test_every_explanation_offers_the_upload_fallback():
     for status in ("101", "102", "103", "999", None):
         assert "upload the PDF" in _explain_empty_result(status, "").lower() \
             or "upload the pdf" in _explain_empty_result(status, "").lower()
+
+
+# ── timeout budget ──────────────────────────────────────────────────────────
+
+def test_itr_read_timeout_is_generous_but_connect_is_not():
+    """ITR needs a long READ budget and a short CONNECT budget.
+
+    VG logs in to the income-tax portal as the applicant and pulls up to three
+    years of returns. Measured on UAT, a REJECTION returns in 1-2s while a real
+    fetch does substantially more work — so the shared 30s VG default failed
+    exactly the successful case and nothing else. QA logged ReadTimeout while
+    every bad-credential probe answered promptly.
+
+    Connect stays short so an unreachable host fails fast instead of making the
+    customer wait minutes to be told it is unreachable.
+    """
+    from lrs.itr_routes import _ITR_TIMEOUT
+    assert _ITR_TIMEOUT.read >= 120, "a real ITR fetch needs more than two minutes of headroom"
+    assert _ITR_TIMEOUT.connect <= 15, "an unreachable host must fail fast"
+
+
+def test_itr_timeout_fits_under_the_nginx_proxy_budget():
+    """nginx (scripts/nginx/finix-qa.conf) allows proxy_read_timeout 3600s.
+
+    If the app's own budget ever exceeded that, nginx would cut the connection
+    first and the customer would see a generic gateway error instead of our
+    message.
+    """
+    from lrs.itr_routes import _ITR_TIMEOUT
+    assert _ITR_TIMEOUT.read < 3600

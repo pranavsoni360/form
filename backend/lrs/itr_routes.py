@@ -55,7 +55,21 @@ router = APIRouter()
 from lrs.providers.vg_docverify import _BASE_URL  # noqa: E402
 
 _VGK_BASE = f"{_BASE_URL}/VGKVerify.asmx"
-_TIMEOUT = float(os.getenv("VG_DOCVERIFY_TIMEOUT", "30"))
+# ITR gets its OWN timeout, much longer than the 30s shared VG default.
+#
+# ITR_Advance is not a lookup: VG logs in to the income-tax portal as the
+# applicant and pulls up to 3 years of returns, and the full extract is large
+# (balance sheet, P&L, presumptive sections). Measured against UAT, a REJECTION
+# comes back in 1-2s while a successful fetch does real work — so a 30s budget
+# fails exactly the case that was working, and only that case. QA logged
+# ReadTimeout while every probe with bad credentials returned promptly.
+#
+# The connect timeout stays short: an unreachable host should fail fast rather
+# than make the customer wait two minutes to be told so.
+_ITR_TIMEOUT = httpx.Timeout(
+    float(os.getenv("ITR_TIMEOUT_SECONDS", "180")),
+    connect=float(os.getenv("ITR_CONNECT_TIMEOUT_SECONDS", "10")),
+)
 _DEFAULT_YEARS = os.getenv("ITR_DEFAULT_YEARS", "3")
 
 # A tax password must not cross a plaintext link. Local development over
@@ -261,10 +275,22 @@ async def generate_itr(body: ItrGenerateRequest, request: Request) -> dict:
     })
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_ITR_TIMEOUT) as client:
             resp = await client.post(f"{_VGK_BASE}/ITR_Advance", json={"obj": [obj]})
         resp.raise_for_status()
         data = _parse_lenient_json(resp.text)
+    except httpx.TimeoutException as e:
+        # Distinct from an unreachable host: the request WAS delivered and VG
+        # simply had not answered yet. Saying "could not reach" sent everyone
+        # hunting for a network fault that did not exist — the request was fine
+        # and the budget was too small.
+        logger.warning("ITR_Advance timed out after %ss for app=%s: %s",
+                       _ITR_TIMEOUT.read, app_row["id"], type(e).__name__)
+        raise HTTPException(
+            status_code=504,
+            detail=("The income-tax portal is taking longer than usual. "
+                    "Please try again, or upload the PDF instead."),
+        )
     except httpx.HTTPError as e:
         # Log the transport failure WITHOUT the request body: `obj` holds the
         # password, so it must never reach a log line or an exception message.

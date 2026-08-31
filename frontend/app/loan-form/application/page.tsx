@@ -137,6 +137,11 @@ export default function LoanApplication() {
   const [itrPass, setItrPass] = useState('');
   const [itrShowPass, setItrShowPass] = useState(false);
   const [itrBusy, setItrBusy] = useState(false);
+  // Seconds elapsed on the current fetch. VG logs in to the income-tax portal
+  // and pulls three years of returns, which genuinely takes tens of seconds — a
+  // motionless "Fetching…" for that long reads as hung, and people cancel a
+  // request that was about to succeed.
+  const [itrElapsed, setItrElapsed] = useState(0);
   const [itrError, setItrError] = useState('');
   const [itrResult, setItrResult] = useState<{annual_income: number; net_monthly_income: number; financial_year?: string} | null>(null);
 
@@ -194,6 +199,13 @@ export default function LoanApplication() {
   // is asked to leave the page to fetch a bank PDF; a visible clock is the only
   // way they can judge whether they have time before it expires.
   const [secondsLeft, setSecondsLeft] = useState<number>(Math.floor(SESSION_TIMEOUT_MS / 1000));
+
+  // Count up while an ITR fetch is in flight.
+  useEffect(() => {
+    if (!itrBusy) { setItrElapsed(0); return; }
+    const t = setInterval(() => setItrElapsed(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [itrBusy]);
 
   const handleVerifyPAN = async () => {
     const pan = (formData.pan_number || '').trim();
@@ -1395,6 +1407,12 @@ export default function LoanApplication() {
             )}
 
             <div className="flex gap-3 mt-5">
+              {itrBusy && itrElapsed >= 10 && (
+                <p className="text-xs mb-2" style={{ color: 'var(--fx-text3)', fontFamily: 'var(--font-body)' }}>
+                  Signing in to the income-tax portal and reading your returns.
+                  This can take up to a couple of minutes — please keep this open.
+                </p>
+              )}
               <button type="button" onClick={closeItrModal} disabled={itrBusy}
                 className="flex-1 rounded-xl font-semibold text-sm h-11 disabled:opacity-40"
                 style={{ background: 'var(--fx-surface2)', color: 'var(--fx-text2)', border: '1.5px solid var(--fx-border)', fontFamily: 'var(--font-heading)' }}>
@@ -1404,7 +1422,7 @@ export default function LoanApplication() {
                 className="flex-1 rounded-xl font-semibold text-white text-sm h-11 inline-flex items-center justify-center gap-2 disabled:opacity-60"
                 style={{ background: 'var(--fx-accent)', fontFamily: 'var(--font-heading)' }}>
                 {itrBusy && <Loader2 className="w-4 h-4 animate-spin" />}
-                {itrBusy ? 'Fetching…' : 'Generate'}
+                {itrBusy ? `Fetching… ${itrElapsed}s` : 'Generate'}
               </button>
             </div>
           </div>

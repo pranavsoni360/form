@@ -113,17 +113,22 @@ def test_unknown_document_type_falls_back_to_permissive_not_crash():
         main_mod.validate_upload_content("some_new_doc", EXE)
 
 
-def test_every_form_document_type_has_an_explicit_rule():
-    """A document the form can upload must not silently inherit the default.
+def test_every_uploadable_document_type_has_an_explicit_rule():
+    """A document that can be uploaded must not silently inherit the default.
 
-    Guards against adding a row to loanDocuments.ts without deciding whether a
-    photograph of it is acceptable.
+    Guards against adding a document without deciding whether a photograph of it
+    is acceptable.
+
+    Wider than the customer form on purpose: proof_of_identification and
+    proof_of_residence are no longer offered there (a verified DigiLocker Aadhaar
+    already IS both), but an officer can still attach them and historical
+    applications still hold them, so their content rules must stay.
     """
-    from_form = {
+    uploadable = {
         "aadhaar_front", "photo", "bank_statements", "salary_slips",
         "itr_form16", "proof_of_identification", "proof_of_residence", "quotation",
     }
-    missing = from_form - set(main_mod._DOC_KINDS)
+    missing = uploadable - set(main_mod._DOC_KINDS)
     assert not missing, f"no explicit content rule for: {sorted(missing)}"
 
 

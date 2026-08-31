@@ -84,6 +84,14 @@ const IMG = [".jpg", ".jpeg", ".png"];
 const PDF = [".pdf"];
 const BOTH = [...IMG, ...PDF];
 
+// NOT LISTED: Proof of Identification and Proof of Residence.
+// A DigiLocker-verified Aadhaar IS both — it carries the identity and the
+// registered address, issuer-signed. Showing them as separate rows asked the
+// customer to prove twice what they had already proved, and every row on this
+// step is a chance to attach the wrong file. The COLUMNS
+// (proof_of_identification_url / proof_of_residence_url) are untouched: an
+// officer can still attach one, historical applications keep their files, and
+// normalize.py still reports their presence to the scorer.
 export const LOAN_DOCUMENTS: LoanDocSpec[] = [
   {
     key: "aadhaar_front_url",
@@ -158,28 +166,6 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     accept: ".pdf",
     extensions: PDF,
     hint: "Optional. Upload the PDF, or generate it from the income-tax portal.",
-  },
-  {
-    key: "proof_of_identification_url",
-    label: "Proof of Identification",
-    required: false,
-    journey: "fetch",
-    accept: ".jpg,.jpeg,.png,.pdf",
-    extensions: BOTH,
-    hint: "Covered by your verified Aadhaar. Upload another ID only if you skipped DigiLocker.",
-    journeyNote: "Satisfied by DigiLocker Aadhaar",
-    autoFilledBy: "digilocker",
-  },
-  {
-    key: "proof_of_residence_url",
-    label: "Proof of Residence",
-    required: false,
-    journey: "fetch",
-    accept: ".jpg,.jpeg,.png,.pdf",
-    extensions: BOTH,
-    hint: "Covered by the address on your verified Aadhaar. Upload another proof only if you skipped DigiLocker.",
-    journeyNote: "Satisfied by DigiLocker Aadhaar",
-    autoFilledBy: "digilocker",
   },
   {
     key: "quotation_url",

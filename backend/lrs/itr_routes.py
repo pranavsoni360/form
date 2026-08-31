@@ -66,8 +66,13 @@ _VGK_BASE = f"{_BASE_URL}/VGKVerify.asmx"
 #
 # The connect timeout stays short: an unreachable host should fail fast rather
 # than make the customer wait two minutes to be told so.
+# 180s was still not enough: a real fetch ran the full budget and was cut off.
+# Rejections come back in ~2s (measured repeatedly), so the long tail belongs
+# entirely to a SUCCESSFUL portal login — VG signs in as the applicant and reads
+# three years of returns, and the income-tax portal itself is slow under load.
+# nginx allows proxy_read_timeout 3600s, so 300s reaches the client comfortably.
 _ITR_TIMEOUT = httpx.Timeout(
-    float(os.getenv("ITR_TIMEOUT_SECONDS", "180")),
+    float(os.getenv("ITR_TIMEOUT_SECONDS", "300")),
     connect=float(os.getenv("ITR_CONNECT_TIMEOUT_SECONDS", "10")),
 )
 _DEFAULT_YEARS = os.getenv("ITR_DEFAULT_YEARS", "3")
@@ -203,6 +208,14 @@ _ITR_EMPTY_REASONS = {
 def _explain_empty_result(status: Any, vendor_msg: str) -> str:
     """Turn an empty ITR result into something the customer can act on."""
     key = str(status) if status is not None else ""
+    # A configuration fault on OUR vendor account, not anything the applicant
+    # did. Telling them to re-check a correct password would send them round a
+    # loop they cannot win, so say plainly that it is unavailable and move them
+    # to the upload. The operator detail stays in the log, not on screen.
+    low = (vendor_msg or "").lower()
+    if "rights not assigned" in low or "not authorized" in low or "not authorised" in low:
+        return ("Automatic fetch is not available for this bank yet. "
+                "Please upload the PDF instead.")
     if key in _ITR_EMPTY_REASONS:
         return _ITR_EMPTY_REASONS[key]
     if vendor_msg:

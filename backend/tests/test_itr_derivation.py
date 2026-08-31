@@ -256,3 +256,21 @@ def test_itr_timeout_fits_under_the_nginx_proxy_budget():
     """
     from lrs.itr_routes import _ITR_TIMEOUT
     assert _ITR_TIMEOUT.read < 3600
+
+
+def test_vendor_rights_failure_does_not_blame_the_applicant():
+    """"API Rights Not Assigned" is OUR account's configuration, not their error.
+
+    VG returns statusCode 0 with that message when the calling UserId lacks
+    rights to an endpoint (confirmed live: ITR_Salaried is unassigned for user
+    33 while ITR_Advance is assigned). Telling the applicant to re-check a
+    correct password would send them round a loop they cannot win, so the
+    message says the fetch is unavailable and points at the upload.
+    """
+    from lrs.itr_routes import _explain_empty_result
+    msg = _explain_empty_result("0", " For given User 33 API Rights Not Assigned")
+    assert "not available" in msg.lower()
+    assert "password" not in msg.lower(), "must not imply the applicant got it wrong"
+    assert "upload the PDF" in msg
+    # The operator detail must not leak our internal user id to the applicant.
+    assert "User 33" not in msg

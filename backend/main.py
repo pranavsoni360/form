@@ -2691,8 +2691,9 @@ async def admin_stats(admin: dict = Depends(get_current_admin)):
     # Unassigned (no bank_id)
     unassigned = await db_pool.fetchval("SELECT COUNT(*) FROM loan_applications WHERE bank_id IS NULL")
     # Approval rate
-    approved = (status_counts.get("officer_approved", 0) + status_counts.get("approved", 0) +
-                status_counts.get("approved", 0) + status_counts.get("approved", 0))
+    # Count each approval status once (ADM-01). The previous expression added
+    # 'approved' three times, inflating the platform approval rate.
+    approved = status_counts.get("officer_approved", 0) + status_counts.get("approved", 0)
     reviewed = approved + status_counts.get("officer_rejected", 0) + status_counts.get("supervisor_rejected", 0)
     approval_rate = round((approved / reviewed * 100), 1) if reviewed > 0 else 0
     # Total banks and users
@@ -2834,7 +2835,11 @@ async def bank_get_application(app_id: str, officer: dict = Depends(get_bank_off
     if bank:
         app_dict["bank_name"] = bank["name"]
         app_dict["bank_code"] = bank["code"]
-    return {"application": app_dict}
+    # Return the status history under `timeline` too (BNK-03/BNK-10). The detail
+    # page reads `data.timeline`; without this it always showed "No status
+    # history", hiding the decision/rejection-reason trail. Mirrors the admin
+    # detail endpoint's shape.
+    return {"application": app_dict, "timeline": _rows_to_list(transitions)}
 
 def _rows_affected(result: str) -> int:
     """Parse the row count from an asyncpg command tag like 'UPDATE 1'."""

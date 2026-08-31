@@ -410,26 +410,32 @@ function fmtAgo(ms: number): string {
 
 function CorrIdPill({ cid }: { cid: string }) {
   const [copied, setCopied] = React.useState(false);
-  const onCopy = (e: React.MouseEvent) => {
+  const [failed, setFailed] = React.useState(false);
+  // Report a denied clipboard instead of silently claiming "copied" (RES-04).
+  const onCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(cid).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      });
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard) throw new Error("no clipboard");
+      await navigator.clipboard.writeText(cid);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setFailed(true);
+      setTimeout(() => setFailed(false), 1600);
     }
   };
   return (
     <button
       onClick={onCopy}
-      title="Copy correlation id"
+      title={failed ? "Copy failed — select and copy manually" : "Copy correlation id"}
       className={cn(
         "inline-flex items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-        copied && "bg-success/10 text-success"
+        copied && "bg-success/10 text-success",
+        failed && "bg-destructive/10 text-destructive"
       )}
     >
       <ClipboardCopy className="h-2.5 w-2.5" />
-      {copied ? "copied" : cid.slice(0, 8)}
+      {failed ? "copy failed" : copied ? "copied" : cid.slice(0, 8)}
     </button>
   );
 }

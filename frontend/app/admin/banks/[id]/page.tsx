@@ -20,6 +20,7 @@ export default function BankDetailPage() {
   const [userForm, setUserForm] = useState({ full_name: '', username: '', email: '', role: 'bank_officer' });
   const [createdCreds, setCreatedCreds] = useState<{ username: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [error, setError] = useState('');
   const [token, setToken] = useState('');
 
@@ -71,11 +72,17 @@ export default function BankDetailPage() {
     } catch (err: any) { alert(err.message); }
   };
 
-  const copyCredentials = () => {
+  const copyCredentials = async () => {
     if (!createdCreds) return;
-    navigator.clipboard.writeText(`Username: ${createdCreds.username}\nPassword: ${createdCreds.password}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    // Only claim success if the write actually succeeded (RES-04).
+    try {
+      await navigator.clipboard.writeText(`Username: ${createdCreds.username}\nPassword: ${createdCreds.password}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 3000);
+    }
   };
 
   const inp = "w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-dark-input dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm";
@@ -143,8 +150,9 @@ export default function BankDetailPage() {
               <p className="text-gray-900 dark:text-gray-100">Password: <strong>{createdCreds.password}</strong></p>
             </div>
             <button onClick={copyCredentials}
-              className="mt-3 flex items-center gap-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
-              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />} {copied ? 'Copied!' : 'Copy Credentials'}
+              className={`mt-3 flex items-center gap-1 px-3 py-1.5 text-sm text-white rounded-lg transition ${copyFailed ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}>
+              {copyFailed ? <X className="w-4 h-4" /> : copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copyFailed ? 'Copy failed — copy manually' : copied ? 'Copied!' : 'Copy Credentials'}
             </button>
           </div>
         )}

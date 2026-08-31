@@ -97,12 +97,15 @@ export default function OpsFunnelPage() {
   ];
 
   const stages = funnel.data?.stages ?? [];
-  const top = stages[0]?.count ?? 0;
-  // For conversion percentages we anchor to the previous stage (drop-off
-  // rate between consecutive stages — common funnel pattern).
+  // Anchor the conversion % to the funnel's WIDEST stage, not stages[0]
+  // (OPS-25). stages[0] is "queued", the residual backlog still waiting — which
+  // is smaller than the number already attempted, so anchoring to it pushed
+  // downstream stages past 100% ("300.0% of queued"). Using the peak keeps every
+  // stage ≤ 100% and makes the leading stage read 100%.
+  const peak = stages.reduce((m, s) => Math.max(m, s.count ?? 0), 0);
   const rows = stages.map((s, i) => {
     const prev = i > 0 ? stages[i - 1].count : s.count;
-    const pctOfTop = top > 0 ? (s.count / top) * 100 : 0;
+    const pctOfTop = peak > 0 ? (s.count / peak) * 100 : 0;
     const pctOfPrev = prev > 0 ? (s.count / prev) * 100 : 0;
     return { ...s, pctOfTop, pctOfPrev };
   });
@@ -189,7 +192,7 @@ export default function OpsFunnelPage() {
                           )}
                         </div>
                         <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                          {s.pctOfTop.toFixed(1)}% of queued
+                          {s.pctOfTop.toFixed(1)}% of peak
                         </span>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-muted/60">

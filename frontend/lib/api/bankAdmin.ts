@@ -366,6 +366,21 @@ export async function createChangeRequest(
   );
 }
 
+export interface ChangeRequestRow {
+  id: string;
+  item: string;
+  message: string | null;
+  status: "open" | "resolved" | "declined";
+  requested_by_name: string | null;
+  created_at: string;
+}
+
+// The counterpart to createChangeRequest (BAD-11): so a filed request doesn't
+// vanish after the "sent" toast — the admin can see its state and outcome.
+export async function listChangeRequests(): Promise<{ change_requests: ChangeRequestRow[] }> {
+  return authFetch(`/api/bank/admin/change-requests`, {}, "bank");
+}
+
 // ── custom roles ("profiles") ────────────────────────────────────────────────
 // A bank-defined role: a name, a description, and its own default permission
 // set. Replaces the two hard-coded ROLE_OPTIONS entries that carried no rights.

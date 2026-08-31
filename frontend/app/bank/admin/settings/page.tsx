@@ -27,9 +27,11 @@ import {
   getSettings,
   saveSettings,
   requestChange,
+  listChangeRequests,
   type SettingsResponse,
   type EditableSettings,
   type SettingsPatch,
+  type ChangeRequestRow,
 } from "@/lib/api/bankAdmin";
 
 export default function SettingsPage() {
@@ -38,6 +40,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  // Bumped when a change request is filed so the list below re-fetches (BAD-11).
+  const [crNonce, setCrNonce] = React.useState(0);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -108,7 +112,8 @@ export default function SettingsPage() {
             <NotificationsCard draft={draft} changed={data} />
           </div>
 
-          <ManagedSection managed={data.managed} />
+          <ManagedSection managed={data.managed} onFiled={() => setCrNonce((n) => n + 1)} />
+          <ChangeRequestsList refreshKey={crNonce} />
         </>
       )}
 
@@ -270,7 +275,7 @@ function NotificationsCard({ draft, changed }: { draft: EditableSettings; change
 }
 
 // ── Managed by Virtual Galaxy (read-only, ◇) ─────────────────────────────────
-function ManagedSection({ managed }: { managed: SettingsResponse["managed"] }) {
+function ManagedSection({ managed, onFiled }: { managed: SettingsResponse["managed"]; onFiled?: () => void }) {
   const [reqItem, setReqItem] = React.useState<string | null>(null);
 
   const items = [
@@ -307,12 +312,12 @@ function ManagedSection({ managed }: { managed: SettingsResponse["managed"] }) {
       </div>
       <div className="mt-3 text-[11px] text-fx-text3">Account manager: {managed.account_manager}</div>
 
-      {reqItem && <ChangeRequestModal item={reqItem} onClose={() => setReqItem(null)} />}
+      {reqItem && <ChangeRequestModal item={reqItem} onClose={() => setReqItem(null)} onFiled={onFiled} />}
     </Card>
   );
 }
 
-function ChangeRequestModal({ item, onClose }: { item: string; onClose: () => void }) {
+function ChangeRequestModal({ item, onClose, onFiled }: { item: string; onClose: () => void; onFiled?: () => void }) {
   const [msg, setMsg] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [done, setDone] = React.useState(false);
@@ -321,6 +326,7 @@ function ChangeRequestModal({ item, onClose }: { item: string; onClose: () => vo
     try {
       await requestChange(item, msg || undefined);
       setDone(true);
+      onFiled?.();  // refresh the change-requests list (BAD-11)
     } catch (e: any) {
       alert(e?.message || "Could not file the request.");
       setBusy(false);
@@ -355,6 +361,57 @@ function ChangeRequestModal({ item, onClose }: { item: string; onClose: () => vo
         )}
       </div>
     </div>
+  );
+}
+
+// ── change requests (BAD-11): show what was filed and its state ──────────────
+function ChangeRequestsList({ refreshKey }: { refreshKey: number }) {
+  const [rows, setRows] = React.useState<ChangeRequestRow[] | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    listChangeRequests()
+      .then((d) => { if (live) { setRows(d.change_requests); setErr(null); } })
+      .catch((e) => { if (live) setErr(e?.message || "Could not load your change requests."); });
+    return () => { live = false; };
+  }, [refreshKey]);
+
+  const tone = (s: ChangeRequestRow["status"]) =>
+    s === "resolved" ? "green" : s === "declined" ? "red" : "amber";
+  const label = (s: ChangeRequestRow["status"]) =>
+    s === "resolved" ? "Resolved" : s === "declined" ? "Declined" : "Open";
+
+  return (
+    <Card className="mt-3">
+      <CardHeader title="Your change requests" qualifier="requests to Virtual Galaxy · newest first" />
+      <CardBody>
+        {err ? (
+          <p className="py-2 text-[12px]" style={{ color: "var(--fx-red)" }}>{err}</p>
+        ) : rows === null ? (
+          <p className="py-2 text-[12px] text-fx-text3">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="py-2 text-[12px] text-fx-text3">
+            No change requests yet. Use “Request a change” on a managed setting above to file one.
+          </p>
+        ) : (
+          <div className="divide-y divide-fx-border">
+            {rows.map((r) => (
+              <div key={r.id} className="flex items-start justify-between gap-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-[13px] text-fx-text">{r.item}</div>
+                  {r.message && <div className="mt-0.5 text-[12px] text-fx-text2">{r.message}</div>}
+                  <div className="mt-1 text-[11px] text-fx-text3">
+                    {r.requested_by_name ? `${r.requested_by_name} · ` : ""}{formatDate(r.created_at)}
+                  </div>
+                </div>
+                <Pill tone={tone(r.status)}>{label(r.status)}</Pill>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

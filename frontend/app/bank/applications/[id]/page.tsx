@@ -41,7 +41,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import {
   API_URL, getApplicationDetail, officerApprove, officerReject, supervisorApprove,
-  supervisorReject, initiateDisbursement, cancelApplication, STATUS_LABELS,
+  supervisorReject, initiateDisbursement, cancelApplication, requestDocuments, STATUS_LABELS,
   formatCurrency, formatDate, formatDateTime, maskPAN, maskAadhaar,
 } from '@/lib/api';
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
@@ -175,8 +175,11 @@ export default function ApplicationDetailPage() {
   const canOfficerAct = isOfficer && ['submitted', 'system_reviewed'].includes(app.status);
   const canSupervisorAct = isSupervisor && ['officer_approved', 'documents_submitted'].includes(app.status);
   const canDisburse = isSupervisor && app.status === 'officer_approved';
+  // BNK-08: a supervisor can send the file back to the customer for more
+  // documents from officer_approved / approved.
+  const canRequestDocs = isSupervisor && ['officer_approved', 'approved'].includes(app.status);
   const canCancel = isOfficer && !app.disbursed_at && !['cancelled', 'withdrawn'].includes(app.status);
-  const canAct = canOfficerAct || canSupervisorAct || canDisburse || canCancel;
+  const canAct = canOfficerAct || canSupervisorAct || canDisburse || canRequestDocs || canCancel;
 
   const filled = (arr: any[]) => arr.filter(v => v != null && v !== '' && v !== false).length;
   const personalFields  = [app.customer_name, app.phone, app.email, app.date_of_birth, app.gender, app.marital_status, app.current_address, app.permanent_address, app.qualification];
@@ -638,6 +641,16 @@ export default function ApplicationDetailPage() {
               onClick={() => handleAction(() => initiateDisbursement(token, appId, notes))}
             >
               {actionLoading ? 'Working…' : 'Approve & disburse'}
+            </Button>
+          )}
+
+          {canRequestDocs && (
+            <Button
+              variant="quiet"
+              disabled={actionLoading}
+              onClick={() => handleAction(() => requestDocuments(token, appId, notes))}
+            >
+              {actionLoading ? 'Working…' : 'Request documents'}
             </Button>
           )}
 

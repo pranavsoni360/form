@@ -130,6 +130,13 @@ export default function OpsCallsPage() {
   const [formFilter, setFormFilter] = React.useState<FormSent>("all");
   const [dateFilter, setDateFilter] = React.useState<string>(""); // YYYY-MM-DD
   const [search, setSearch] = React.useState("");
+  // Debounced search so we don't refetch on every keystroke. Server-side now
+  // (OPS-06) so a match on any page is found and the count reflects it.
+  const [dSearch, setDSearch] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setDSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   // Detail dialog
   const [openCallId, setOpenCallId] = React.useState<string | null>(null);
@@ -137,7 +144,7 @@ export default function OpsCallsPage() {
   // Reset to page 1 whenever any filter (other than page) changes
   React.useEffect(() => {
     setPage(1);
-  }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter]);
+  }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter, dSearch]);
 
   // Export current filtered calls as XLSX — used by both the inline button
   // and the sidebar "Export view" CTA (which dispatches "finix:export-view").
@@ -149,13 +156,12 @@ export default function OpsCallsPage() {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (categoryFilter !== "all") params.set("category", categoryFilter);
-      // Mirror the list's server-side filters so the export matches the screen
-      // (OPS-08). Lead quality and form-sent were previously dropped, so an
-      // export under a Hot/Warm/Cold or Form-sent filter had more rows than
-      // shown. (The name/phone search is client-only — see OPS-06 — so it can't
-      // be reflected in a full server-side export.)
+      // Mirror ALL the list's server-side filters so the export matches the
+      // screen (OPS-08 + OPS-06): status, category, lead quality, form-sent,
+      // name/phone search and date.
       if (leadFilter !== "all") params.set("lead_quality", leadFilter);
       if (formFilter !== "all") params.set("form_sent", formFilter);
+      if (dSearch) params.set("search", dSearch);
       if (dateFilter) {
         params.set("date_from", dateFilter);
         params.set("date_to", dateFilter);
@@ -175,7 +181,7 @@ export default function OpsCallsPage() {
     } finally {
       setExporting(false);
     }
-  }, [statusFilter, categoryFilter, leadFilter, formFilter, dateFilter, exporting]);
+  }, [statusFilter, categoryFilter, leadFilter, formFilter, dSearch, dateFilter, exporting]);
 
   React.useEffect(() => {
     const handler = () => handleExport();
@@ -192,6 +198,7 @@ export default function OpsCallsPage() {
       leadFilter,
       formFilter,
       dateFilter,
+      dSearch,
     ],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -201,6 +208,7 @@ export default function OpsCallsPage() {
       if (categoryFilter !== "all") params.set("category", categoryFilter);
       if (leadFilter !== "all") params.set("lead_quality", leadFilter);
       if (formFilter !== "all") params.set("form_sent", formFilter);
+      if (dSearch) params.set("search", dSearch);
       if (dateFilter) params.set("date", dateFilter);
       const res = await opsFetch(`${API_URL}/api/agent/calls?${params.toString()}`, {
         credentials: "include",
@@ -212,17 +220,9 @@ export default function OpsCallsPage() {
     refetchInterval: 30_000,
   });
 
-  // Client-side search (name + phone). Server filters everything else.
-  const filteredRows = React.useMemo(() => {
-    const rows = query.data?.calls ?? [];
-    if (!search.trim()) return rows;
-    const needle = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      const name = (r.customer_name || r.name || "").toLowerCase();
-      const phone = (r.phone || "").toLowerCase();
-      return name.includes(needle) || phone.includes(needle);
-    });
-  }, [query.data, search]);
+  // Search is now server-side (OPS-06), so the table renders exactly what the
+  // server returned for the current page + filters + search.
+  const filteredRows = query.data?.calls ?? [];
 
   // Global KPI counts — lightweight count-only queries (page_size=1, just read `total`)
   const fetchCount = async (params: Record<string, string>) => {

@@ -133,6 +133,7 @@ async def list_calls(
     date_to: Optional[str] = None,
     lead_quality: Optional[str] = None,
     form_sent: Optional[str] = None,
+    search: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
     """List calls with pagination and filters. Bank-scoped if authenticated, all calls for operators."""
@@ -173,6 +174,13 @@ async def list_calls(
         conditions.append("form_sent = true")
     elif form_sent in ("no", "false"):
         conditions.append("form_sent = false")
+    # Server-side name/phone search (OPS-06). Was client-only over the current
+    # page, so a match on another page was invisible and the count never reflected
+    # it. Partial, case-insensitive; the single placeholder is referenced twice.
+    if search and search.strip():
+        conditions.append(f"(customer_name ILIKE ${idx} OR phone ILIKE ${idx})")
+        params.append(f"%{search.strip()}%")
+        idx += 1
     # Date filtering. A range (date_from/date_to, inclusive of both days) takes
     # precedence over the single `date` param (kept for backward compat with
     # ops/calls). We filter on the SAME instant the UI shows in "When" —
@@ -758,6 +766,7 @@ async def export_all_calls(
     date_to: Optional[str] = None,
     lead_quality: Optional[str] = None,
     form_sent: Optional[str] = None,
+    search: Optional[str] = None,
     user: dict = Depends(get_current_bank_user),
 ):
     """Comprehensive Excel export with all call data (bank-scoped for bank users).
@@ -811,6 +820,10 @@ async def export_all_calls(
         conditions.append("form_sent = true")
     elif form_sent in ("no", "false"):
         conditions.append("form_sent = false")
+    if search and search.strip():
+        conditions.append(f"(customer_name ILIKE ${idx} OR phone ILIKE ${idx})")
+        params.append(f"%{search.strip()}%")
+        idx += 1
     if date_from:
         try:
             conditions.append(f"created_at >= ${idx}")

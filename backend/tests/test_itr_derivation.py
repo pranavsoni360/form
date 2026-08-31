@@ -182,3 +182,47 @@ def test_credentials_match_the_resolved_host():
         assert vg._USER_ID == expected["user_id"]
     if not os.getenv("VG_DOCVERIFY_BANK_SHORT_CODE"):
         assert vg._BANK_SHORT_CODE == expected["bank_short_code"]
+
+
+# ── empty-result diagnosis ──────────────────────────────────────────────────
+
+def test_status_102_blames_the_login_not_a_missing_return():
+    """102 is what VG returns when the portal login fails.
+
+    Confirmed by probe: an otherwise-valid request with EMPTY username/password
+    returns statusCode 102 and an empty result. The old fixed message said "no
+    income-tax return was found", which sent the customer looking for a return
+    that exists, when the real problem was the credentials.
+    """
+    from lrs.itr_routes import _explain_empty_result
+    msg = _explain_empty_result("102", "")
+    assert "user ID and password" in msg
+    assert "upload the PDF" in msg
+
+
+def test_unknown_status_does_not_blame_the_customer():
+    """Where we do not know the cause, we must not assert one.
+
+    Saying "check your credentials" for what may be a vendor outage sends the
+    customer round a loop they cannot win.
+    """
+    from lrs.itr_routes import _explain_empty_result
+    msg = _explain_empty_result("999", "")
+    assert "could not be fetched" in msg or "could be fetched" in msg
+    assert "upload the PDF" in msg
+
+
+def test_vendor_message_wins_over_our_guess():
+    """If VG says something specific, that beats anything we could infer."""
+    from lrs.itr_routes import _explain_empty_result
+    msg = _explain_empty_result("999", "PAN not registered on the portal")
+    assert msg.startswith("PAN not registered on the portal")
+    assert "upload the PDF" in msg
+
+
+def test_every_explanation_offers_the_upload_fallback():
+    """Generate is optional by design; a failure must always name the way out."""
+    from lrs.itr_routes import _explain_empty_result
+    for status in ("101", "102", "103", "999", None):
+        assert "upload the PDF" in _explain_empty_result(status, "").lower() \
+            or "upload the pdf" in _explain_empty_result(status, "").lower()

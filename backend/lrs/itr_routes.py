@@ -172,6 +172,32 @@ def derive_itr_income(result: dict) -> dict:
     }
 
 
+# VG returns 101 on success. Other codes are not documented anywhere we have,
+# so these mappings come from observed behaviour and stay deliberately cautious:
+# where we do not know, we say we do not know rather than blaming the customer's
+# credentials. Confirmed by probe: an otherwise-valid request with EMPTY
+# username/password returns 102 with an empty result, so 102 means the portal
+# login did not succeed.
+_ITR_EMPTY_REASONS = {
+    "102": ("The income-tax portal did not accept that user ID and password. "
+            "Please check them, or upload the PDF instead."),
+    "103": ("The income-tax portal is not responding right now. "
+            "Please try again shortly, or upload the PDF instead."),
+}
+
+
+def _explain_empty_result(status: Any, vendor_msg: str) -> str:
+    """Turn an empty ITR result into something the customer can act on."""
+    key = str(status) if status is not None else ""
+    if key in _ITR_EMPTY_REASONS:
+        return _ITR_EMPTY_REASONS[key]
+    if vendor_msg:
+        # The vendor said something specific; it is more useful than our guess.
+        return f"{vendor_msg} You can upload the PDF instead."
+    return ("No income-tax return could be fetched for those details. "
+            "Please check them, or upload the PDF instead.")
+
+
 def _common_obj(api_code: str, loan_id: str) -> dict:
     """The credential/metadata block every VGKVerify call carries."""
     from lrs.providers.vg_docverify import (
@@ -262,12 +288,25 @@ async def generate_itr(body: ItrGenerateRequest, request: Request) -> dict:
 
     result = data.get("result") if isinstance(data, dict) else None
     if not isinstance(result, dict) or not result:
-        status = data.get("statusCode") if isinstance(data, dict) else "?"
-        logger.info("ITR_Advance no result for app=%s (statusCode=%s)", app_row["id"], status)
-        raise HTTPException(
-            status_code=422,
-            detail="No income-tax return was found for those credentials. Please check them, or upload the PDF instead.",
+        status = data.get("statusCode") if isinstance(data, dict) else None
+        # Surface what VG actually said. A fixed "no return was found" message
+        # made a wrong password, an unregistered PAN, a portal outage and an
+        # account VG cannot reach all read identically — so nobody could tell a
+        # user error from an integration fault, including us.
+        vendor_msg = ""
+        if isinstance(data, dict):
+            for k in ("message", "Message", "statusMessage", "error", "Error", "remarks"):
+                v = data.get(k)
+                if isinstance(v, str) and v.strip():
+                    vendor_msg = v.strip()
+                    break
+        logger.warning(
+            "ITR_Advance returned no result for app=%s (statusCode=%s, message=%r, keys=%s)",
+            app_row["id"], status, vendor_msg,
+            sorted(data.keys()) if isinstance(data, dict) else "?",
         )
+        detail = _explain_empty_result(status, vendor_msg)
+        raise HTTPException(status_code=422, detail=detail)
 
     derived = derive_itr_income(result)
     if not derived.get("annual_income"):

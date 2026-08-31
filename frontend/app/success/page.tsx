@@ -1,19 +1,22 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { CheckCircle2, Copy, Check, Phone } from 'lucide-react';
+import { CheckCircle2, Copy, Check, Phone, X } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
+import { copyToClipboard } from '@/lib/utils/validators';
 
 function SuccessContent() {
   const searchParams = useSearchParams();
   const loanId = searchParams.get('loan_id') || '';
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
-  const copyId = () => {
-    navigator.clipboard.writeText(loanId).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  // Never report success we didn't achieve (RES-04): if the clipboard is denied
+  // (or the page is on plain HTTP), tell the user to copy it manually.
+  const copyId = async () => {
+    const ok = await copyToClipboard(loanId);
+    if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
+    else { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 3000); }
   };
 
   const steps = [
@@ -60,11 +63,21 @@ function SuccessContent() {
                   </p>
                 </div>
                 <button onClick={copyId}
+                  title={copyFailed ? 'Copy failed — select the ID and copy it manually' : 'Copy loan ID'}
                   className="w-8 h-8 rounded-lg flex items-center justify-center transition hover:opacity-80"
                   style={{ background: 'rgba(255,255,255,0.1)' }}>
-                  {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.5)' }} />}
+                  {copyFailed
+                    ? <X className="w-4 h-4 text-red-400" />
+                    : copied
+                    ? <Check className="w-4 h-4 text-green-400" />
+                    : <Copy className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.5)' }} />}
                 </button>
               </div>
+            )}
+            {copyFailed && (
+              <p className="mt-2 text-center text-xs" style={{ color: '#DC2626', fontFamily: 'var(--font-body)' }}>
+                Couldn&apos;t copy automatically — select the loan ID above and copy it manually.
+              </p>
             )}
 
             {/* What happens next */}

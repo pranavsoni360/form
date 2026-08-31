@@ -1444,3 +1444,16 @@ async def create_change_request(body: ChangeRequest, admin: dict = Depends(get_b
             )
             await log_activity(conn, bank_id, admin, "change_request", {"item": item})
     return {"request": _row(row)}
+
+
+@router.get("/change-requests")
+async def list_change_requests(admin: dict = Depends(get_bank_admin)):
+    """List this bank's change requests, newest first (BAD-11). Without this the
+    filed request vanished after the 'sent' toast — the admin could never see its
+    state, history, or outcome."""
+    rows = await _db().fetch(
+        "SELECT id, item, message, status, requested_by_name, created_at "
+        "FROM bank_change_requests WHERE bank_id = $1 ORDER BY created_at DESC LIMIT 100",
+        uuid.UUID(admin["bank_id"]),
+    )
+    return {"change_requests": _rows(rows)}

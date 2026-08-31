@@ -14,7 +14,19 @@ import pandas as pd
 import csv
 from functools import partial
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, BackgroundTasks, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from pathlib import Path
+
+# Where the ORIGINAL uploaded batch files are kept so "download original file"
+# returns exactly what was uploaded (OPS-17). Matches main.py's UPLOAD_DIR
+# (env override, else <repo>/uploads) with a dedicated subdir.
+_BATCH_UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR") or (Path(__file__).resolve().parents[2] / "uploads")) / "batch_uploads"
+_ALLOWED_UPLOAD_EXTS = {".csv", ".xlsx", ".xls"}
+_UPLOAD_MEDIA = {
+    ".csv": "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+}
 from livekit import api
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -902,6 +914,19 @@ async def upload_excel(
             batch_uuid, batch_id, bank_id_uuid, file.filename, len(records), uploaded_by_uuid, upload_time, agent_type, preferred_phone_uuid,
         )
 
+        # Persist the ORIGINAL uploaded bytes keyed by the batch UUID so the
+        # batch's "download original file" returns exactly what was uploaded
+        # (OPS-17), not a fabricated results CSV. Best-effort: a storage failure
+        # must not fail the upload — the download simply falls back to the CSV.
+        try:
+            _ext = os.path.splitext(file.filename or "")[1].lower()
+            if _ext not in _ALLOWED_UPLOAD_EXTS:
+                _ext = ".bin"
+            _BATCH_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            (_BATCH_UPLOAD_DIR / f"{batch_uuid}{_ext}").write_bytes(contents)
+        except Exception as _e:
+            logger.warning("Could not store original upload for batch %s: %s", batch_uuid, _e)
+
         count = 0
         for r in records:
             # Phone was already validated + canonicalised in preprocessing.
@@ -1590,7 +1615,8 @@ async def get_upload_detail(batch_id: str, user: dict = Depends(get_current_bank
 
 @router.get("/upload/{batch_id}/download")
 async def download_batch_csv(batch_id: str, user: dict = Depends(get_current_bank_user)):
-    """Stream a CSV of all calls in the batch for download."""
+    """Download the batch's ORIGINAL uploaded file if we still have it (OPS-17);
+    otherwise (older batches) stream a results CSV of the batch's calls."""
     # Resolve UUID → string batch_id used in agent_calls
     call_batch_id = batch_id
     batch_filename = batch_id[:8]
@@ -1608,6 +1634,21 @@ async def download_batch_csv(batch_id: str, user: dict = Depends(get_current_ban
                 call_batch_id = row["batch_id"]
             if row["filename"]:
                 batch_filename = row["filename"].rsplit(".", 1)[0]
+            # OPS-17: return the ORIGINAL uploaded file when we still have it.
+            # Older batches (uploaded before byte storage) have no stored file and
+            # fall through to the results CSV below.
+            orig_name = row["filename"] or f"batch_{batch_filename}"
+            orig_ext = os.path.splitext(orig_name)[1].lower()
+            for ext in [orig_ext, ".csv", ".xlsx", ".xls", ".bin"]:
+                if not ext:
+                    continue
+                p = _BATCH_UPLOAD_DIR / f"{batch_uuid}{ext}"
+                if p.exists():
+                    return FileResponse(
+                        str(p),
+                        media_type=_UPLOAD_MEDIA.get(ext, "application/octet-stream"),
+                        filename=orig_name,
+                    )
     except ValueError:
         pass
 

@@ -14,6 +14,7 @@ const STATUS: Record<string, { label: string; color: string; light: string; dot:
   system_reviewed:     { label: 'Being Reviewed',  color: '#7C3AED', light: '#F5F3FF', dot: '#C4B5FD', step: 3, msg: 'Our team is reviewing your details' },
   officer_approved:    { label: 'Officer Approved',color: '#059669', light: '#F0FDF4', dot: '#6EE7B7', step: 4, msg: 'Approved by officer — awaiting final sign-off' },
   officer_rejected:    { label: 'Not Approved',    color: '#DC2626', light: '#FEF2F2', dot: '#FCA5A5', step: -1, msg: 'Please visit your branch for assistance' },
+  documents_requested: { label: 'Documents Requested', color: '#D97706', light: '#FFFBEB', dot: '#FCD34D', step: 3, msg: 'Additional documents are needed — please contact your branch to submit them' },
   documents_submitted: { label: 'Docs Verified',   color: '#059669', light: '#F0FDF4', dot: '#6EE7B7', step: 4, msg: 'Documents verified — moving to approval' },
   approved:            { label: 'Approved',         color: '#059669', light: '#F0FDF4', dot: '#6EE7B7', step: 5, msg: 'Congratulations! Loan approved' },
   supervisor_rejected: { label: 'Not Approved',    color: '#DC2626', light: '#FEF2F2', dot: '#FCA5A5', step: -1, msg: 'Contact your bank branch for next steps' },

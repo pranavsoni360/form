@@ -1,285 +1,606 @@
 'use client';
 
-import { useState, useEffect, useRef, Suspense } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { API_URL } from '@/lib/api';
-import { Loader2, AlertTriangle, Lock, Shield, CheckCircle2, Clock, Phone } from 'lucide-react';
-import { FinixLogoMark } from '@/components/shared/FinixLogo';
+import './landing.css';
 
-export default function Home() {
-  return <Suspense><OTPPage /></Suspense>;
-}
-
-function OTPPage() {
+function LandingInner() {
   const router = useRouter();
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [sessionId, setSessionId] = useState('');
-  const [timer, setTimer] = useState(0);
   const searchParams = useSearchParams();
-  const autoTriggered = useRef(false);
+
+  // Redirect old customer links (/?phone=...) to /apply
+  useEffect(() => {
+    const phone = searchParams.get('phone');
+    if (phone) router.replace(`/apply?phone=${encodeURIComponent(phone)}`);
+  }, [searchParams, router]);
 
   useEffect(() => {
-    const phoneParam = searchParams.get('phone');
-    if (phoneParam && /^\d{10}$/.test(phoneParam) && !autoTriggered.current) {
-      setPhone(phoneParam);
-      autoTriggered.current = true;
-    }
-  }, [searchParams]);
+    const prefRM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  useEffect(() => {
-    if (autoTriggered.current && phone.length === 10 && step === 'phone' && !sessionId) {
-      handleSendOTPRef.current();
-    }
-  }, [phone]);
+    /* ── Particle canvas ── */
+    const canvas = document.getElementById('particles') as HTMLCanvasElement | null;
+    let rafId = 0;
+    let resTO: ReturnType<typeof setTimeout>;
 
-  const handleSendOTPRef = useRef<() => void>(() => {});
+    if (canvas) {
+      const ctx = canvas.getContext('2d')!;
+      const PCOUNT = 55, MAX_DIST = 130;
 
-  // Extract a human-readable reason from any error-response shape so the real
-  // cause is always shown (not a generic fallback). Handles FastAPI's string
-  // `detail`, its 422 array-of-objects `detail`, our global handler's `error`,
-  // a `message`, or bare HTTP status.
-  const errorReason = (data: any, res: Response, fallback: string): string => {
-    const d = data?.detail;
-    if (typeof d === 'string' && d.trim()) return d;
-    if (Array.isArray(d) && d.length) {
-      const msg = d.map((e: any) => e?.msg || e?.message).filter(Boolean).join('; ');
-      if (msg) return msg;
-    }
-    if (typeof data?.message === 'string' && data.message.trim()) return data.message;
-    if (typeof data?.error === 'string' && data.error.trim()) return data.error;
-    if (res && !res.ok) return `${fallback} (error ${res.status})`;
-    return fallback;
-  };
-
-  const handleSendOTP = async () => {
-    if (phone.length !== 10) { setError('Enter a valid 10-digit mobile number'); return; }
-    setLoading(true); setError('');
-    try {
-      const res = await fetch(`${API_URL}/api/request-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: `+91${phone}` }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.status === 'otp_sent') {
-        setSessionId(data.session_id);
-        setStep('otp');
-        setTimer(30);
-        const interval = setInterval(() => {
-          setTimer(t => { if (t <= 1) { clearInterval(interval); return 0; } return t - 1; });
-        }, 1000);
-      } else {
-        setError(errorReason(data, res, 'Failed to send OTP'));
+      class Particle {
+        x: number; y: number; vx: number; vy: number; r: number;
+        constructor() {
+          this.x  = Math.random() * canvas.width;
+          this.y  = Math.random() * canvas.height;
+          this.vx = (Math.random() - 0.5) * 0.32;
+          this.vy = (Math.random() - 0.5) * 0.32;
+          this.r  = Math.random() * 1.4 + 0.4;
+        }
+        update() {
+          this.x += this.vx; this.y += this.vy;
+          if (this.x < 0 || this.x > canvas.width)  this.vx *= -1;
+          if (this.y < 0 || this.y > canvas.height)  this.vy *= -1;
+        }
+        draw() {
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(37,99,235,0.45)';
+          ctx.fill();
+        }
       }
-    } catch { setError('Connection error. Please check your internet and try again.'); }
-    finally { setLoading(false); }
-  };
-  handleSendOTPRef.current = handleSendOTP;
 
-  const handleVerifyOTP = async () => {
-    if (otp.length !== 6) { setError('Enter the 6-digit OTP'); return; }
-    setLoading(true); setError('');
-    try {
-      const res = await fetch(`${API_URL}/api/verify-otp-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, otp }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.status === 'verified') {
-        sessionStorage.setItem('loan_session', data.session_token);
-        sessionStorage.setItem('session_expiry', data.expires_at);
-        router.push('/loan-form');
-      } else {
-        setError(errorReason(data, res, 'Invalid OTP. Please try again.'));
+      const particles: Particle[] = [];
+
+      function resizeCanvas() {
+        const hero = document.getElementById('hero');
+        if (!hero) return;
+        canvas.width  = hero.offsetWidth;
+        canvas.height = hero.offsetHeight;
       }
-    } catch { setError('Verification failed. Please check your internet and try again.'); }
-    finally { setLoading(false); }
-  };
 
-  const tiles = [
-    { icon: Phone,        title: 'Mobile OTP',   sub: 'Secure login' },
-    { icon: Shield,       title: 'KYC Verified',  sub: 'Aadhaar + PAN' },
-    { icon: Clock,        title: '24–48 hrs',     sub: 'Decision time' },
-  ];
+      function drawLines() {
+        for (let i = 0; i < particles.length; i++) {
+          for (let j = i + 1; j < particles.length; j++) {
+            const dx = particles[i].x - particles[j].x;
+            const dy = particles[i].y - particles[j].y;
+            const d  = Math.sqrt(dx * dx + dy * dy);
+            if (d < MAX_DIST) {
+              const a = (1 - d / MAX_DIST) * 0.18;
+              ctx.beginPath();
+              ctx.moveTo(particles[i].x, particles[i].y);
+              ctx.lineTo(particles[j].x, particles[j].y);
+              ctx.strokeStyle = `rgba(37,99,235,${a})`;
+              ctx.lineWidth = 0.6;
+              ctx.stroke();
+            }
+          }
+        }
+      }
+
+      function tick() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles.forEach(p => { p.update(); p.draw(); });
+        drawLines();
+        rafId = requestAnimationFrame(tick);
+      }
+
+      for (let i = 0; i < PCOUNT; i++) particles.push(new Particle());
+      resizeCanvas();
+      if (prefRM) { particles.forEach(p => p.draw()); } else { tick(); }
+
+      const handleResize = () => {
+        clearTimeout(resTO);
+        resTO = setTimeout(resizeCanvas, 120);
+      };
+      window.addEventListener('resize', handleResize);
+    }
+
+    /* ── Scroll reveal ── */
+    const rvEls = document.querySelectorAll<HTMLElement>('.rv');
+    if (prefRM) {
+      rvEls.forEach(el => el.classList.add('in'));
+    } else {
+      const io = new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+        });
+      }, { threshold: 0.08, rootMargin: '0px 0px -20px 0px' });
+      rvEls.forEach(el => io.observe(el));
+    }
+
+    /* ── Stat counters ── */
+    function countUp(el: HTMLElement, to: number) {
+      if (prefRM) { el.textContent = String(to); return; }
+      let start: number | null = null;
+      (function step(ts: number) {
+        if (!start) start = ts;
+        const p = Math.min((ts - start) / 1200, 1);
+        el.textContent = String(Math.round(to * (1 - Math.pow(1 - p, 3))));
+        if (p < 1) requestAnimationFrame(step);
+      })(performance.now());
+    }
+    const statIO = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        e.target.querySelectorAll<HTMLElement>('[data-count]').forEach(el => {
+          countUp(el, parseInt(el.dataset.count ?? '0', 10));
+        });
+        statIO.unobserve(e.target);
+      });
+    }, { threshold: 0.5 });
+    document.querySelectorAll('.stat-cell').forEach(el => statIO.observe(el));
+
+    /* ── Nav on scroll ── */
+    const nav = document.getElementById('nav');
+    const handleScroll = () => {
+      nav?.classList.toggle('scrolled', window.scrollY > 40);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+
+    /* ── Theme toggle ── */
+    const themeBtn = document.getElementById('themeToggle');
+    const handleTheme = () => {
+      const root = document.documentElement;
+      const cur = root.getAttribute('data-theme');
+      const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const isDark = cur === 'dark' || (!cur && sysDark);
+      const next = isDark ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      root.style.colorScheme = next;
+      try { localStorage.setItem('finix.theme', next); } catch (_) {}
+    };
+    themeBtn?.addEventListener('click', handleTheme);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(resTO);
+      window.removeEventListener('scroll', handleScroll);
+      themeBtn?.removeEventListener('click', handleTheme);
+    };
+  }, []);
 
   return (
-    <div className="min-h-screen flex">
-
-      {/* ── LEFT PANEL ── */}
-      <div className="hidden lg:flex flex-col justify-between w-[46%] p-12 relative overflow-hidden select-none"
-        style={{ background: '#071A38' }}>
-
-        {/* Logo */}
-        <div className="relative z-10 flex items-center gap-3">
-          <FinixLogoMark size={32} shieldColor="white" className="flex-shrink-0" />
-          <div>
-            <div className="text-sm font-bold text-white" style={{ fontFamily: 'var(--font-heading)' }}>Finix</div>
-            <div className="text-[11px] text-white opacity-40" style={{ fontFamily: 'var(--font-body)' }}>Loan Application Portal</div>
+    <div className="lp">
+      {/* ── NAV ── */}
+      <nav id="nav">
+        <div className="nav-inner">
+          <a className="nav-logo" href="#hero">
+            <svg className="logo-mark-dark" width="43" height="48" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" stroke="white" strokeWidth="8" strokeLinejoin="round" fill="none"/>
+              <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+              <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+            </svg>
+            <svg className="logo-mark-light" width="43" height="48" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" fill="#1B2A4A"/>
+              <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+              <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+            </svg>
+            Finix
+          </a>
+          <ul className="nav-links">
+            <li><a href="#features">Capabilities</a></li>
+            <li><a href="#flow">How It Works</a></li>
+            <li><a href="#portals">Portals</a></li>
+            <li><a href="#compliance">Security</a></li>
+          </ul>
+          <div className="nav-right">
+            <button className="btn-theme" id="themeToggle" aria-label="Toggle theme">
+              <svg className="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+              <svg className="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+              </svg>
+            </button>
+            <a className="btn-nav" href="#portals">
+              Get Started
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="3" y1="8" x2="13" y2="8"/><polyline points="9,4 13,8 9,12"/>
+              </svg>
+            </a>
           </div>
         </div>
+      </nav>
 
-        {/* Hero text */}
-        <div className="relative z-10">
-          <h1 className="text-[2.75rem] font-bold leading-[1.1] text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
-            Apply for a loan<br />from the comfort<br />
-            <span style={{ color: '#93C5FD' }}>of your home.</span>
-          </h1>
-          <p className="text-base leading-relaxed mb-10" style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-body)' }}>
-            Quick digital application with Aadhaar and PAN verification. Get a decision in 24–48 hours.
-          </p>
-          {/* Feature tiles */}
-          <div className="grid grid-cols-3 gap-3">
-            {tiles.map(({ icon: Icon, title, sub }) => (
-              <div key={title} className="rounded-xl p-3 text-center"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <Icon className="w-5 h-5 mx-auto mb-1.5" style={{ color: 'rgba(255,255,255,0.5)' }} />
-                <p className="text-xs font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>{title}</p>
-                <p className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'var(--font-body)' }}>{sub}</p>
+      {/* ── HERO ── */}
+      <section id="hero">
+        <canvas id="particles" aria-hidden="true"></canvas>
+        <div className="aurora aurora-1" aria-hidden="true"></div>
+        <div className="aurora aurora-2" aria-hidden="true"></div>
+        <div className="aurora aurora-3" aria-hidden="true"></div>
+        <div className="wrap">
+          <div className="hero-grid">
+            <div>
+              <div className="hero-tl" role="doc-subtitle">
+                <span className="htw" style={{'--i': 0} as React.CSSProperties}><span className="htw-t">Connect</span><span className="htw-u" aria-hidden="true"></span></span>
+                <span className="htsep" style={{'--d': '.38s'} as React.CSSProperties} aria-hidden="true"></span>
+                <span className="htw" style={{'--i': 1} as React.CSSProperties}><span className="htw-t">Score</span><span className="htw-u" aria-hidden="true"></span></span>
+                <span className="htsep" style={{'--d': '.66s'} as React.CSSProperties} aria-hidden="true"></span>
+                <span className="htw" style={{'--i': 2} as React.CSSProperties}><span className="htw-t">Approve</span><span className="htw-u" aria-hidden="true"></span></span>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-body)' }}>
-          © 2026 Finix · Virtual Galaxy Infotech Limited
-        </p>
-      </div>
-
-      {/* ── RIGHT PANEL ── */}
-      <div className="flex-1 flex items-center justify-center p-8 lg:p-16 relative" style={{ background: '#fff' }}>
-
-        <div className="w-full max-w-sm relative z-10">
-
-          {/* Mobile logo */}
-          <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <FinixLogoMark size={26} shieldColor="#071A38" />
-            <span className="font-semibold" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>Finix</span>
-          </div>
-
-          {/* Portal icon */}
-          <div className="mb-6">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
-              style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-              <Lock className="w-6 h-6" style={{ color: '#2563EB' }} />
+              <h1 className="hero-h1">
+                <span className="line"><span className="li">Smart lending,</span></span>
+                <span className="line"><span className="li grad-text">from call to</span></span>
+                <span className="line"><span className="li grad-text-b">approval.</span></span>
+              </h1>
+              <p className="hero-sub">
+                Finix orchestrates your entire lending pipeline — AI voice agents qualify leads,
+                instant KYC verifies identity, and the risk scorecard scores every application.
+                Your officers focus on decisions, not process.
+              </p>
+              <div className="hero-btns">
+                <a className="btn-primary" href="#portals">
+                  Explore Platform
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="3" y1="8" x2="13" y2="8"/><polyline points="9,4 13,8 9,12"/>
+                  </svg>
+                </a>
+                <a className="btn-outline" href="#flow">How It Works</a>
+              </div>
+              <div className="trusted">
+                <span className="lbl">Trusted by</span>
+                <div className="trusted-pills">
+                  <span className="trusted-pill">BUCB</span>
+                  <span className="trusted-pill">SFB</span>
+                  <span className="trusted-pill">NRCB</span>
+                </div>
+              </div>
             </div>
-            <h1 className="text-2xl font-bold mb-1" style={{ color: '#0F172A', fontFamily: 'var(--font-heading)' }}>
-              {step === 'phone' ? 'Loan Application' : 'Verify OTP'}
-            </h1>
-            <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>
-              {loading && autoTriggered.current && step === 'phone'
-                ? 'Sending OTP to your WhatsApp...'
-                : step === 'phone'
-                  ? 'Enter your registered mobile number to continue'
-                  : `OTP sent to WhatsApp for +91 ${phone}`}
-            </p>
-          </div>
-
-          {/* Phone step */}
-          {step === 'phone' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
-                  Mobile number <span style={{ color: '#DC2626' }}>*</span>
-                </label>
-                <div className="flex gap-2">
-                  <div className="flex items-center gap-1.5 px-3 py-3 rounded-xl flex-shrink-0 font-medium text-sm"
-                    style={{ background: '#0A1628', color: '#fff', fontFamily: 'var(--font-body)', minWidth: '80px', justifyContent: 'center' }}>
-                    IN +91
+            <div className="card-scene">
+              <div className="card-wrap">
+                <div className="card">
+                  <div className="card-chip"></div>
+                  <div className="card-num">4729 &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 8341</div>
+                  <div className="card-foot">
+                    <div>
+                      <div className="card-name">VGIPL FINIX</div>
+                      <div className="card-exp">EXP &nbsp;12 / 28</div>
+                    </div>
+                    <div className="mc"><span></span><span></span></div>
                   </div>
-                  <input type="tel" value={phone}
-                    onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
-                    className="flex-1 min-w-0 px-4 py-3 rounded-xl text-sm outline-none transition-all"
-                    style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-body)', color: '#111827' }}
-                    onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
-                    onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
-                    placeholder="10-digit number" maxLength={10} autoFocus
-                    onKeyDown={e => e.key === 'Enter' && handleSendOTP()} />
                 </div>
-              </div>
-
-              {error && (
-                <div className="flex items-start gap-2.5 rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
-                  <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{error}</p>
+                <div className="fchip fchip-a">
+                  <div className="fchip-icon fi-blue">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <div>
+                    <div className="fchip-lbl">Loan Approved</div>
+                    <div className="fchip-val">₹ 5,00,000</div>
+                  </div>
                 </div>
-              )}
-
-              <button onClick={handleSendOTP} disabled={loading || phone.length !== 10}
-                className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ background: loading || phone.length !== 10 ? '#94A3B8' : '#1D4ED8', fontFamily: 'var(--font-heading)' }}
-                onMouseEnter={e => { if (!loading && phone.length === 10) e.currentTarget.style.background = '#1E40AF'; }}
-                onMouseLeave={e => { if (!loading && phone.length === 10) e.currentTarget.style.background = '#1D4ED8'; }}>
-                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Sending...</> : 'Send OTP on WhatsApp'}
-              </button>
-
-              <div className="flex items-start gap-2 rounded-xl p-3" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                <Lock className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#0284C7' }} />
-                <p className="text-xs" style={{ color: '#075985', fontFamily: 'var(--font-body)' }}>
-                  OTP will be sent to your WhatsApp number registered with the bank
-                </p>
+                <div className="fchip fchip-b">
+                  <div className="fchip-icon fi-cyan">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  </div>
+                  <div>
+                    <div className="fchip-lbl">KYC Verified</div>
+                    <div className="fchip-val-sm">PAN + Aadhaar</div>
+                  </div>
+                </div>
+                <div className="fchip fchip-c">
+                  <span className="big">82</span>
+                  <span className="lbl">Risk Score</span>
+                </div>
               </div>
             </div>
-          )}
-
-          {/* OTP step */}
-          {step === 'otp' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 rounded-xl p-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: '#059669' }} />
-                <p className="text-sm" style={{ color: '#065F46', fontFamily: 'var(--font-body)' }}>OTP sent to +91 {phone}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1.5" style={{ color: '#374151', fontFamily: 'var(--font-body)' }}>
-                  Enter 6-digit OTP <span style={{ color: '#DC2626' }}>*</span>
-                </label>
-                <input type="text" value={otp}
-                  onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
-                  className="w-full px-4 py-4 rounded-xl text-center outline-none transition-all"
-                  style={{ border: '1px solid #E5E7EB', background: '#fff', fontFamily: 'var(--font-mono-loan)', fontSize: '1.5rem', letterSpacing: '0.4em', color: '#111827' }}
-                  onFocus={e => { e.target.style.borderColor = '#1D4ED8'; e.target.style.boxShadow = '0 0 0 3px rgba(29,78,216,0.08)'; }}
-                  onBlur={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
-                  placeholder="000000" maxLength={6} autoFocus inputMode="numeric"
-                  onKeyDown={e => e.key === 'Enter' && handleVerifyOTP()} />
-              </div>
-
-              {error && (
-                <div className="flex items-start gap-2.5 rounded-xl p-3" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#DC2626' }} />
-                  <p className="text-sm" style={{ color: '#991B1B', fontFamily: 'var(--font-body)' }}>{error}</p>
-                </div>
-              )}
-
-              <button onClick={handleVerifyOTP} disabled={loading || otp.length !== 6}
-                className="w-full py-3 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ background: '#059669', fontFamily: 'var(--font-heading)' }}
-                onMouseEnter={e => { if (!loading && otp.length === 6) e.currentTarget.style.background = '#047857'; }}
-                onMouseLeave={e => { if (!loading && otp.length === 6) e.currentTarget.style.background = '#059669'; }}>
-                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Verifying...</> : 'Verify OTP'}
-              </button>
-
-              <div className="text-center">
-                {timer > 0
-                  ? <p className="text-sm" style={{ color: '#94A3B8', fontFamily: 'var(--font-body)' }}>Resend OTP in {timer}s</p>
-                  : <button onClick={() => { setStep('phone'); setOtp(''); setError(''); }}
-                      className="text-sm font-medium" style={{ color: '#1D4ED8', fontFamily: 'var(--font-body)' }}>
-                      Change number / Resend OTP
-                    </button>
-                }
-              </div>
-            </div>
-          )}
-
-          <p className="text-xs text-center mt-6" style={{ color: '#9CA3AF', fontFamily: 'var(--font-body)' }}>
-            Secure loan application portal · Your data is encrypted
-          </p>
+          </div>
         </div>
-      </div>
+        <div className="scroll-hint" aria-hidden="true">
+          <span>Scroll</span>
+          <div className="scroll-mouse"><div className="scroll-wheel"></div></div>
+        </div>
+      </section>
+
+      {/* ── STATS ── */}
+      <section id="stats">
+        <div className="stats-row wrap" style={{padding: 0}}>
+          <div className="stat-cell rv" data-d="1">
+            <span className="stat-n"><span className="hl">{'<'}</span>{' '}<span data-count={24}>24</span>h</span>
+            <span className="stat-l">Loan Decision Time</span>
+          </div>
+          <div className="stat-cell rv" data-d="2">
+            <span className="stat-n"><span className="hl" data-count={5}>5</span>+ Banks</span>
+            <span className="stat-l">Active Tenants</span>
+          </div>
+          <div className="stat-cell rv" data-d="3">
+            <span className="stat-n"><span className="hl" data-count={100}>100</span>%</span>
+            <span className="stat-l">Digital KYC, Zero Paper</span>
+          </div>
+          <div className="stat-cell rv" data-d="4">
+            <span className="stat-n"><span className="hl" data-count={5}>5</span> Portals</span>
+            <span className="stat-l">Purpose-Built Interfaces</span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FEATURES ── */}
+      <section className="section" id="features">
+        <div className="wrap">
+          <div className="centered rv">
+            <div className="sec-tag"><span>Core Capabilities</span></div>
+            <h2 className="sec-h2">Everything your lending team needs,<br/>in <span className="grad-text">one platform.</span></h2>
+            <p className="sec-sub">From first AI outbound call to approved disbursal — Finix handles every step without external tools or manual handoffs between teams.</p>
+          </div>
+          <div className="feat-grid">
+            <div className="feat-card rv" data-d="1">
+              <div className="feat-icon fi-a"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2C8 21 3 13.5 3 7a2 2 0 012-3z"/></svg></div>
+              <h3>AI Outbound Calling</h3>
+              <p>LiveKit voice agents call customers automatically, qualify leads in natural conversation, and hand off to officers. TRAI windows enforced at the platform layer.</p>
+            </div>
+            <div className="feat-card rv" data-d="2">
+              <div className="feat-icon fi-c"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9,12 11,14 15,10"/></svg></div>
+              <h3>Instant KYC Verification</h3>
+              <p>PAN verified via VG DocVerify — name and DOB extracted and auto-filled. Aadhaar authenticated via DigiLocker. Both locked with timestamps the moment they pass.</p>
+            </div>
+            <div className="feat-card rv" data-d="3">
+              <div className="feat-icon fi-b"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="9" width="8" height="12" rx="1"/><rect x="13" y="4" width="8" height="17" rx="1"/></svg></div>
+              <h3>Multi-Bank Architecture</h3>
+              <p>Each bank is an isolated tenant with its own seat cap, minute quota, and settings. VGIPL controls platform-wide parameters; bank admins configure their workspace.</p>
+            </div>
+            <div className="feat-card rv" data-d="4">
+              <div className="feat-icon fi-a"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg></div>
+              <h3>Real-Time Operations</h3>
+              <p>Server-Sent Events push live call status, AI transcripts, and application events to your ops dashboard instantly — no refresh, no polling, always current.</p>
+            </div>
+            <div className="feat-card rv" data-d="5">
+              <div className="feat-icon fi-b"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
+              <h3>Loan Risk Scorecard</h3>
+              <p>Five-pillar weighted engine with configurable parameters, bands, and thresholds. Edit weights and all pending applications auto-rescore immediately — no code changes.</p>
+            </div>
+            <div className="feat-card rv" data-d="6">
+              <div className="feat-icon fi-c"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+              <h3>WhatsApp Integration</h3>
+              <p>AiSensy delivers OTP messages, loan form links, and status updates over WhatsApp. Customers apply without visiting a branch — just a link on their phone.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FLOW ── */}
+      <section className="section section-alt" id="flow">
+        <div className="wrap">
+          <div className="centered rv">
+            <div className="sec-tag"><span>The Pipeline</span></div>
+            <h2 className="sec-h2">Five stages. <span className="grad-text">Zero handoffs.</span></h2>
+            <p className="sec-sub">Every loan moves through the complete pipeline inside Finix — from AI call to disbursal, nothing leaves the platform.</p>
+          </div>
+          <div className="flow-outer rv">
+            <div className="flow-grid">
+              <div className="flow-step">
+                <div className="flow-ring"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2C8 21 3 13.5 3 7a2 2 0 012-3z"/></svg></div>
+                <h3>AI Outbound Call</h3>
+                <p>Agent contacts lead, qualifies intent, collects consent.</p>
+              </div>
+              <div className="flow-step">
+                <div className="flow-ring"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="12" y2="13"/></svg></div>
+                <h3>Customer Fills Form</h3>
+                <p>WhatsApp link delivers the form. AI call data auto-fills fields.</p>
+              </div>
+              <div className="flow-step">
+                <div className="flow-ring"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+                <h3>KYC &amp; Verify</h3>
+                <p>PAN + Aadhaar verified instantly. Name, DOB auto-fill and lock.</p>
+              </div>
+              <div className="flow-step">
+                <div className="flow-ring"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
+                <h3>Risk Scorecard</h3>
+                <p>LRS scores five pillars. Auto-approve above threshold.</p>
+              </div>
+              <div className="flow-step">
+                <div className="flow-ring"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+                <h3>Officer Approval</h3>
+                <p>Officer reviews, decides. High-value needs a second approver.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── PORTALS ── */}
+      <section className="section" id="portals">
+        <div className="wrap">
+          <div className="rv">
+            <div className="sec-tag"><span>Five Portals</span></div>
+            <h2 className="sec-h2">Every role, its own <span className="grad-text-b">workspace.</span></h2>
+            <p className="sec-sub">Five purpose-built portals sharing the same data and live event stream underneath.</p>
+          </div>
+          <div className="portals-grid">
+            <div className="portal-card rv" data-d="1">
+              <span className="portal-role pr-admin">VGIPL Administration</span>
+              <h3>System Admin Console</h3>
+              <p>Platform-level control for the Virtual Galaxy team. Onboard banks, configure seat caps and minute quotas, manage global users, monitor system-wide activity.</p>
+              <ul className="portal-feats">
+                <li>Bank onboarding &amp; tenant config</li>
+                <li>Seat cap &amp; minute quota management</li>
+                <li>Global user administration</li>
+                <li>Platform-wide call logs</li>
+              </ul>
+            </div>
+            <div className="portal-card rv" data-d="2">
+              <span className="portal-role pr-bank">Bank Administration</span>
+              <h3>Bank Admin Portal</h3>
+              <p>Self-service control per bank. Invite officers, review usage and minutes, configure calling windows, set workflow rules — no VGIPL contact needed.</p>
+              <ul className="portal-feats">
+                <li>User invite &amp; role management</li>
+                <li>Call usage &amp; minute analytics</li>
+                <li>Calling window configuration</li>
+                <li>Maker-checker threshold settings</li>
+              </ul>
+            </div>
+            <div className="portal-card rv" data-d="3">
+              <span className="portal-role pr-off">Loan Officer</span>
+              <h3>Bank Officer Portal</h3>
+              <p>Daily workspace for officers reviewing applications. LRS scorecard view, KYC status, batch calling, and one-click approve / refer / reject.</p>
+              <ul className="portal-feats">
+                <li>Application queue &amp; scorecard</li>
+                <li>KYC &amp; document review</li>
+                <li>Batch outbound calling</li>
+                <li>Approve, refer, or reject</li>
+              </ul>
+            </div>
+            <div className="portal-card rv" data-d="4">
+              <span className="portal-role pr-ops">Operations Team</span>
+              <h3>Operations Console</h3>
+              <p>Real-time command centre. SSE pushes live call status, AI transcripts, and application events the instant they happen — no manual refresh required.</p>
+              <ul className="portal-feats">
+                <li>Live call monitoring (SSE)</li>
+                <li>AI transcript stream</li>
+                <li>Agent concurrency view</li>
+                <li>Retry &amp; escalation logs</li>
+              </ul>
+            </div>
+            <div className="portal-card portal-span rv" data-d="5">
+              <span className="portal-role pr-ops">Customer-Facing</span>
+              <h3>Loan Application Form</h3>
+              <p>Mobile-first multi-step form. PAN and Aadhaar KYC inline with auto-fill from verified data. No branch visit, no app install — just a WhatsApp link.</p>
+              <ul className="portal-feats" style={{flexDirection:'row',flexWrap:'wrap',gap:'8px 36px',marginTop:'14px'}}>
+                <li>PAN &amp; Aadhaar KYC inline</li>
+                <li>Auto-fill from verified data</li>
+                <li>Income &amp; employment details</li>
+                <li>Document photo upload</li>
+                <li>WhatsApp OTP verification</li>
+                <li>Mobile-first, no app install</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── COMPLIANCE ── */}
+      <section className="section section-alt" id="compliance">
+        <div className="wrap">
+          <div className="centered rv">
+            <div className="sec-tag"><span>Compliance &amp; Security</span></div>
+            <h2 className="sec-h2">Built for <span className="grad-text">India&#39;s lending</span> regulations.</h2>
+            <p className="sec-sub">Regulatory requirements are enforced at the platform layer — your team doesn&#39;t have to think about them.</p>
+          </div>
+          <div className="comp-grid">
+            <div className="comp-card rv" data-d="1">
+              <div className="comp-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg></div>
+              <h3>RBI &amp; TRAI Calling Windows</h3>
+              <p>Configurable start and end times per bank. The AI agent stops automatically outside permitted hours. Pause-outbound toggles instantly from the admin portal.</p>
+            </div>
+            <div className="comp-card rv" data-d="2">
+              <div className="comp-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+              <h3>Maker-Checker Workflow</h3>
+              <p>Applications above a threshold require a second approver. Threshold, enforced-differ, and branch scoping are per-bank settings with no code changes required.</p>
+            </div>
+            <div className="comp-card rv" data-d="3">
+              <div className="comp-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+              <h3>Full Audit Trail</h3>
+              <p>Every action — status change, role update, settings save, scorecard edit — written to an append-only log with actor, timestamp, and full before/after detail.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA ── */}
+      <section id="cta">
+        <div className="wrap">
+          <div className="rv">
+            <div className="cta-panel-wrap">
+              <div className="cta-panel">
+                <div className="sec-tag" style={{display:'inline-flex',marginBottom:'20px'}}><span>Get Started</span></div>
+                <h2>Ready to transform your <span className="grad-text">lending pipeline?</span></h2>
+                <p>See how Finix handles every step — AI call to final disbursal — in one platform built for your bank.</p>
+                <div className="cta-btns">
+                  <a className="btn-primary" href="#portals">
+                    Explore the Platform
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <line x1="3" y1="8" x2="13" y2="8"/><polyline points="9,4 13,8 9,12"/>
+                    </svg>
+                  </a>
+                  <a className="btn-outline" href="#compliance">Security &amp; Compliance</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── TECH STACK ── */}
+      <section className="section" id="stack">
+        <div className="wrap">
+          <div className="rv">
+            <div className="sec-tag"><span>Technology</span></div>
+            <h2 className="sec-h2">Production-grade stack,<br/>open-source foundations.</h2>
+          </div>
+          <div className="chips-row rv">
+            <span className="chip chip-hi">Next.js 14</span>
+            <span className="chip chip-hi">FastAPI</span>
+            <span className="chip chip-hi">PostgreSQL</span>
+            <span className="chip chip-hi">Python</span>
+            <span className="chip chip-hi">TypeScript</span>
+            <span className="chip">LiveKit</span>
+            <span className="chip">AiSensy</span>
+            <span className="chip">DigiLocker</span>
+            <span className="chip">VG DocVerify</span>
+            <span className="chip">asyncpg</span>
+            <span className="chip">Server-Sent Events</span>
+            <span className="chip">JWT Auth</span>
+            <span className="chip">pgcrypto</span>
+            <span className="chip">App Router</span>
+            <span className="chip">Docker</span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer>
+        <div className="wrap">
+          <div className="footer-top">
+            <div className="footer-brand">
+              <a className="footer-logo" href="#hero">
+                <svg className="logo-mark-dark" width="37" height="41" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" stroke="white" strokeWidth="8" strokeLinejoin="round" fill="none"/>
+                  <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                </svg>
+                <svg className="logo-mark-light" width="37" height="41" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" fill="#1B2A4A"/>
+                  <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                </svg>
+                Finix
+              </a>
+              <p className="footer-tagline">Connect. Score. Approve.</p>
+              <p>AI-powered Loan Origination System by Virtual Galaxy IFINTECH Pvt. Ltd. Built for modern banks across India.</p>
+            </div>
+            <div className="footer-col">
+              <h4>Platform</h4>
+              <ul>
+                <li><a href="#features">Capabilities</a></li>
+                <li><a href="#flow">How It Works</a></li>
+                <li><a href="#portals">Portals</a></li>
+                <li><a href="#stack">Technology</a></li>
+              </ul>
+            </div>
+            <div className="footer-col">
+              <h4>Compliance</h4>
+              <ul>
+                <li><a href="#compliance">RBI &amp; TRAI</a></li>
+                <li><a href="#compliance">Maker-Checker</a></li>
+                <li><a href="#compliance">Audit Trail</a></li>
+                <li><a href="#compliance">KYC &amp; Identity</a></li>
+              </ul>
+            </div>
+          </div>
+          <div className="footer-bottom">
+            <span>© 2025 Virtual Galaxy IFINTECH Pvt. Ltd. · All rights reserved</span>
+            <span>Finix v1 · Confidential &amp; Proprietary</span>
+          </div>
+        </div>
+      </footer>
     </div>
+  );
+}
+
+export default function LandingPage() {
+  return (
+    <Suspense>
+      <LandingInner />
+    </Suspense>
   );
 }

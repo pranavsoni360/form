@@ -436,7 +436,7 @@ export default function LoanApplication() {
   const sessionLogout = useCallback(() => {
     sessionStorage.removeItem('loan_session');
     sessionStorage.removeItem('session_expiry');
-    router.push('/');
+    router.push('/apply');
   }, [router]);
 
   useEffect(() => {

@@ -32,9 +32,9 @@ export default function CustomerDashboard() {
 
   useEffect(() => {
     const s = sessionStorage.getItem('loan_session');
-    if (!s) { router.push('/'); return; }
+    if (!s) { router.push('/apply'); return; }
     fetch(`${API_URL}/api/get-application?session_token=${s}`)
-      .then(r => { if (r.status === 401) { router.push('/'); return null; } return r.json(); })
+      .then(r => { if (r.status === 401) { router.push('/apply'); return null; } return r.json(); })
       .then(d => { if (d?.status === 'success') setApp(d.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -47,7 +47,7 @@ export default function CustomerDashboard() {
   const stepIdx = s ? Math.max(0, STEP_MAP.indexOf(s.step)) : 0;
   const pct = isRejected ? 100 : Math.round((stepIdx / (STEPS.length - 1)) * 100);
 
-  const signOut = () => { sessionStorage.removeItem('loan_session'); router.push('/'); };
+  const signOut = () => { sessionStorage.removeItem('loan_session'); router.push('/apply'); };
 
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) return (

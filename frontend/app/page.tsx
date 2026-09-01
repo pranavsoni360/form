@@ -23,22 +23,28 @@ function LandingInner() {
     let resTO: ReturnType<typeof setTimeout>;
 
     if (canvas) {
-      const ctx = canvas.getContext('2d')!;
+      // Bind to a const the compiler can narrow. `canvas` is a mutable `let`
+      // from a ref, so TypeScript will not carry the null-check into the
+      // Particle methods below — a closure could in principle run after it was
+      // reassigned. Capturing it here fixes 8 build-breaking errors without
+      // scattering non-null assertions that would silence a REAL null later.
+      const cv = canvas;
+      const ctx = cv.getContext('2d')!;
       const PCOUNT = 55, MAX_DIST = 130;
 
       class Particle {
         x: number; y: number; vx: number; vy: number; r: number;
         constructor() {
-          this.x  = Math.random() * canvas.width;
-          this.y  = Math.random() * canvas.height;
+          this.x  = Math.random() * cv.width;
+          this.y  = Math.random() * cv.height;
           this.vx = (Math.random() - 0.5) * 0.32;
           this.vy = (Math.random() - 0.5) * 0.32;
           this.r  = Math.random() * 1.4 + 0.4;
         }
         update() {
           this.x += this.vx; this.y += this.vy;
-          if (this.x < 0 || this.x > canvas.width)  this.vx *= -1;
-          if (this.y < 0 || this.y > canvas.height)  this.vy *= -1;
+          if (this.x < 0 || this.x > cv.width)  this.vx *= -1;
+          if (this.y < 0 || this.y > cv.height)  this.vy *= -1;
         }
         draw() {
           ctx.beginPath();
@@ -53,8 +59,8 @@ function LandingInner() {
       function resizeCanvas() {
         const hero = document.getElementById('hero');
         if (!hero) return;
-        canvas.width  = hero.offsetWidth;
-        canvas.height = hero.offsetHeight;
+        cv.width  = hero.offsetWidth;
+        cv.height = hero.offsetHeight;
       }
 
       function drawLines() {
@@ -77,7 +83,7 @@ function LandingInner() {
       }
 
       function tick() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, cv.width, cv.height);
         particles.forEach(p => { p.update(); p.draw(); });
         drawLines();
         rafId = requestAnimationFrame(tick);

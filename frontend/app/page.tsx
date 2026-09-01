@@ -165,16 +165,8 @@ function LandingInner() {
       <nav id="nav">
         <div className="nav-inner">
           <a className="nav-logo" href="#hero">
-            <svg className="logo-mark-dark" width="43" height="48" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" stroke="white" strokeWidth="8" strokeLinejoin="round" fill="none"/>
-              <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-              <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-            </svg>
-            <svg className="logo-mark-light" width="43" height="48" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" fill="#1B2A4A"/>
-              <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-              <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-            </svg>
+            <img className="logo-mark-dark" src="/brand/finix-mark-dark.png" width="43" height="48" alt="" aria-hidden={true} />
+            <img className="logo-mark-light" src="/brand/finix-mark.png" width="43" height="48" alt="" aria-hidden={true} />
             Finix
           </a>
           <ul className="nav-links">
@@ -554,16 +546,8 @@ function LandingInner() {
           <div className="footer-top">
             <div className="footer-brand">
               <a className="footer-logo" href="#hero">
-                <svg className="logo-mark-dark" width="37" height="41" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                  <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" stroke="white" strokeWidth="8" strokeLinejoin="round" fill="none"/>
-                  <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                  <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                </svg>
-                <svg className="logo-mark-light" width="37" height="41" viewBox="0 0 100 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                  <path d="M50 5L90 20L90 55C90 77 72 95 50 103C28 95 10 77 10 55L10 20Z" fill="#1B2A4A"/>
-                  <path d="M28 72L42 52L54 64L76 26" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                  <path d="M67 20L77 27L71 38" stroke="#00C4B4" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                </svg>
+                <img className="logo-mark-dark" src="/brand/finix-mark-dark.png" width="37" height="41" alt="" aria-hidden={true} />
+                <img className="logo-mark-light" src="/brand/finix-mark.png" width="37" height="41" alt="" aria-hidden={true} />
                 Finix
               </a>
               <p className="footer-tagline">Connect. Score. Approve.</p>

@@ -57,6 +57,7 @@ interface AppRow {
   loan_amount_requested?: number | null;
   consumer_loan_type?: string | null;
   status: string;
+  disbursed_at?: string | null;
   created_at?: string;
   submitted_at?: string;
   system_score?: number | null;
@@ -65,13 +66,34 @@ interface AppRow {
   form_status?: string | null;
 }
 
+// BNK-02: the tab set must cover EVERY status an application can carry, or the
+// per-status counts won't sum to the total. 'disbursed' is DERIVED from
+// disbursed_at (the workflow keeps status='approved' and only stamps the
+// timestamp), so it was previously a phantom tab that always read 0. 'other' is
+// a catch-all (e.g. NBFC vendor_* statuses) shown only when it has rows, so the
+// counts always reconcile.
 const STATUS_FILTERS = [
-  "all", "submitted", "system_reviewed",
-  "officer_approved", "officer_rejected", "documents_submitted",
+  "all", "draft", "submitted", "system_reviewed",
+  "officer_approved", "officer_rejected",
+  "documents_requested", "documents_submitted",
   "approved", "supervisor_rejected", "disbursed",
+  "cancelled", "withdrawn", "other",
 ] as const;
 
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+// Statuses that map straight to their own tab (everything except the special
+// 'all', the derived 'disbursed', and the catch-all 'other').
+const EXPLICIT_STATUSES = new Set<string>(
+  STATUS_FILTERS.filter((f) => f !== "all" && f !== "disbursed" && f !== "other"),
+);
+
+/** The single tab an application belongs to — each app counts once. */
+function bucketOf(a: AppRow): string {
+  if (a.disbursed_at) return "disbursed";           // status stays 'approved' after payout
+  if (EXPLICIT_STATUSES.has(a.status)) return a.status;
+  return "other";
+}
 
 function fmtINR(n?: number | null) {
   if (n == null) return "—";
@@ -111,7 +133,7 @@ export default function BankApplicationsListPage() {
   const apps: AppRow[] = q.data?.applications ?? [];
 
   const filtered = React.useMemo(() => {
-    let rows = filter !== "all" ? apps.filter(a => a.status === filter) : apps;
+    let rows = filter !== "all" ? apps.filter(a => bucketOf(a) === filter) : apps;
     if (search.trim()) {
       const s = search.trim().toLowerCase();
       rows = rows.filter(a =>
@@ -125,10 +147,18 @@ export default function BankApplicationsListPage() {
   }, [apps, filter, search]);
 
   const counts = React.useMemo(() => {
+    // Each app falls in exactly one bucket, so the per-status counts sum to
+    // `all` (BNK-02).
     const c: Record<string, number> = { all: apps.length };
-    for (const a of apps) c[a.status] = (c[a.status] ?? 0) + 1;
+    for (const a of apps) { const b = bucketOf(a); c[b] = (c[b] ?? 0) + 1; }
     return c;
   }, [apps]);
+
+  // Hide the 'other' catch-all unless it actually has rows.
+  const visibleFilters = React.useMemo(
+    () => STATUS_FILTERS.filter((f) => f !== "other" || (counts.other ?? 0) > 0),
+    [counts],
+  );
 
   const cols: Column<AppRow>[] = [
     {
@@ -193,10 +223,10 @@ export default function BankApplicationsListPage() {
           qualifier={`${filtered.length} shown`}
           right={
             <FilterPills
-              options={STATUS_FILTERS.map((f) => ({
+              options={visibleFilters.map((f) => ({
                 key: f,
                 label: f.replace(/_/g, " "),
-                count: counts[f],
+                count: counts[f] ?? 0,
               }))}
               value={filter}
               onChange={setFilter}

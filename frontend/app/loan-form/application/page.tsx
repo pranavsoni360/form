@@ -1,5 +1,5 @@
 ﻿'use client';
-import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock, WifiOff } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { FinixLogo } from '@/components/shared/FinixLogo';
 
@@ -371,6 +371,10 @@ export default function LoanApplication() {
   };
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState('');
+  // RES-05: surface an offline state so a mid-form network drop is visible and
+  // the form re-saves on reconnect (answers already survive in React state).
+  const [offline, setOffline] = useState(false);
+  const autoSaveRef = useRef<() => void>(() => {});
   const [resuming, setResuming] = useState(false);
   const [resumeStep, setResumeStep] = useState(1);
   const [previewDoc, setPreviewDoc] = useState<{ url: string; label: string } | null>(null);
@@ -904,9 +908,31 @@ export default function LoanApplication() {
       });
       if (res.status === 401) { logout(); return; }
       setLastSaved(formatSavedStamp(new Date()));
-    } catch {}
+      setOffline(false);              // save succeeded -> we're online
+    } catch {
+      // Autosave POST failed (usually the network is down). Tell the user
+      // instead of swallowing it; answers stay safe in React state and re-save
+      // on the next change / reconnect.
+      setOffline(true);
+    }
     setSaving(false);
   };
+  autoSaveRef.current = autoSave;
+
+  // Reflect real connectivity immediately (not only on the next autosave), and
+  // force a re-save the moment we reconnect (RES-05).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setOffline(!navigator.onLine);
+    const goOffline = () => setOffline(true);
+    const goOnline = () => { setOffline(false); autoSaveRef.current(); };
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+    };
+  }, []);
 
   const onChange = (field: string, value: any) => {
     setFormData((p: any) => {
@@ -1511,7 +1537,11 @@ export default function LoanApplication() {
                 <span className="hidden sm:inline">Session&nbsp;</span>
                 {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:{String(secondsLeft % 60).padStart(2, '0')}
               </span>
-              {saving ? (
+              {offline ? (
+                <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full whitespace-nowrap" title="You are offline - your answers are safe and will save when you reconnect" style={{ color: 'var(--fx-amber)', background: 'var(--fx-amber-tint)', fontFamily: 'var(--font-body)' }}>
+                  <WifiOff className="w-3 h-3" /><span className="hidden sm:inline">Offline</span>
+                </span>
+              ) : saving ? (
                 <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ color: 'var(--fx-accent)', background: 'var(--fx-accent-tint)', fontFamily: 'var(--font-body)' }}>
                   <Loader2 className="w-3 h-3 animate-spin" /><span className="hidden sm:inline">Saving</span>
                 </span>
@@ -1524,6 +1554,21 @@ export default function LoanApplication() {
               <ThemeToggle />
             </div>
           </div>
+
+          {/* ── OFFLINE BANNER (RES-05) — mid-form connectivity loss ── */}
+          {offline && (
+            <div className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--fx-amber-tint)', border: '1px solid color-mix(in oklch, var(--fx-amber) 35%, var(--fx-border))' }}>
+              <WifiOff className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: 'var(--fx-amber)' }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold" style={{ color: 'var(--fx-amber)', fontFamily: 'var(--font-heading)' }}>
+                  You&apos;re offline
+                </p>
+                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+                  Your answers are safe on this device. We&apos;ll save them automatically as soon as you&apos;re back online — please don&apos;t close this tab.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* ── RESUME BANNER — shown when continuing a previously-saved application ── */}
           {resuming && (

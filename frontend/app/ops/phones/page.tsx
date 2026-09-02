@@ -9,6 +9,7 @@ import {
   Clock,
   PhoneCall,
   PowerOff,
+  ShieldAlert,
 } from "lucide-react";
 
 import { AppShell } from "@/components/shared/AppShell";
@@ -37,6 +38,8 @@ interface PhoneNumberRow {
   cooldown_until: string | null; // ISO string from backend
   status: "active" | "disabled" | "quarantined";
   updated_at: string | null;
+  /** Why the number was quarantined/disabled (auto-pause failure reason) */
+  last_failure_reason: string | null;
   /** Joined into the flat row */
   pool_id: string;
   pool_name: string;
@@ -57,11 +60,12 @@ interface PhonePoolsResponse {
       cooldown_until: string | null;
       status: "active" | "disabled" | "quarantined";
       updated_at: string | null;
+      last_failure_reason: string | null;
     }>;
   }>;
 }
 
-type Filter = "all" | "active" | "cooldown" | "disabled";
+type Filter = "all" | "active" | "cooldown" | "quarantined" | "disabled";
 
 /* ───────────────────────────── Page ──────────────────────────────────── */
 
@@ -104,6 +108,7 @@ export default function OpsPhonesPage() {
               : n.cooldown_until,
           status: n.status,
           updated_at: n.updated_at,
+          last_failure_reason: n.last_failure_reason,
           pool_id: pool.id,
           pool_name: pool.name,
           pool_capacity: pool.capacity,
@@ -125,8 +130,13 @@ export default function OpsPhonesPage() {
       if (filter === "cooldown") {
         return r.cooldown_until && new Date(r.cooldown_until).getTime() > nowMs;
       }
+      // Quarantined (auto-paused) and Disabled (manually paused) are distinct
+      // states, each its own list — OPS-22. Previously "disabled" caught both.
+      if (filter === "quarantined") {
+        return r.status === "quarantined";
+      }
       if (filter === "disabled") {
-        return r.status !== "active";
+        return r.status === "disabled";
       }
       return true;
     });
@@ -137,9 +147,14 @@ export default function OpsPhonesPage() {
     const nowMs = Date.now();
     let active = 0;
     let cooldown = 0;
+    let quarantined = 0;
     let disabled = 0;
     for (const r of flatRows) {
-      if (r.status !== "active") {
+      if (r.status === "quarantined") {
+        quarantined += 1;
+        continue;
+      }
+      if (r.status === "disabled") {
         disabled += 1;
         continue;
       }
@@ -154,6 +169,7 @@ export default function OpsPhonesPage() {
       total: flatRows.length,
       active,
       cooldown,
+      quarantined,
       disabled,
     };
   }, [flatRows, seed.data]);
@@ -162,6 +178,7 @@ export default function OpsPhonesPage() {
     { value: "all", label: "All" },
     { value: "active", label: "Active" },
     { value: "cooldown", label: "In cooldown" },
+    { value: "quarantined", label: "Quarantined" },
     { value: "disabled", label: "Disabled" },
   ];
 
@@ -169,6 +186,7 @@ export default function OpsPhonesPage() {
     all: counts.total,
     active: counts.active,
     cooldown: counts.cooldown,
+    quarantined: counts.quarantined,
     disabled: counts.disabled,
   };
 
@@ -221,7 +239,7 @@ export default function OpsPhonesPage() {
     {
       key: "status",
       header: "Status",
-      render: (r) => <StatusBadge status={r.status} />,
+      render: (r) => <StatusBadge status={r.status} reason={r.last_failure_reason} />,
     },
   ];
 
@@ -232,10 +250,11 @@ export default function OpsPhonesPage() {
     >
       <div className="space-y-6">
         {/* Stat row */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
           <StatCard label="POOLS" value={counts.pools} icon={Building2} tone="neutral" />
           <StatCard label="ACTIVE" value={counts.active} icon={CircleDot} tone="success" />
           <StatCard label="IN COOLDOWN" value={counts.cooldown} icon={Clock} tone="warning" />
+          <StatCard label="QUARANTINED" value={counts.quarantined} icon={ShieldAlert} tone="warning" />
           <StatCard label="DISABLED" value={counts.disabled} icon={PowerOff} tone="danger" />
         </div>
 
@@ -274,10 +293,24 @@ function maskPhone(p: string): string {
   return `+91-XXXXX${tail}`;
 }
 
-function StatusBadge({ status }: { status: PhoneNumberRow["status"] }) {
+function StatusBadge({ status, reason }: { status: PhoneNumberRow["status"]; reason?: string | null }) {
   if (status === "active") return <Badge variant="success">Active</Badge>;
-  if (status === "disabled") return <Badge variant="secondary">Disabled</Badge>;
-  return <Badge variant="destructive">Quarantined</Badge>;
+  // Quarantined/disabled numbers say WHY (OPS-22): the reason shows inline and
+  // as a hover title. Quarantined is auto-paused after failures; disabled is
+  // manually paused.
+  const badge =
+    status === "disabled" ? (
+      <Badge variant="secondary">Disabled</Badge>
+    ) : (
+      <Badge variant="destructive">Quarantined</Badge>
+    );
+  if (!reason) return badge;
+  return (
+    <div className="space-y-0.5" title={reason}>
+      {badge}
+      <div className="max-w-[220px] truncate text-[10px] text-muted-foreground">{reason}</div>
+    </div>
+  );
 }
 
 function TableSkeleton() {

@@ -181,7 +181,8 @@ async def phone_pools(user: dict = Depends(get_current_bank_user)):
                  pp.cooldown_seconds_min, pp.cooldown_seconds_max,
                  pn.id AS pn_id, pn.phone_number, pn.livekit_trunk_id,
                  pn.active_calls, pn.total_calls,
-                 pn.cooldown_until, pn.status, pn.updated_at
+                 pn.cooldown_until, pn.status, pn.updated_at,
+                 pn.last_failure_reason, pn.last_failed_at
                FROM phone_pools pp
                LEFT JOIN phone_numbers pn ON pn.pool_id = pp.id
               WHERE $1::uuid IS NULL OR pp.bank_id = $1 OR pp.bank_id IS NULL
@@ -217,6 +218,9 @@ async def phone_pools(user: dict = Depends(get_current_bank_user)):
                 "cooldown_until": r["cooldown_until"].isoformat() if r["cooldown_until"] else None,
                 "status": r["status"],
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+                # Why a number is quarantined (auto-paused) or disabled — OPS-22.
+                "last_failure_reason": r["last_failure_reason"],
+                "last_failed_at": r["last_failed_at"].isoformat() if r["last_failed_at"] else None,
             })
 
     return {"pools": list(by_pool.values())}

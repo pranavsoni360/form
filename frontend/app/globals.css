@@ -717,6 +717,13 @@ body:has(.finix-root) {
   --fx-teal-tint:       oklch(0.68 0.15 185 / 0.18);
 }
 
+/* Mobile sidebar — always full-width regardless of the JS collapsed state.
+   The collapsed 64px width is desktop-only; on mobile the drawer must always
+   be 240px so the label text and group headings are legible. */
+@media (max-width: 767px) {
+  .fx-sidebar { width: 240px !important; }
+}
+
 /* Popover entrance — small rise + fade + scale, quick and quiet. */
 @keyframes fx-pop-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.98); }

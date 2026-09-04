@@ -2,13 +2,10 @@
 
 // Finix nested-panel shell (design overhaul §1.1 / §1.4).
 //
-// Layout (top→bottom in the content column):
-//   AppBar — 56px, full width of content area; theme toggle + bell + user menu on the right.
-//   Page content — flex-col gap-4, grows to fill.
-//   AppFooter — © copyright, sticks to bottom on short pages (margin-top: auto).
-//
-// The sidebar is always-dark (#0A1B2D) and lives to the left. The content
-// column is the standard --fx-surface rounded panel.
+// Responsive layout:
+//   Mobile (<md): sidebar is a fixed-position drawer (z-50), hidden by default.
+//     A hamburger button in the AppBar opens it; a backdrop closes it.
+//   Desktop (≥md): sidebar is sticky, left-of-content, collapsible to 64px.
 //
 // Collapsed state persists in localStorage under "finix.sidebar.collapsed".
 
@@ -27,34 +24,50 @@ function readCollapsed(): boolean {
   try { return localStorage.getItem(COLLAPSED_KEY) === "1"; } catch { return false; }
 }
 
+function HamburgerIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+      <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function AppBar({
   identity,
   onLogout,
   identityFooter,
   right,
+  onMenuOpen,
 }: {
   identity: SidebarIdentity;
   onLogout: () => void;
   identityFooter?: React.ReactNode;
   right?: React.ReactNode;
+  onMenuOpen?: () => void;
 }) {
   return (
     <header
-      className="flex h-14 shrink-0 items-center px-5"
+      className="flex h-14 shrink-0 items-center px-3 sm:px-5"
       style={{ borderBottom: "1px solid var(--fx-border)", background: "var(--fx-surface)" }}
     >
-      {/* Left spacer so right controls push to the edge */}
+      {/* Hamburger — mobile only */}
+      <button
+        type="button"
+        onClick={onMenuOpen}
+        className="mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-[8px] transition-colors md:hidden"
+        style={{ color: "var(--fx-text2)" }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--fx-surface2)")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+        aria-label="Open navigation"
+      >
+        <HamburgerIcon />
+      </button>
+
+      {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Right controls: idle countdown · theme toggle · bell · user menu */}
-      <div className="flex items-center gap-3">
-        {/* Idle-session countdown + warning modal. MUST live here, in the
-            always-mounted AppBar — not inside the UserMenu dropdown, which
-            unmounts when closed. Rendering it in the (closed-by-default) menu
-            silently disabled the entire idle mechanism: the countdown interval,
-            the activity-reset listeners and the warning modal only ran while the
-            menu was open, and re-mounting on open reset the deadline, so a staff
-            session never timed out for inactivity. */}
+      {/* Right controls */}
+      <div className="flex items-center gap-2 sm:gap-3">
         {identityFooter}
         <FinixThemeToggle />
         {right}
@@ -73,7 +86,7 @@ function AppBar({
 function AppFooter() {
   return (
     <footer
-      className="shrink-0 px-5 py-3.5 text-center text-[11px]"
+      className="shrink-0 px-3 sm:px-5 py-3.5 text-center text-[11px]"
       style={{
         borderTop: "1px solid var(--fx-border)",
         color: "var(--fx-text3)",
@@ -110,8 +123,9 @@ export function FinixShell({
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
+  const [mobileOpen, setMobileOpen] = React.useState(false);
 
-  // Hydrate from localStorage after mount.
+  // Hydrate collapsed state from localStorage after mount.
   React.useEffect(() => {
     setCollapsed(readCollapsed());
   }, []);
@@ -127,13 +141,28 @@ export function FinixShell({
   return (
     <FinixThemeProvider>
       <div className="finix-root flex min-h-screen" style={{ background: "var(--fx-bg)" }}>
-        {/* Sidebar — always-dark, sticky */}
-        <Sidebar nav={nav} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
-
-        {/* Content column — rounded panel right of sidebar */}
-        <div className="flex min-w-0 flex-1 flex-col py-3 pr-3">
+        {/* Mobile overlay backdrop — click to close */}
+        {mobileOpen && (
           <div
-            className="flex min-h-[calc(100vh-24px)] flex-col rounded-[18px]"
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] md:hidden"
+            onClick={() => setMobileOpen(false)}
+            aria-hidden
+          />
+        )}
+
+        {/* Sidebar — sticky on desktop, drawer overlay on mobile */}
+        <Sidebar
+          nav={nav}
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapse}
+          mobileOpen={mobileOpen}
+          onMobileClose={() => setMobileOpen(false)}
+        />
+
+        {/* Content column */}
+        <div className="flex min-w-0 flex-1 flex-col md:py-3 md:pr-3">
+          <div
+            className="flex min-h-screen md:min-h-[calc(100vh-24px)] flex-col md:rounded-[18px]"
             style={{ background: "var(--fx-surface)" }}
           >
             {/* App bar */}
@@ -142,14 +171,15 @@ export function FinixShell({
               onLogout={onLogout}
               identityFooter={identityFooter}
               right={headerRight}
+              onMenuOpen={() => setMobileOpen(true)}
             />
 
             {/* Page content */}
-            <main className="flex flex-1 flex-col gap-4 px-[18px] pb-4 pt-5">
+            <main className="flex flex-1 flex-col gap-3 px-3 pb-4 pt-4 sm:px-4 md:gap-4 md:px-[18px] md:pt-5">
               {children}
             </main>
 
-            {/* Footer sticks to the bottom of the content column */}
+            {/* Footer */}
             <AppFooter />
           </div>
         </div>

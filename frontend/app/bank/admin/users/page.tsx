@@ -8,8 +8,6 @@
 import * as React from "react";
 import { BankAdminShell } from "../shell";
 import {
-  Toolbar,
-  Breadcrumb,
   PageTitle,
   FilterPills,
   Pill,
@@ -327,40 +325,35 @@ export default function UsersPage() {
   ];
 
   return (
-    <BankAdminShell>
-      {/* ── Page header ── */}
-      <Toolbar
-        left={<Breadcrumb>users</Breadcrumb>}
-        right={
-          <>
-            <Button variant="quiet" onClick={() => setSettings(true)}>Settings</Button>
-            {/* Split button: primary Create user, secondary Invite by email */}
-            <div className="flex items-center">
-              <Button
-                variant="primary"
-                onClick={() => setCreate(true)}
-                disabled={seats?.free === 0}
-                className="rounded-r-none"
-                title={seats?.free === 0 ? "No free seats — suspend a user or contact Virtual Galaxy" : undefined}
-              >
-                Create user
-              </Button>
-              <button
-                type="button"
-                onClick={() => setInvite(true)}
-                disabled={seats?.free === 0}
-                className="fx-btn fx-btn-primary flex h-[30px] w-7 shrink-0 items-center justify-center rounded-l-none border-l text-white"
-                style={{ borderColor: "rgba(255,255,255,0.25)" }}
-                aria-label="Invite by email"
-                title="Invite by email"
-              >
-                <span className="text-[10px]">▾</span>
-              </button>
-            </div>
-          </>
-        }
-      />
-
+    <BankAdminShell
+      headerActions={
+        <>
+          <Button variant="quiet" onClick={() => setSettings(true)}>Settings</Button>
+          <div className="flex items-center">
+            <Button
+              variant="primary"
+              onClick={() => setCreate(true)}
+              disabled={seats?.free === 0}
+              className="rounded-r-none"
+              title={seats?.free === 0 ? "No free seats — suspend a user or contact Virtual Galaxy" : undefined}
+            >
+              Create user
+            </Button>
+            <button
+              type="button"
+              onClick={() => setInvite(true)}
+              disabled={seats?.free === 0}
+              className="fx-btn fx-btn-primary flex h-[30px] w-7 shrink-0 items-center justify-center rounded-l-none border-l text-white"
+              style={{ borderColor: "rgba(255,255,255,0.25)" }}
+              aria-label="Invite by email"
+              title="Invite by email"
+            >
+              <span className="text-[10px]">▾</span>
+            </button>
+          </div>
+        </>
+      }
+    >
       <PageTitle
         title="Users"
         subtitle="Manage your bank's officers and supervisors. Suspending frees the seat immediately and keeps history; deleting removes access permanently but the audit record survives."

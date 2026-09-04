@@ -9,8 +9,6 @@
 import * as React from "react";
 import { BankAdminShell } from "../shell";
 import {
-  Toolbar,
-  Breadcrumb,
   PageTitle,
   Card,
   CardHeader,
@@ -93,7 +91,6 @@ export default function SettingsPage() {
 
   return (
     <BankAdminShell>
-      <Toolbar left={<Breadcrumb>settings</Breadcrumb>} />
       <PageTitle
         title="Settings"
         subtitle="Four sections are yours to change. One is set by Virtual Galaxy under your contract. Every change is written to the activity log with your name and the time."

@@ -8,9 +8,7 @@
 import * as React from "react";
 import { BankAdminShell } from "../shell";
 import {
-  Toolbar,
   PeriodChip,
-  Breadcrumb,
   PageTitle,
   MetricCard,
   DeltaChip,
@@ -133,11 +131,10 @@ export default function UsagePage() {
   ];
 
   return (
-    <BankAdminShell>
-      <Toolbar
-        left={<><PeriodChip>{quota ? `${quota.period.from} – ${quota.period.to}` : "This month"}</PeriodChip><Breadcrumb>usage & call statistics</Breadcrumb></>}
-        right={<Button variant="primary" onClick={doExport}>Export CSV</Button>}
-      />
+    <BankAdminShell headerActions={<Button variant="primary" onClick={doExport}>Export CSV</Button>}>
+      <div className="flex items-center gap-2 mb-1">
+        <PeriodChip>{quota ? `${quota.period.from} – ${quota.period.to}` : "This month"}</PeriodChip>
+      </div>
       <PageTitle title="Usage and call statistics" subtitle="Minutes, connect rate and call outcomes for your bank this period." />
 
       {loading ? (

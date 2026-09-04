@@ -30,7 +30,7 @@ function initialsOf(name: string): string {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
-export function BankAdminShell({ children }: { children: React.ReactNode }) {
+export function BankAdminShell({ children, headerActions }: { children: React.ReactNode; headerActions?: React.ReactNode }) {
   const router = useRouter();
   const [me, setMe] = React.useState<any>(null);
   const [ready, setReady] = React.useState(false);
@@ -84,7 +84,12 @@ export function BankAdminShell({ children }: { children: React.ReactNode }) {
       }}
       identityFooter={<SessionTimer onLogout={doLogout} />}
       onLogout={doLogout}
-      headerRight={<BankNotificationBell auditHref="/bank/admin/audit" />}
+      headerRight={
+        <div className="flex items-center gap-2">
+          {headerActions}
+          <BankNotificationBell auditHref="/bank/admin/audit" />
+        </div>
+      }
     >
       {children}
     </FinixShell>

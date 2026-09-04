@@ -454,10 +454,10 @@ export default function UsersPage() {
           />
         ) : (
           <div
-            className="overflow-hidden rounded-[12px]"
+            className="overflow-x-auto rounded-[12px]"
             style={{ border: "1px solid var(--fx-border)" }}
           >
-            <Table columns={cols} rows={rows} rowKey={(r) => (r.kind === "user" ? r.u.id : `inv-${r.i.id}`)} />
+            <Table columns={cols} rows={rows} rowKey={(r) => (r.kind === "user" ? r.u.id : `inv-${r.i.id}`)} scroll={false} />
           </div>
         )}
       </div>

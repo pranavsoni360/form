@@ -146,7 +146,7 @@ export default function UsagePage() {
           {exceeded && <QuotaExceededBanner quota={quota!} onRequestIncrease={() => setQuotaOpen(true)} />}
 
           {/* Quota + credit */}
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2.4fr_1fr]">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[2.4fr_1fr]">
             <QuotaPanel quota={quota!} />
             <CreditCard quota={quota!} />
           </div>
@@ -160,14 +160,15 @@ export default function UsagePage() {
           </div>
 
           {/* Outcomes + branches */}
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Card>
               <CardHeader title="Call outcomes" qualifier={`${(summary?.calls_placed ?? 0).toLocaleString("en-IN")} calls`} />
               <CardBody className="space-y-3">
                 {summary && summary.calls_placed > 0 ? (
                   <>
                     <SegmentedBar segments={outcomeSegments} />
-                    <table className="w-full">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[280px]">
                       <tbody>
                         {summary.outcomes.map((o) => (
                           <tr key={o.status} className="text-[12px]">
@@ -178,6 +179,7 @@ export default function UsagePage() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                     <p className="text-[11px] text-fx-text3">Invalid numbers are sent back to the branch for correction; failed calls are not billed.</p>
                   </>
                 ) : (
@@ -212,11 +214,11 @@ export default function UsagePage() {
             ) : (
               <>
                 <Table columns={callCols} rows={calls} rowKey={(c) => c.id} />
-                <div className="flex items-center justify-between px-[14px] py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-[14px] py-3">
                   <span className="text-[11px] text-fx-text3">
                     {((callsMeta.page - 1) * 10 + 1).toLocaleString("en-IN")}–{Math.min(callsMeta.page * 10, callsMeta.total).toLocaleString("en-IN")} of {callsMeta.total.toLocaleString("en-IN")} calls
                   </span>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {Array.from({ length: Math.min(callsMeta.total_pages, 7) }).map((_, i) => {
                       const pageNo = i + 1;
                       const active = pageNo === callsMeta.page;

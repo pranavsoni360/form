@@ -65,7 +65,7 @@ export function MetricCard({
       </div>
       <div className="mt-2 flex items-baseline gap-1.5">
         <span
-          className="text-[26px] font-medium leading-none text-fx-text"
+          className="text-[22px] sm:text-[26px] font-medium leading-none text-fx-text break-all"
           style={{ letterSpacing: "-0.02em" }}
         >
           {value}

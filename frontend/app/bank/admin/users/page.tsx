@@ -56,6 +56,7 @@ import { PERMISSION_MODULES, unmappedCodes } from "@/lib/utils/permissionModules
 import { UserSettingsPanel } from "./UserSettingsPanel";
 
 type FilterKey = "all" | "active" | "invited" | "suspended";
+type RoleFilter = "all" | "bank_admin" | "bank_officer" | "bank_supervisor" | "custom";
 
 const ROLE_LABEL: Record<string, string> = {
   bank_admin: "Bank admin",
@@ -148,6 +149,7 @@ export default function UsersPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState<FilterKey>("all");
+  const [roleFilter, setRoleFilter] = React.useState<RoleFilter>("all");
   const [search, setSearch] = React.useState("");
 
   const [invite, setInvite] = React.useState(false);
@@ -183,6 +185,9 @@ export default function UsersPage() {
       if (filter === "invited") all = all.filter((r) => r.kind === "invite" || r.u?.status === "invited");
       else all = all.filter((r) => r.kind === "user" && r.u.status === filter);
     }
+    if (roleFilter !== "all") {
+      all = all.filter((r) => (r.kind === "user" ? r.u.role : r.i.role) === roleFilter);
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       all = all.filter((r) => {
@@ -200,7 +205,7 @@ export default function UsersPage() {
       });
     }
     return all;
-  }, [data, filter, search]);
+  }, [data, filter, roleFilter, search]);
 
   const seats = data?.seats;
   const counts = data?.counts;
@@ -393,19 +398,37 @@ export default function UsersPage() {
 
       {/* ── User table ── */}
       <div>
-        {/* Filter bar: search + status tabs */}
-        <div className="mb-3 flex flex-wrap items-center gap-3">
+        {/* Filter bar: search + role dropdown + status pills */}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
           <input
             type="search"
             placeholder="Search by name, username or email…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="fx-input fx-input-ok h-[30px] min-w-[220px] rounded-[10px] px-3 text-[13px]"
+            className="fx-input fx-input-ok h-[30px] min-w-[200px] rounded-[10px] px-3 text-[13px]"
           />
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
+            className="h-[30px] rounded-[10px] px-2 pr-6 text-[13px] cursor-pointer focus:outline-none"
+            style={{
+              background: "var(--fx-surface2)",
+              color: "var(--fx-text)",
+              border: "1px solid var(--fx-border)",
+              boxShadow: "inset 0 0 0 0 transparent",
+              appearance: "auto",
+            }}
+          >
+            <option value="all">All roles</option>
+            <option value="bank_admin">Admin</option>
+            <option value="bank_officer">Officer</option>
+            <option value="bank_supervisor">Supervisor</option>
+            <option value="custom">Custom</option>
+          </select>
           <div className="ml-auto flex items-center gap-2">
             {counts && (
               <span className="text-[12px] text-fx-text3">
-                {counts.all} total
+                {rows.length !== counts.all ? `${rows.length} of ${counts.all}` : `${counts.all} total`}
               </span>
             )}
             <FilterPills options={filterOptions} value={filter} onChange={setFilter} />

@@ -279,27 +279,27 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
    ════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="dark"] .finix-root {
-  --fx-bg:            oklch(0.145 0.02 265);
-  --fx-surface:       oklch(0.185 0.02 265);
-  --fx-surface2:      oklch(0.225 0.022 265);
-  --fx-border:        oklch(0.27 0.02 265);
-  --fx-border-strong: oklch(0.34 0.02 265);
-  --fx-text:          oklch(0.97 0.005 265);
-  --fx-text2:         oklch(0.75 0.01 265);
-  --fx-text3:         oklch(0.58 0.015 265);
-  --fx-accent:        oklch(0.62 0.19 265);
+  --fx-bg:            oklch(0.140 0.022 228);
+  --fx-surface:       oklch(0.182 0.022 228);
+  --fx-surface2:      oklch(0.222 0.024 228);
+  --fx-border:        oklch(0.268 0.022 228);
+  --fx-border-strong: oklch(0.338 0.022 228);
+  --fx-text:          oklch(0.97 0.004 228);
+  --fx-text2:         oklch(0.75 0.010 228);
+  --fx-text3:         oklch(0.58 0.013 228);
+  --fx-accent:        oklch(0.60 0.17 245);
   --fx-green:         oklch(0.72 0.13 165);
   --fx-amber:         oklch(0.78 0.13 75);
   --fx-orange:        oklch(0.72 0.16 50);
   --fx-red:           oklch(0.65 0.19 25);
 
-  --fx-accent-grad:   linear-gradient(180deg, oklch(0.66 0.19 265), oklch(0.54 0.20 265));
-  --fx-accent-glow:   0 8px 24px oklch(0.55 0.20 265 / 0.45);
-  --fx-elevation:     0 24px 60px oklch(0.1 0.02 265 / 0.5);
+  --fx-accent-grad:   linear-gradient(180deg, oklch(0.64 0.17 245), oklch(0.53 0.18 245));
+  --fx-accent-glow:   0 8px 24px oklch(0.55 0.17 245 / 0.50);
+  --fx-elevation:     0 24px 60px oklch(0.06 0.022 228 / 0.55);
 
   /* Pill/tag tint fills — status colour at 16% alpha in dark. Precomputed per
      token so we don't depend on the oklch(from …) relative-colour syntax. */
-  --fx-accent-tint:  oklch(0.62 0.19 265 / 0.16);
+  --fx-accent-tint:  oklch(0.60 0.17 245 / 0.18);
   --fx-green-tint:   oklch(0.72 0.13 165 / 0.16);
   --fx-amber-tint:   oklch(0.78 0.13 75  / 0.16);
   --fx-orange-tint:  oklch(0.72 0.16 50  / 0.16);
@@ -309,32 +309,32 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 
 .finix-root,
 [data-theme="light"] .finix-root {
-  --fx-bg:            oklch(0.955 0.005 265);
+  --fx-bg:            oklch(0.960 0.007 228);
   --fx-surface:       #ffffff;
-  --fx-surface2:      oklch(0.972 0.004 265);
-  --fx-border:        oklch(0.90 0.006 265);
-  --fx-border-strong: oklch(0.83 0.008 265);
-  --fx-text:          oklch(0.20 0.02 265);
-  --fx-text2:         oklch(0.46 0.015 265);
-  --fx-text3:         oklch(0.60 0.012 265);
-  --fx-accent:        oklch(0.52 0.20 265);
-  --fx-green:         oklch(0.55 0.13 165);
-  --fx-amber:         oklch(0.62 0.13 75);
-  --fx-orange:        oklch(0.60 0.16 50);
-  --fx-red:           oklch(0.55 0.17 25);
+  --fx-surface2:      oklch(0.976 0.005 228);
+  --fx-border:        oklch(0.906 0.008 228);
+  --fx-border-strong: oklch(0.844 0.010 228);
+  --fx-text:          oklch(0.18 0.028 228);
+  --fx-text2:         oklch(0.44 0.018 228);
+  --fx-text3:         oklch(0.60 0.012 228);
+  --fx-accent:        oklch(0.46 0.18 245);
+  --fx-green:         oklch(0.52 0.13 165);
+  --fx-amber:         oklch(0.60 0.13 75);
+  --fx-orange:        oklch(0.58 0.16 50);
+  --fx-red:           oklch(0.52 0.17 25);
 
-  --fx-accent-grad:   linear-gradient(180deg, oklch(0.60 0.20 265), oklch(0.50 0.20 265));
-  --fx-accent-glow:   0 6px 18px oklch(0.52 0.20 265 / 0.28);
+  --fx-accent-grad:   linear-gradient(180deg, oklch(0.52 0.18 245), oklch(0.43 0.18 245));
+  --fx-accent-glow:   0 6px 18px oklch(0.46 0.18 245 / 0.32);
   /* Lighter than the dark theme's elevation: a near-black 50% shadow reads as
      a smudge on white surfaces. Same geometry, softer ink. */
-  --fx-elevation:     0 20px 48px oklch(0.1 0.02 265 / 0.16);
+  --fx-elevation:     0 20px 48px oklch(0.08 0.025 228 / 0.18);
 
   /* Light: status colour at 10% alpha. */
-  --fx-accent-tint:  oklch(0.52 0.20 265 / 0.10);
-  --fx-green-tint:   oklch(0.55 0.13 165 / 0.10);
-  --fx-amber-tint:   oklch(0.62 0.13 75  / 0.10);
-  --fx-orange-tint:  oklch(0.60 0.16 50  / 0.10);
-  --fx-red-tint:     oklch(0.55 0.17 25  / 0.10);
+  --fx-accent-tint:  oklch(0.46 0.18 245 / 0.10);
+  --fx-green-tint:   oklch(0.52 0.13 165 / 0.10);
+  --fx-amber-tint:   oklch(0.60 0.13 75  / 0.10);
+  --fx-orange-tint:  oklch(0.58 0.16 50  / 0.10);
+  --fx-red-tint:     oklch(0.52 0.17 25  / 0.10);
   color-scheme: light;
 }
 
@@ -369,7 +369,7 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 .finix-root {
   --fx-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --fx-dur: 160ms;
-  --fx-focus: 0 0 0 2px var(--fx-bg), 0 0 0 4px oklch(0.62 0.19 265 / 0.55);
+  --fx-focus: 0 0 0 2px var(--fx-bg), 0 0 0 4px oklch(0.60 0.17 245 / 0.55);
 }
 
 /* Base button behaviour — used by every fx button variant. */
@@ -393,7 +393,7 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 }
 .fx-btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 10px 28px oklch(0.55 0.20 265 / 0.55);
+  box-shadow: 0 10px 28px oklch(0.50 0.18 245 / 0.55);
   filter: brightness(1.05);
 }
 .fx-btn-primary:focus-visible { box-shadow: var(--fx-accent-glow), var(--fx-focus); }
@@ -406,7 +406,7 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 .fx-btn-quiet:hover:not(:disabled) {
   transform: translateY(-1px);
   background: var(--fx-surface);
-  box-shadow: inset 0 0 0 1px var(--fx-border), 0 4px 14px oklch(0.1 0.02 265 / 0.28);
+  box-shadow: inset 0 0 0 1px var(--fx-border), 0 4px 14px oklch(0.08 0.022 228 / 0.28);
 }
 
 /* Danger — quiet red. Fill deepens on hover; no colour shift elsewhere. */
@@ -421,7 +421,7 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 }
 .fx-action-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 12px 30px oklch(0.55 0.20 265 / 0.5);
+  box-shadow: 0 12px 30px oklch(0.50 0.18 245 / 0.50);
   filter: brightness(1.04);
 }
 .fx-action-card:active { transform: translateY(0) scale(0.995); }

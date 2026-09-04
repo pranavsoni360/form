@@ -200,6 +200,12 @@ export default function LoanApplication() {
   // way they can judge whether they have time before it expires.
   const [secondsLeft, setSecondsLeft] = useState<number>(Math.floor(SESSION_TIMEOUT_MS / 1000));
 
+  // Fetch the AA bank list once the customer reaches the Documents step.
+  useEffect(() => {
+    if (currentStep === 2) loadAaBanks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep]);
+
   // Count up while an ITR fetch is in flight.
   useEffect(() => {
     if (!itrBusy) { setItrElapsed(0); return; }
@@ -310,9 +316,40 @@ export default function LoanApplication() {
 
   const [digilockerStep, setDigilockerStep] = useState<'idle' | 'linking' | 'waiting' | 'fetching' | 'done'>('idle');
   const [aaUploadState, setAaUploadState] = useState<'idle' | 'initiating' | 'polling' | 'complete' | 'failed'>('idle');
+  // The customer's bank, for the Account Aggregator upload. Digitap parses a
+  // statement by template-matching the ISSUING bank's PDF layout, so the wrong
+  // institution means the upload fails or is parsed against the wrong template.
+  // institution_id used to be hardcoded to one bank for every applicant.
+  const [aaBanks, setAaBanks] = useState<{ id: number; name: string }[]>([]);
+  const [aaBankId, setAaBankId] = useState<string>('');
+  const [aaBanksLoading, setAaBanksLoading] = useState(false);
+  const [aaBanksError, setAaBanksError] = useState('');
   const [aaUploadError, setAaUploadError] = useState('');
 
+  // Loaded on demand: ~90 institutions, worth fetching only when the customer
+  // actually reaches the Documents step. Cached server-side for an hour.
+  const loadAaBanks = async () => {
+    if (aaBanks.length || aaBanksLoading) return;
+    setAaBanksLoading(true); setAaBanksError('');
+    try {
+      const res = await fetch(`${API_URL}/api/aa-institutions?session_token=${getSession() || ''}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Could not load the bank list');
+      setAaBanks(data.institutions || []);
+    } catch (err: any) {
+      setAaBanksError(err.message || 'Could not load the bank list. Please try again.');
+    } finally {
+      setAaBanksLoading(false);
+    }
+  };
+
   const handleAAStatementInitiate = async () => {
+    // Guard rather than silently defaulting: sending the wrong bank produces a
+    // vendor-side failure the customer cannot interpret.
+    if (!aaBankId) {
+      setAaUploadError('Please choose your bank first.');
+      return;
+    }
     setAaUploadState('initiating');
     setAaUploadError('');
     try {
@@ -320,7 +357,7 @@ export default function LoanApplication() {
       const res = await fetch(`${API_URL}/api/aa-statement-initiate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_token: session }),
+        body: JSON.stringify({ session_token: session, institution_id: aaBankId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Could not generate upload link');
@@ -2303,6 +2340,43 @@ export default function LoanApplication() {
                           Verify with DigiLocker to fill this automatically
                         </button>
                       )}
+                      {/* Bank picker for the Account Aggregator journey. Digitap
+                          template-matches the issuing bank's PDF layout, so the
+                          institution has to be the customer's actual bank — it
+                          was previously hardcoded to one bank for everyone. */}
+                      {doc.journey === 'vendor' && state !== 'done' && (
+                        <div className="mt-2">
+                          <label className="block text-xs font-medium mb-1"
+                            style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+                            Your bank <span style={{ color: 'var(--fx-red)' }}>*</span>
+                          </label>
+                          <select
+                            value={aaBankId}
+                            onChange={(e) => { setAaBankId(e.target.value); setAaUploadError(''); }}
+                            disabled={aaBanksLoading || aaUploadState === 'initiating' || aaUploadState === 'polling'}
+                            className={inp('')}
+                            style={{ maxWidth: '340px' }}>
+                            <option value="">
+                              {aaBanksLoading ? 'Loading banks…' : 'Select your bank'}
+                            </option>
+                            {aaBanks.map(b => (
+                              <option key={b.id} value={String(b.id)}>{b.name}</option>
+                            ))}
+                          </select>
+                          {aaBanksError && (
+                            <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}>
+                              <AlertTriangle className="w-3 h-3 flex-shrink-0" />{aaBanksError}
+                              <button type="button" onClick={() => { setAaBanks([]); loadAaBanks(); }}
+                                className="underline underline-offset-2 ml-1">Retry</button>
+                            </p>
+                          )}
+                          {!aaBanksLoading && !aaBanksError && aaBanks.length > 0 && !aaBankId && (
+                            <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>
+                              Pick the bank that issued the account you want analysed.
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {/* A journey that WOULD be automatic but is not wired yet.
                           Stated plainly rather than dressed up as a choice. */}
                       {state !== 'done' && doc.automationPending && (
@@ -2357,7 +2431,7 @@ export default function LoanApplication() {
                       ) : (
                         <button type="button"
                           onClick={handleAAStatementInitiate}
-                          disabled={aaUploadState === 'initiating' || aaUploadState === 'polling'}
+                          disabled={!aaBankId || aaUploadState === 'initiating' || aaUploadState === 'polling'}
                           className="px-4 py-2 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60"
                           style={{ background: 'var(--fx-accent)', color: '#fff' }}>
                           {(aaUploadState === 'initiating' || aaUploadState === 'polling') && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

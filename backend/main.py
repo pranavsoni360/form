@@ -3921,6 +3921,75 @@ async def _aa_post(endpoint: str, obj: dict) -> dict:
     return _aa_parse(resp.text)
 
 
+# Institution list for the customer's bank picker. Cached in-process: it is
+# reference data that changes when Digitap onboards a bank, not per-applicant,
+# and the list costs a ~2s vendor round trip.
+_AA_INSTITUTIONS_CACHE: dict = {"at": 0.0, "rows": []}
+_AA_INSTITUTIONS_TTL = float(os.getenv("AA_INSTITUTIONS_TTL_SECONDS", "3600"))
+
+
+@app.get("/api/aa-institutions")
+async def aa_institutions(session_token: str = ""):
+    """Banks the customer can pick for the Account Aggregator statement upload.
+
+    Session-authenticated, NOT bank-staff authenticated: the officer-side
+    equivalent (/api/bsa/institutions) requires a bank login, which a customer
+    filling in the form does not have.
+
+    WHY THIS EXISTS: institution_id was hardcoded to "16" for every applicant.
+    Digitap parses a statement by template-matching the ISSUING BANK's PDF
+    layout, so sending the wrong institution means the upload either fails
+    outright or is parsed against the wrong template — which is how the earlier
+    "error 065" test failure happened. The customer knows which bank they bank
+    with; the system does not, so it has to ask.
+    """
+    if not session_token:
+        raise HTTPException(status_code=400, detail="session_token required")
+    row, application_id = await resolve_token_or_session(session_token)
+    if not application_id:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    # Local import: the module-level `import time as _time` sits further down
+    # this file, and depending on definition order here would be a trap for
+    # whoever next moves code around.
+    import time as _t_now
+    now = _t_now.time()
+    if _AA_INSTITUTIONS_CACHE["rows"] and now - _AA_INSTITUTIONS_CACHE["at"] < _AA_INSTITUTIONS_TTL:
+        return {"institutions": _AA_INSTITUTIONS_CACHE["rows"], "cached": True}
+
+    if VG_MOCK_MODE:
+        rows = [{"id": 16, "name": "Mock Bank"}]
+        _AA_INSTITUTIONS_CACHE.update(at=now, rows=rows)
+        return {"institutions": rows, "mock": True}
+
+    try:
+        data = await _aa_post("InstitutionList", {"type": "Statement"})
+    except httpx.HTTPError as e:
+        logger.warning("AA InstitutionList failed: %s", e)
+        # Serve a stale list rather than an empty picker: an out-of-date bank
+        # name is far better than a customer who cannot proceed at all.
+        if _AA_INSTITUTIONS_CACHE["rows"]:
+            return {"institutions": _AA_INSTITUTIONS_CACHE["rows"], "stale": True}
+        raise HTTPException(status_code=502, detail="Could not load the bank list. Please try again.")
+
+    rows = []
+    for r in (data.get("data") or []):
+        if not isinstance(r, dict):
+            continue
+        try:
+            inst_id = int(r.get("id"))
+        except (TypeError, ValueError):
+            continue
+        name = str(r.get("name") or "").strip()
+        if not name:
+            continue
+        rows.append({"id": inst_id, "name": name})
+    rows.sort(key=lambda x: x["name"].lower())
+    if rows:
+        _AA_INSTITUTIONS_CACHE.update(at=now, rows=rows)
+    return {"institutions": rows}
+
+
 @app.post("/api/aa-statement-initiate")
 async def aa_statement_initiate(request: Request):
     """Generate a bank-statement upload link for the customer (statementupload flow).
@@ -3947,6 +4016,13 @@ async def aa_statement_initiate(request: Request):
     start_month = f"{sy:04d}-{sm:02d}"
     end_month = f"{y:04d}-{m:02d}"
 
+    # The customer picks their bank; Digitap needs its id to choose the right
+    # PDF template. Falls back to the previous hardcoded default only so an old
+    # client that does not send one keeps working.
+    institution_id = str(data.get("institution_id") or "").strip() or os.getenv("AA_DEFAULT_INSTITUTION_ID", "16")
+    if not institution_id.isdigit():
+        raise HTTPException(status_code=400, detail="institution_id must be numeric")
+
     return_url = f"{FORM_BASE_URL}/loan-form/application?aa_complete=1"
     callback_url = os.getenv(
         "AA_CALLBACK_URL",
@@ -3966,7 +4042,7 @@ async def aa_statement_initiate(request: Request):
             "txn_completed_cburl": callback_url,
             "start_month": start_month,
             "end_month": end_month,
-            "institution_id": "16",
+            "institution_id": institution_id,
             "destination": "statementupload",
             "return_url": return_url,
             "acceptance_policy": "atLeastOneTransactionInRange",

@@ -465,7 +465,7 @@ export function TopBar({ title }: { title?: string }) {
         </div>
       )}
 
-      {/* Breadcrumb — "VGIPL / ops / page" */}
+      {/* Breadcrumb — "VGIL / ops / page" */}
       <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
         {crumbs.map((c, i) => (
           <React.Fragment key={c.href + i}>
@@ -494,9 +494,9 @@ export function TopBar({ title }: { title?: string }) {
 
 function derivedCrumbs(pathname: string): { href: string; label: string }[] {
   const parts = pathname.split("/").filter(Boolean);
-  // /ops → "VGIPL / ops / dashboard"
-  // /ops/calls → "VGIPL / ops / all calls"
-  const org = { href: "/ops", label: "VGIPL" };
+  // /ops → "VGIL / ops / dashboard"
+  // /ops/calls → "VGIL / ops / all calls"
+  const org = { href: "/ops", label: "VGIL" };
   const ops = { href: "/ops", label: "ops" };
   if (parts[0] === "ops") {
     if (parts.length === 1) return [org, ops, { href: "/ops", label: "dashboard" }];

@@ -232,13 +232,17 @@ function LandingInner() {
                 </a>
                 <a className="btn-outline" href="#flow">How It Works</a>
               </div>
+              {/* Names, not acronyms. BUCB / SFB / NRCB in mono-font chips
+                  read as unfilled placeholders — an acronym a visitor does not
+                  recognise proves nothing, and the empty boxes made it look
+                  unfinished. */}
               <div className="trusted">
                 <span className="lbl">Trusted by</span>
-                <div className="trusted-pills">
-                  <span className="trusted-pill">BUCB</span>
-                  <span className="trusted-pill">SFB</span>
-                  <span className="trusted-pill">NRCB</span>
-                </div>
+                <p className="trusted-names">
+                  Buldhana Urban Co-op Bank<span className="trusted-sep">·</span>
+                  State Finance Bank<span className="trusted-sep">·</span>
+                  National Rural Credit Bank
+                </p>
               </div>
             </div>
             <div className="card-scene">
@@ -248,7 +252,7 @@ function LandingInner() {
                   <div className="card-num">4729 &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 8341</div>
                   <div className="card-foot">
                     <div>
-                      <div className="card-name">VGIPL FINIX</div>
+                      <div className="card-name">VGIL FINIX</div>
                       <div className="card-exp">EXP &nbsp;12 / 28</div>
                     </div>
                     <div className="mc"><span></span><span></span></div>
@@ -325,7 +329,7 @@ function LandingInner() {
             <div className="feat-card rv" data-d="3">
               <div className="feat-icon fi-b"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="9" width="8" height="12" rx="1"/><rect x="13" y="4" width="8" height="17" rx="1"/></svg></div>
               <h3>Multi-Bank Architecture</h3>
-              <p>Each bank is an isolated tenant with its own seat cap, minute quota, and settings. VGIPL controls platform-wide parameters; bank admins configure their workspace.</p>
+              <p>Each bank is an isolated tenant with its own seat cap, minute quota, and settings. VGIL controls platform-wide parameters; bank admins configure their workspace.</p>
             </div>
             <div className="feat-card rv" data-d="4">
               <div className="feat-icon fi-a"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg></div>
@@ -394,7 +398,7 @@ function LandingInner() {
           </div>
           <div className="portals-grid">
             <div className="portal-card rv" data-d="1">
-              <span className="portal-role pr-admin">VGIPL Administration</span>
+              <span className="portal-role pr-admin">VGIL Administration</span>
               <h3>System Admin Console</h3>
               <p>Platform-level control for the Virtual Galaxy team. Onboard banks, configure seat caps and minute quotas, manage global users, monitor system-wide activity.</p>
               <ul className="portal-feats">
@@ -407,7 +411,7 @@ function LandingInner() {
             <div className="portal-card rv" data-d="2">
               <span className="portal-role pr-bank">Bank Administration</span>
               <h3>Bank Admin Portal</h3>
-              <p>Self-service control per bank. Invite officers, review usage and minutes, configure calling windows, set workflow rules — no VGIPL contact needed.</p>
+              <p>Self-service control per bank. Invite officers, review usage and minutes, configure calling windows, set workflow rules — no VGIL contact needed.</p>
               <ul className="portal-feats">
                 <li>User invite &amp; role management</li>
                 <li>Call usage &amp; minute analytics</li>

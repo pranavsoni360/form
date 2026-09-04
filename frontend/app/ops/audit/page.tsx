@@ -220,7 +220,7 @@ const TABS: TabDef[] = [
 const TAB_DESC: Record<string, string> = {
   logins: "Who signed in, who failed to sign in, and who signed out — with the place and device.",
   activity: "Everything users did in the system — each action, who did it, and whether it succeeded.",
-  platform: "Actions by the VGIPL super-admin team — creating or changing banks, users, vendors, and scorecards.",
+  platform: "Actions by the VGIL super-admin team — creating or changing banks, users, vendors, and scorecards.",
   "officer-actions": "Loan decisions by officers and supervisors — approvals, rejections, and disbursements.",
   "status-changes": "Every stage a loan application moved through, and who moved it.",
   sensitive: "Access to sensitive data — viewing Aadhaar, playing call recordings, and exporting data.",

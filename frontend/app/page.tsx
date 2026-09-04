@@ -280,10 +280,6 @@ function LandingInner() {
             </div>
           </div>
         </div>
-        <div className="scroll-hint" aria-hidden="true">
-          <span>Scroll</span>
-          <div className="scroll-mouse"><div className="scroll-wheel"></div></div>
-        </div>
       </section>
 
       {/* ── STATS ── */}
@@ -312,7 +308,6 @@ function LandingInner() {
       <section className="section" id="features">
         <div className="wrap">
           <div className="centered rv">
-            <div className="sec-tag"><span>Core Capabilities</span></div>
             <h2 className="sec-h2">Everything your lending team needs,<br/>in <span className="grad-text">one platform.</span></h2>
             <p className="sec-sub">From first AI outbound call to approved disbursal — Finix handles every step without external tools or manual handoffs between teams.</p>
           </div>
@@ -355,7 +350,6 @@ function LandingInner() {
       <section className="section section-alt" id="flow">
         <div className="wrap">
           <div className="centered rv">
-            <div className="sec-tag"><span>The Pipeline</span></div>
             <h2 className="sec-h2">Five stages. <span className="grad-text">Zero handoffs.</span></h2>
             <p className="sec-sub">Every loan moves through the complete pipeline inside Finix — from AI call to disbursal, nothing leaves the platform.</p>
           </div>
@@ -395,7 +389,6 @@ function LandingInner() {
       <section className="section" id="portals">
         <div className="wrap">
           <div className="rv">
-            <div className="sec-tag"><span>Five Portals</span></div>
             <h2 className="sec-h2">Every role, its own <span className="grad-text-b">workspace.</span></h2>
             <p className="sec-sub">Five purpose-built portals sharing the same data and live event stream underneath.</p>
           </div>
@@ -465,7 +458,6 @@ function LandingInner() {
       <section className="section section-alt" id="compliance">
         <div className="wrap">
           <div className="centered rv">
-            <div className="sec-tag"><span>Compliance &amp; Security</span></div>
             <h2 className="sec-h2">Built for <span className="grad-text">India&#39;s lending</span> regulations.</h2>
             <p className="sec-sub">Regulatory requirements are enforced at the platform layer — your team doesn&#39;t have to think about them.</p>
           </div>
@@ -495,7 +487,6 @@ function LandingInner() {
           <div className="rv">
             <div className="cta-panel-wrap">
               <div className="cta-panel">
-                <div className="sec-tag" style={{display:'inline-flex',marginBottom:'20px'}}><span>Get Started</span></div>
                 <h2>Ready to transform your <span className="grad-text">lending pipeline?</span></h2>
                 <p>See how Finix handles every step — AI call to final disbursal — in one platform built for your bank.</p>
                 <div className="cta-btns">
@@ -517,7 +508,6 @@ function LandingInner() {
       <section className="section" id="stack">
         <div className="wrap">
           <div className="rv">
-            <div className="sec-tag"><span>Technology</span></div>
             <h2 className="sec-h2">Production-grade stack,<br/>open-source foundations.</h2>
           </div>
           <div className="chips-row rv">

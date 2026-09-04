@@ -342,13 +342,6 @@ html { scroll-behavior: smooth; }
 .fchip-c .big { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; display: block; background: var(--grad-a); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .fchip-c .lbl { font-size: 10px; color: var(--t3); }
 
-.scroll-hint { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; animation: fadeUp .8s ease 1s both; }
-@media (prefers-reduced-motion: reduce) { .scroll-hint { animation: none; } }
-.scroll-hint span { font-family: var(--lp-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--t3); }
-.scroll-mouse { width: 22px; height: 36px; border: 1px solid var(--bdr2); border-radius: 11px; display: flex; justify-content: center; padding-top: 6px; }
-.scroll-wheel { width: 3px; height: 7px; background: var(--blue-2); border-radius: 2px; animation: sWheel 2s ease-in-out infinite; }
-@keyframes sWheel { 0%{opacity:1;transform:translateY(0);} 100%{opacity:0;transform:translateY(12px);} }
-@media (prefers-reduced-motion: reduce) { .scroll-hint,.scroll-wheel { animation: none; } }
 
 @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; } .card-scene { display: none; } }
 
@@ -374,12 +367,8 @@ html { scroll-behavior: smooth; }
 .section { padding: 100px 0; }
 .section-alt { background: var(--bg0); }
 
-.sec-tag {
-  display: inline-flex; align-items: center; gap: 7px;
-  background: rgba(37,99,235,.08); border: 1px solid rgba(37,99,235,.22);
-  border-radius: 6px; padding: 5px 16px; margin-bottom: 20px;
-}
-.sec-tag span { font-family: var(--lp-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--label-color); }
+/* The removed .sec-tag pill used to supply 20px of space above each heading;
+   keep that breathing room on the heading itself. */
 .sec-h2 { font-size: clamp(26px,4vw,46px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.12; margin-bottom: 14px; text-wrap: balance; }
 .sec-sub { font-size: 16px; color: var(--t2); max-width: 52ch; margin-bottom: 56px; }
 .centered { text-align: center; }

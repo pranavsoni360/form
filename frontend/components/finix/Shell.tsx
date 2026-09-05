@@ -10,6 +10,7 @@
 // Collapsed state persists in localStorage under "finix.sidebar.collapsed".
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { FinixThemeProvider } from "./theme";
 import { Sidebar, type FinixNavItem, type SidebarIdentity, type SidebarAction } from "./Sidebar";
 import { UserMenu } from "./UserMenu";
@@ -124,6 +125,7 @@ export function FinixShell({
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const pathname = usePathname();
 
   // Hydrate collapsed state from localStorage after mount.
   React.useEffect(() => {
@@ -176,7 +178,9 @@ export function FinixShell({
 
             {/* Page content */}
             <main className="flex flex-1 flex-col gap-3 px-3 pb-4 pt-4 sm:px-4 md:gap-4 md:px-[18px] md:pt-5">
-              {children}
+              <div key={pathname} className="fx-page-enter flex flex-1 flex-col gap-3 md:gap-4">
+                {children}
+              </div>
             </main>
 
             {/* Footer */}

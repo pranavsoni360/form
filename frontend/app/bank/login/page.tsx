@@ -159,7 +159,7 @@ export default function BankLoginPage() {
 
   return (
     <FinixThemeProvider>
-      <div className="finix-root flex h-screen flex-col overflow-hidden">
+      <div className="finix-root fx-page-enter flex h-screen flex-col overflow-hidden">
         {/* The two-column split fills all height above the shared footer strip. */}
         <div className="flex min-h-0 flex-1">
 

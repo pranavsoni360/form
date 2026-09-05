@@ -27,9 +27,7 @@ import DateRangeFilter, { DateRangeValue, DEFAULT_RANGE } from '@/components/Dat
 import { getAccessToken, getCurrentUser, logout as authLogout } from '@/lib/auth';
 import { BankUserShell } from '../_shell/BankUserShell';
 import {
-  Toolbar,
   PeriodChip,
-  Breadcrumb,
   PageTitle,
   FilterPills,
   Button,
@@ -185,15 +183,14 @@ export default function BankDashboardPage() {
   const periodLabel = dateRange.from && dateRange.to ? `${dateRange.from} – ${dateRange.to}` : 'All dates';
 
   return (
-    <BankUserShell>
-      <Toolbar
-        left={<><PeriodChip>{periodLabel}</PeriodChip><Breadcrumb>my queue</Breadcrumb></>}
-        right={
-          <Button variant="quiet" onClick={() => router.push('/bank/applications')}>
-            View all applications →
-          </Button>
-        }
-      />
+    <BankUserShell
+      headerActions={
+        <Button variant="quiet" onClick={() => router.push('/bank/applications')}>
+          View all applications →
+        </Button>
+      }
+    >
+      <PeriodChip>{periodLabel}</PeriodChip>
       <PageTitle
         title="My queue"
         subtitle={`${user?.bank_name || 'Bank'} · ${user?.full_name || user?.name || ''}`}

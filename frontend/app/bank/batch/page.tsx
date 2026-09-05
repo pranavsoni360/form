@@ -42,9 +42,7 @@ import { batchesReducer, initialBatchesState, type BatchesState } from '@/lib/re
 import { BatchPreviewModal, type BatchReport } from '@/components/shared/BatchPreviewModal';
 import { BankUserShell } from '../_shell/BankUserShell';
 import {
-  Toolbar,
   PeriodChip,
-  Breadcrumb,
   PageTitle,
   Button,
   Card,
@@ -346,22 +344,21 @@ export default function BatchPage() {
   const periodLabel = dateRange.from && dateRange.to ? `${dateRange.from} – ${dateRange.to}` : 'All dates';
 
   return (
-    <BankUserShell>
+    <BankUserShell
+      headerActions={
+        <>
+          <Button variant="quiet" disabled={refreshing} onClick={refresh}>
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
+          <Button variant="primary" disabled={starting} onClick={triggerBatch}>
+            {starting ? 'Starting…' : 'Start batch'}
+          </Button>
+        </>
+      }
+    >
       <BatchPreviewModal report={preview} confirming={confirming} onConfirm={confirmUpload} onCancel={cancelPreview} />
 
-      <Toolbar
-        left={<><PeriodChip>{periodLabel}</PeriodChip><Breadcrumb>batch calling</Breadcrumb></>}
-        right={
-          <>
-            <Button variant="quiet" disabled={refreshing} onClick={refresh}>
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </Button>
-            <Button variant="primary" disabled={starting} onClick={triggerBatch}>
-              {starting ? 'Starting…' : 'Start batch'}
-            </Button>
-          </>
-        }
-      />
+      <PeriodChip>{periodLabel}</PeriodChip>
       <PageTitle title="Batch calling" subtitle="Upload a sheet, trigger calls, monitor progress" />
 
       {/* Transient notice — 4s auto-dismiss */}

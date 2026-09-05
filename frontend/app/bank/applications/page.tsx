@@ -29,8 +29,6 @@ import { API_URL } from "@/lib/api";
 import { getAccessToken, getCurrentUser } from "@/lib/auth";
 import { BankUserShell } from "../_shell/BankUserShell";
 import {
-  Toolbar,
-  Breadcrumb,
   PageTitle,
   FilterPills,
   Card,
@@ -203,7 +201,6 @@ export default function BankApplicationsListPage() {
 
   return (
     <BankUserShell>
-      <Toolbar left={<Breadcrumb>applications</Breadcrumb>} />
       <PageTitle
         title="Applications"
         subtitle={`${user?.bank_name ? `${user.bank_name} · ` : ""}${apps.length} total`}

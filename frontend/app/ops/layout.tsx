@@ -32,7 +32,10 @@ export default function OpsLayout({ children }: { children: React.ReactNode }) {
       const saved = localStorage.getItem("los-theme");
       if (saved !== "light") {
         document.documentElement.classList.add("dark");
+        document.documentElement.setAttribute("data-theme", "dark");
         if (!saved) localStorage.setItem("los-theme", "dark");
+      } else {
+        document.documentElement.setAttribute("data-theme", "light");
       }
     } catch {}
   }, []);

@@ -264,7 +264,8 @@ function NotificationBell() {
         onClick={() => { const n = !open; setOpen(n); if (n) fetchNotifs(); }}
         aria-label="Security notifications"
         aria-expanded={open}
-        className="relative grid h-9 w-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="relative grid h-9 w-9 place-items-center rounded-[10px] transition-colors"
+        style={{ border: "1px solid var(--fx-border)", background: "var(--fx-surface2)", color: "var(--fx-text2)" }}
       >
         <Bell className="h-4 w-4" />
         {count > 0 && (
@@ -275,7 +276,7 @@ function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border border-border bg-card shadow-xl ring-1 ring-black/5 overflow-hidden">
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-[14px] shadow-xl overflow-hidden" style={{ border: "1px solid var(--fx-border)", background: "var(--fx-surface)" }}>
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <Bell className="h-4 w-4 text-muted-foreground" />
@@ -372,7 +373,8 @@ function UserPill() {
       <div ref={ref} className="relative">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-2 py-1.5 pr-3 transition-colors hover:bg-muted"
+          className="flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 pr-3 transition-colors"
+          style={{ border: "1px solid var(--fx-border)", background: "var(--fx-surface2)", color: "var(--fx-text)" }}
           aria-haspopup="true"
           aria-expanded={open}
         >
@@ -386,7 +388,7 @@ function UserPill() {
         </button>
 
         {open && (
-          <div className="absolute right-0 top-full z-50 mt-2 w-52 rounded-xl border border-border bg-card shadow-lg ring-1 ring-black/5">
+          <div className="absolute right-0 top-full z-50 mt-2 w-52 rounded-[14px] shadow-lg" style={{ border: "1px solid var(--fx-border)", background: "var(--fx-surface)" }}>
             {/* User info header */}
             <div className="px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2.5">
@@ -443,20 +445,26 @@ function useTodayLabel() {
   return label;
 }
 
-export function TopBar({ title }: { title?: string }) {
+export function TopBar() {
   const pathname = usePathname();
   const crumbs = derivedCrumbs(pathname || "/ops");
   const todayLabel = useTodayLabel();
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card/80 px-4 backdrop-blur-md sm:gap-4 lg:px-6">
+    <header
+      className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 px-3 sm:gap-4 sm:px-5"
+      style={{ borderBottom: "1px solid var(--fx-border)", background: "var(--fx-surface)" }}
+    >
       {/* Mobile hamburger */}
       <MobileNav />
 
       {/* Date pill */}
       {todayLabel && (
-        <div className="hidden lg:flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground flex-shrink-0">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0 text-muted-foreground">
+        <div
+          className="hidden lg:flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[12px] flex-shrink-0"
+          style={{ border: "1px solid var(--fx-border)", color: "var(--fx-text2)" }}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0" style={{ color: "var(--fx-text3)" }}>
             <rect x="1" y="2" width="14" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
             <path d="M1 6h14" stroke="currentColor" strokeWidth="1.5" />
             <path d="M5 1v2M11 1v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -466,13 +474,16 @@ export function TopBar({ title }: { title?: string }) {
       )}
 
       {/* Breadcrumb — "VGIL / ops / page" */}
-      <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
+      <nav className="flex min-w-0 items-center gap-1.5" aria-label="Breadcrumb">
         {crumbs.map((c, i) => (
           <React.Fragment key={c.href + i}>
             {i > 0 && (
-              <span className="text-xs select-none text-muted-foreground/40">/</span>
+              <span className="text-[12px] select-none" style={{ color: "var(--fx-border-strong)" }}>/</span>
             )}
-            <span className={cn("text-sm", i === crumbs.length - 1 ? "font-semibold text-foreground" : "text-muted-foreground")}>
+            <span
+              className="text-[13px]"
+              style={{ color: i === crumbs.length - 1 ? "var(--fx-text)" : "var(--fx-text2)", fontWeight: i === crumbs.length - 1 ? 600 : 400 }}
+            >
               {c.label}
             </span>
           </React.Fragment>

@@ -9,7 +9,6 @@ import {
   Briefcase,
   Building2,
   CalendarClock,
-  ChevronLeft,
   Download,
   FileText,
   ListChecks,
@@ -25,9 +24,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { FinixLogoMark } from "@/components/shared/FinixLogo";
-
-/* ─── Types (kept for MobileNav compatibility) ───────────────────────────── */
+import { FinixLogo } from "@/components/shared/FinixLogo";
 
 export type NavItem = {
   href: string;
@@ -81,8 +78,6 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   },
 ];
 
-/* ─── Flat nav for sidebar visual ────────────────────────────────────────── */
-
 const FLAT_NAV = [
   { href: "/ops",            label: "Dashboard",    icon: BarChart3,    exact: true },
   { href: "/ops/live",       label: "Live calls",   icon: Radio },
@@ -99,22 +94,24 @@ const FLAT_NAV = [
   { href: "/ops/analytics",  label: "Analytics",    icon: TrendingUp },
 ];
 
-/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+function setTheme(dark: boolean) {
+  try {
+    if (dark) {
+      document.documentElement.classList.add("dark");
+      document.documentElement.setAttribute("data-theme", "dark");
+      localStorage.setItem("los-theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      document.documentElement.setAttribute("data-theme", "light");
+      localStorage.setItem("los-theme", "light");
+    }
+  } catch {}
+}
 
 export function Sidebar({ className }: { className?: string }) {
   const pathname = usePathname();
-  const [dateStr, setDateStr] = React.useState("");
   const [name, setName] = React.useState("Admin");
   const [isDark, setIsDark] = React.useState(true);
-
-  React.useEffect(() => {
-    const d = new Date();
-    const day = d.toLocaleDateString("en-GB", { weekday: "long" });
-    const date = d.getDate();
-    const month = d.toLocaleDateString("en-GB", { month: "short" });
-    const year = d.getFullYear();
-    setDateStr(`${day}, ${date} ${month} ${year}`);
-  }, []);
 
   React.useEffect(() => {
     try {
@@ -131,57 +128,58 @@ export function Sidebar({ className }: { className?: string }) {
   const toggleTheme = () => {
     const next = !isDark;
     setIsDark(next);
-    try {
-      if (next) {
-        document.documentElement.classList.add("dark");
-        localStorage.setItem("los-theme", "dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-        localStorage.setItem("los-theme", "light");
-      }
-    } catch {}
+    setTheme(next);
   };
 
   const initials = name.slice(0, 2).toUpperCase();
 
   return (
     <aside
-      className={cn(
-        "hidden h-screen w-64 shrink-0 sticky top-0 flex-col lg:flex bg-card border-r border-border",
-        className
-      )}
+      className={cn("hidden h-screen w-64 shrink-0 sticky top-0 flex-col lg:flex", className)}
+      style={{
+        background: "var(--fx-sidebar-bg)",
+        borderRight: "1px solid var(--fx-sidebar-border)",
+      }}
     >
       {/* Logo */}
-      <Link href="/ops" className="flex items-center gap-2.5 px-5 pt-5 pb-4" aria-label="Finix Ops">
-        <FinixLogoMark size={30} className="text-foreground flex-shrink-0" />
-        <span
-          className="font-bold text-foreground text-base"
-          style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.02em" }}
-        >
-          Finix
-        </span>
+      <Link href="/ops" className="flex items-center gap-3 px-5 pt-5 pb-4" aria-label="Finix Ops">
+        <FinixLogo height={28} className="shrink-0" />
+        <div className="leading-tight">
+          <div
+            className="text-[10px] uppercase tracking-[0.18em]"
+            style={{ color: "var(--fx-sidebar-text2)" }}
+          >
+            Calling ops
+          </div>
+        </div>
       </Link>
 
       {/* User card */}
-      <div className="mx-3 mb-4 rounded-xl p-3 bg-muted border border-border">
-        <div className="flex items-center justify-between mb-2.5">
+      <div
+        className="mx-3 mb-4 rounded-[12px] p-3"
+        style={{ background: "var(--fx-surface2)", border: "1px solid var(--fx-sidebar-border)" }}
+      >
+        <div className="flex items-center justify-between mb-2">
           <span
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+            className="w-8 h-8 rounded-[8px] flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
             style={{ background: "linear-gradient(135deg, #1A1A2E 0%, #2563EB 100%)" }}
           >
             {initials}
           </span>
-          <div className="flex items-center rounded-lg overflow-hidden border border-border">
+          {/* Theme toggle */}
+          <div
+            className="flex items-center rounded-[8px] overflow-hidden"
+            style={{ border: "1px solid var(--fx-border)" }}
+          >
             <button
               onClick={() => { if (isDark) toggleTheme(); }}
               aria-label="Switch to light mode"
               aria-pressed={!isDark}
-              className={cn(
-                "w-7 h-7 flex items-center justify-center transition-colors",
-                !isDark
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:bg-muted/50"
-              )}
+              className="w-7 h-7 flex items-center justify-center transition-colors"
+              style={{
+                background: !isDark ? "var(--fx-surface)" : "transparent",
+                color: !isDark ? "var(--fx-text)" : "var(--fx-text3)",
+              }}
             >
               <Sun className="w-3.5 h-3.5" />
             </button>
@@ -189,24 +187,20 @@ export function Sidebar({ className }: { className?: string }) {
               onClick={() => { if (!isDark) toggleTheme(); }}
               aria-label="Switch to dark mode"
               aria-pressed={isDark}
-              className={cn(
-                "w-7 h-7 flex items-center justify-center transition-colors",
-                isDark
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:bg-muted/50"
-              )}
+              className="w-7 h-7 flex items-center justify-center transition-colors"
+              style={{
+                background: isDark ? "var(--fx-surface)" : "transparent",
+                color: isDark ? "var(--fx-text)" : "var(--fx-text3)",
+              }}
             >
               <Moon className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
-        {dateStr && (
-          <div className="text-[10px] mb-1 leading-tight text-muted-foreground">
-            {dateStr}
-          </div>
-        )}
-        <div className="text-sm font-semibold text-foreground leading-tight">{name}</div>
-        <div className="text-[11px] mt-0.5 text-muted-foreground">
+        <div className="text-[13px] font-medium leading-tight" style={{ color: "var(--fx-sidebar-text)" }}>
+          {name}
+        </div>
+        <div className="text-[11px] mt-0.5" style={{ color: "var(--fx-sidebar-text2)" }}>
           Virtual Galaxy · calling ops
         </div>
       </div>
@@ -223,19 +217,25 @@ export function Sidebar({ className }: { className?: string }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
-                  isActive
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
+                className="relative flex items-center gap-3 rounded-[8px] px-3 py-2 text-[13px] font-medium transition-all overflow-hidden"
+                style={{
+                  background: isActive ? "var(--fx-sidebar-bg2)" : "transparent",
+                  color: isActive ? "var(--fx-sidebar-text)" : "var(--fx-sidebar-text2)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--fx-sidebar-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent";
+                }}
               >
-                <Icon
-                  className={cn(
-                    "h-4 w-4 shrink-0",
-                    isActive ? "text-foreground" : "text-muted-foreground"
-                  )}
-                />
+                {isActive && (
+                  <span
+                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full"
+                    style={{ height: "60%", background: "var(--fx-sidebar-accent)" }}
+                  />
+                )}
+                <Icon className="h-4 w-4 shrink-0" />
                 {item.label}
               </Link>
             );
@@ -243,17 +243,11 @@ export function Sidebar({ className }: { className?: string }) {
         </nav>
       </div>
 
-
-      {/* Collapse */}
-      <div className="px-3 pb-2">
-        <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-default select-none text-muted-foreground">
-          <ChevronLeft className="w-3.5 h-3.5" />
-          Collapse
-        </div>
-      </div>
-
-      {/* Copyright */}
-      <p className="px-6 pb-4 text-[10px] leading-tight text-muted-foreground select-none">
+      {/* Copyright footer */}
+      <p
+        className="px-5 py-4 text-[10px] leading-tight select-none"
+        style={{ color: "var(--fx-text3)", borderTop: "1px solid var(--fx-sidebar-border)" }}
+      >
         © 2026 Finix · Virtual Galaxy Infotech Limited
       </p>
     </aside>

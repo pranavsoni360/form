@@ -60,7 +60,7 @@ export function CardHeader({
   onOpenFull?: () => void;
 }) {
   return (
-    <div className="flex h-[46px] items-center gap-3 border-b border-fx-border px-[14px]">
+    <div className="flex min-h-[46px] flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-fx-border px-[14px] py-2">
       <div className="flex min-w-0 items-baseline gap-2">
         <span className="truncate text-[15px] font-medium text-fx-text">{title}</span>
         {qualifier != null && <span className="truncate text-[11px] text-fx-text3">{qualifier}</span>}

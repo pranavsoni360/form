@@ -16,9 +16,6 @@ import { API_URL } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import { BankUserShell } from '../_shell/BankUserShell';
 import {
-  Toolbar,
-  PeriodChip,
-  Breadcrumb,
   PageTitle,
   FilterPills,
   Card,
@@ -163,9 +160,6 @@ export default function CallsPage() {
 
   return (
     <BankUserShell>
-      <Toolbar
-        left={<><PeriodChip>{dateRange.from && dateRange.to ? `${dateRange.from} – ${dateRange.to}` : 'All dates'}</PeriodChip><Breadcrumb>call logs</Breadcrumb></>}
-      />
       <PageTitle title="Call logs" subtitle={`${filtered.length} of ${allCalls.length} calls`} />
       {loadError && (
         <div className="rounded-[12px] border px-3 py-2 text-[13px]"

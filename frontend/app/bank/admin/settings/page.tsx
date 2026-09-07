@@ -102,7 +102,7 @@ export default function SettingsPage() {
         <Card><ErrorState title="Could not load settings" detail={error || undefined} onRetry={load} /></Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <CallingCard draft={draft} set={set} changed={data} />
             <WorkflowCard draft={draft} set={set} changed={data} />
             <ScorecardCard draft={draft} set={set} changed={data} version={data.scorecard_version} />
@@ -149,8 +149,8 @@ type CardProps = {
 
 function Row({ label, note, children }: { label: string; note?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-2">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-2">
+      <div className="min-w-0 flex-1">
         <div className="text-[13px] text-fx-text">{label}</div>
         {note && <div className="mt-0.5 text-[11px] text-fx-text3">{note}</div>}
       </div>
@@ -160,9 +160,9 @@ function Row({ label, note, children }: { label: string; note?: string; children
 }
 
 const numInput =
-  "w-[110px] rounded-[10px] bg-fx-surface2 px-2.5 py-1.5 text-right text-[13px] fx-mono text-fx-text outline-none focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]";
+  "w-[90px] sm:w-[110px] rounded-[10px] bg-fx-surface2 px-2.5 py-1.5 text-right text-[13px] fx-mono text-fx-text outline-none focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]";
 const timeInput =
-  "w-[80px] rounded-[10px] bg-fx-surface2 px-2.5 py-1.5 text-center text-[13px] fx-mono text-fx-text outline-none focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]";
+  "w-[72px] sm:w-[80px] rounded-[10px] bg-fx-surface2 px-2.5 py-1.5 text-center text-[13px] fx-mono text-fx-text outline-none focus:shadow-[inset_0_0_0_1px_var(--fx-accent)]";
 
 // 1. Calling
 function CallingCard({ draft, set, changed }: CardProps) {
@@ -181,7 +181,7 @@ function CallingCard({ draft, set, changed }: CardProps) {
           <input type="number" className={numInput} value={draft.max_retries_per_day} onChange={(e) => set("max_retries_per_day", Number(e.target.value))} />
         </Row>
         <Row label="Caller ID pool">
-          <input className={numInput + " text-left w-[150px]"} value={draft.caller_id_pool ?? ""} placeholder="default pool" onChange={(e) => set("caller_id_pool", e.target.value)} />
+          <input className={numInput + " text-left w-[120px] sm:w-[150px]"} value={draft.caller_id_pool ?? ""} placeholder="default pool" onChange={(e) => set("caller_id_pool", e.target.value)} />
         </Row>
         <Row label="Pause all outbound calling" note="This bank only. Live calls finish; queued calls wait.">
           <Toggle checked={draft.pause_outbound} onChange={(v) => set("pause_outbound", v)} label="Pause outbound" />
@@ -245,7 +245,8 @@ function NotificationsCard({ draft, changed }: { draft: EditableSettings; change
       <OwnedHeader title="Notifications" changedAt={changed.changed_at} changedBy={changed.changed_by} />
       <CardBody>
         {rows.length ? (
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[360px]">
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-fx-border text-[12px] last:border-0">
@@ -262,6 +263,7 @@ function NotificationsCard({ draft, changed }: { draft: EditableSettings; change
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <p className="py-2 text-[12px] text-fx-text3">No notification templates mapped yet.</p>
         )}

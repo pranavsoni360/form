@@ -58,7 +58,7 @@ export function Table<T>({
             <th
               key={c.key}
               className={cn(
-                "h-[32px] whitespace-nowrap px-[14px] text-[11px] font-normal text-fx-text3",
+                "h-[32px] whitespace-nowrap px-[10px] md:px-[14px] text-[11px] font-normal text-fx-text3",
                 alignClass[c.align ?? "left"],
               )}
               style={{ width: c.width }}
@@ -82,7 +82,7 @@ export function Table<T>({
               <td
                 key={c.key}
                 className={cn(
-                  "h-[44px] px-[14px] py-[7px] align-middle text-[13px] text-fx-text",
+                  "min-h-[44px] px-[10px] py-[7px] md:px-[14px] align-middle text-[13px] text-fx-text",
                   alignClass[c.align ?? "left"],
                   (c.align ?? "left") === "right" && "fx-mono whitespace-nowrap",
                   c.nowrap && "whitespace-nowrap",

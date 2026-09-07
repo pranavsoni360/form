@@ -50,8 +50,6 @@ import { LRSScorePanel } from '@/components/bank/LRSScorePanel';
 import { BankStatementPanel } from '@/components/bank/BankStatementPanel';
 import { BankUserShell } from '../../_shell/BankUserShell';
 import {
-  Toolbar,
-  Breadcrumb,
   PageTitle,
   Button,
   Card,
@@ -280,14 +278,9 @@ export default function ApplicationDetailPage() {
     <BankUserShell>
       {/* Space for the fixed decision bar so the last row is never hidden. */}
       <div style={{ paddingBottom: canAct ? 72 : 0 }} className="space-y-4">
-        <Toolbar
-          left={<Breadcrumb>applications / {app.loan_id}</Breadcrumb>}
-          right={
-            <Button variant="quiet" onClick={() => router.push('/bank/dashboard')}>
-              ← My queue
-            </Button>
-          }
-        />
+        <Button variant="quiet" onClick={() => router.push('/bank/dashboard')} className="self-start">
+          ← My queue
+        </Button>
 
         <div className="flex flex-wrap items-start gap-3">
           <span

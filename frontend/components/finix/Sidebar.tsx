@@ -2,13 +2,11 @@
 
 // Finix admin sidebar (design overhaul §1.2 / §1.3).
 //
-// Always-dark (#0A1B2D) so it anchors the layout regardless of the page theme.
-// Composition top→bottom: logo + collapse button row, grouped nav, spacer.
-// Collapsed = 64px (icons only with tooltip); expanded = 240px.
-// Collapsed state persists in localStorage under "finix.sidebar.collapsed".
-//
-// The user identity card, session timer, and Invite action have all moved out:
-// identity → AppBar UserMenu; action button → removed per spec §2.2.
+// Desktop (≥md): sticky left panel, collapsible between 240px (expanded) and
+//   64px (icons only). Collapsed state persists in localStorage.
+// Mobile (<md): fixed-position drawer overlay (z-50). Hidden by default;
+//   the Shell renders a backdrop and passes mobileOpen / onMobileClose to
+//   control it. Always 240px wide on mobile — collapsed/expanded is desktop-only.
 
 import * as React from "react";
 import Link from "next/link";
@@ -48,10 +46,14 @@ export function Sidebar({
   nav,
   collapsed,
   onToggleCollapse,
+  mobileOpen = false,
+  onMobileClose,
 }: {
   nav: FinixNavItem[];
   collapsed: boolean;
   onToggleCollapse: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }) {
   const pathname = usePathname();
 
@@ -68,12 +70,22 @@ export function Sidebar({
 
   return (
     <aside
-      className="sticky top-0 flex h-screen shrink-0 flex-col overflow-hidden"
+      className={cn(
+        // Base
+        "fx-sidebar flex h-screen shrink-0 flex-col overflow-hidden",
+        // Mobile: fixed drawer overlay
+        "fixed top-0 left-0 z-50",
+        // Desktop: sticky in flow, auto z-index
+        "md:sticky md:top-0 md:z-auto",
+        // Slide transition (mobile) + width transition (desktop)
+        "transition-[transform,width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        // Show/hide on mobile via translate; always visible on desktop
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+      )}
       style={{
         width: collapsed ? 64 : 240,
         background: "var(--fx-sidebar-bg)",
-        transition: "width 200ms cubic-bezier(0.22,1,0.36,1)",
-        willChange: "width",
+        willChange: "transform, width",
       }}
     >
       {/* ── Logo + collapse button row ── */}
@@ -83,7 +95,6 @@ export function Sidebar({
       >
         {!collapsed && (
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
-            {/* finix-sidebar-logo forces the white-ink logo variant — sidebar is always dark */}
             <span className="finix-sidebar-logo shrink-0 inline-flex">
               <FinixLogo height={26} />
             </span>
@@ -144,6 +155,8 @@ export function Sidebar({
                   key={item.href}
                   href={item.href}
                   title={collapsed ? item.label : undefined}
+                  // Close mobile drawer on nav
+                  onClick={() => onMobileClose?.()}
                   className="relative flex h-10 items-center gap-3 rounded-[8px] px-2.5 text-[13px] transition-colors"
                   style={
                     active

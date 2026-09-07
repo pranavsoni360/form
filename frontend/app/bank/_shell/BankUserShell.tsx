@@ -31,9 +31,11 @@ function initialsOf(name: string): string {
 
 export function BankUserShell({
   action,
+  headerActions,
   children,
 }: {
   action?: SidebarAction;
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -118,7 +120,12 @@ export function BankUserShell({
       // sign-out worked on idle timeout but never when clicked.
       onLogout={doLogout}
       action={action ?? logoutAction}
-      headerRight={<BankNotificationBell auditHref="/bank/audit" />}
+      headerRight={
+        <div className="flex items-center gap-2">
+          {headerActions}
+          <BankNotificationBell auditHref="/bank/audit" />
+        </div>
+      }
     >
       {children}
     </FinixShell>

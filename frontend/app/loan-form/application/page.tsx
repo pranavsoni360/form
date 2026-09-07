@@ -2402,7 +2402,50 @@ export default function LoanApplication() {
                         <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>Processing your bank statement…</p>
                       )}
                       {doc.journey === 'vendor' && aaUploadError && (
-                        <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}><AlertTriangle className="w-3 h-3" />{aaUploadError}</p>
+                        <>
+                          <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}><AlertTriangle className="w-3 h-3" />{aaUploadError}</p>
+                          {/* The error tells the customer to upload a PDF instead,
+                              so there has to BE somewhere to upload it. A `vendor`
+                              row renders only the AA button, so when that journey
+                              fails the applicant was told to do something the page
+                              gave them no way to do — a dead end on a REQUIRED
+                              document. This appears only after a failure, so the
+                              happy path still leads with Account Aggregator. */}
+                          <label className="inline-flex items-center gap-1.5 text-xs mt-1.5 cursor-pointer underline underline-offset-2"
+                            style={{ color: 'var(--fx-accent)' }}>
+                            <input type="file" accept=".pdf" className="hidden" disabled={!!uploading[doc.key]}
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const fileErr = validateDocFile(doc, file);
+                                if (fileErr) { setErrors((p: any) => ({ ...p, [doc.key]: fileErr })); e.target.value = ''; return; }
+                                setErrors((p: any) => ({ ...p, [doc.key]: '' }));
+                                setUploading((u: any) => ({ ...u, [doc.key]: true }));
+                                const fd = new FormData();
+                                fd.append('session_token', getSession() || '');
+                                fd.append('document_type', doc.key.replace('_url', ''));
+                                fd.append('file', file);
+                                try {
+                                  const res = await fetch(`${API_URL}/api/upload-document-session`, { method: 'POST', body: fd });
+                                  const data = await res.json().catch(() => ({}));
+                                  if (res.ok && data.url) { onChange(doc.key, data.url); setAaUploadError(''); }
+                                  else { setErrors((p: any) => ({ ...p, [doc.key]: data.detail || 'Upload failed. Please try again.' })); e.target.value = ''; }
+                                } catch {
+                                  setErrors((p: any) => ({ ...p, [doc.key]: 'Could not reach the server. Check your connection and try again.' }));
+                                  e.target.value = '';
+                                } finally {
+                                  setUploading((u: any) => ({ ...u, [doc.key]: false }));
+                                }
+                              }} />
+                            {uploading[doc.key] && <Loader2 className="w-3 h-3 animate-spin" />}
+                            {uploading[doc.key] ? 'Uploading…' : 'Upload statement PDF instead'}
+                          </label>
+                          {errors[doc.key] && (
+                            <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}>
+                              <AlertTriangle className="w-3 h-3 flex-shrink-0" />{errors[doc.key]}
+                            </p>
+                          )}
+                        </>
                       )}
                       {formData[doc.key] && (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">

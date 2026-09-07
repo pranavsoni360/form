@@ -714,6 +714,7 @@ def _preprocess_records(records: list) -> tuple:
         seen[canonical] = row_no
         r["_phone"] = canonical
         r["_name"] = name
+        r["_row"] = row_no   # so the preview can show the sheet row
         clean.append(r)
     skipped = (
         [{**x, "reason": "duplicate"} for x in dropped["duplicate"]]
@@ -732,6 +733,14 @@ def _preprocess_records(records: list) -> tuple:
         },
         "removed_total": sum(len(v) for v in dropped.values()),
         "skipped": skipped[:200],  # cap the list sent to the UI
+        # The rows that WILL be dialled. The preview previously listed only what
+        # was skipped, so an operator confirming a batch could not see who was
+        # about to be called — the one thing a "review before calling" screen
+        # exists to show. Same 200-row cap as `skipped`.
+        "ready": [
+            {"row": r.get("_row"), "name": r.get("_name", ""), "phone": r.get("_phone", "")}
+            for r in clean[:200]
+        ],
     }
     return clean, report
 

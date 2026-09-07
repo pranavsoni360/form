@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import * as ReactDOM from "react-dom";
 
 // Report shape returned by POST /api/agent/upload-excel when commit=false
 // (preview) — and also included on the commit=true response.
@@ -24,6 +25,8 @@ export type BatchReport = {
   };
   removed_total: number;
   skipped: BatchSkippedRow[];
+  /** Rows that WILL be dialled, so the operator can check them before confirming. */
+  ready?: { row: number; name: string; phone: string }[];
   message?: string;
 };
 
@@ -68,9 +71,23 @@ export function BatchPreviewModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // A portal needs document.body, which does not exist during SSR. The flag is
+  // set in an effect so the hook runs unconditionally — putting it after the
+  // `!report` early return would change hook order between renders.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+
   if (!report) return null;
   const nothingToCall = report.valid === 0;
-  return (
+  const ready = report.ready ?? [];
+  // Rendered through a portal to document.body. The page shell wraps content in
+  // `.fx-page-enter`, whose animation uses `fill-mode: both` and so leaves a
+  // `transform` applied permanently — which makes that div a containing block,
+  // so `fixed inset-0` anchored to the SCROLLED PAGE instead of the viewport.
+  // The modal appeared part-way down the page rather than centred on screen.
+  if (!mounted) return null;
+
+  return ReactDOM.createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
       onClick={onCancel}
@@ -107,6 +124,38 @@ export function BatchPreviewModal({
                   <div className="text-[10px] text-slate-500 dark:text-slate-400">{label}</div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Who WILL be dialled. Listed FIRST and before the skipped rows:
+              the operator is about to place real calls to these people, so
+              this is the part they need to check. The preview previously
+              showed only what was excluded. */}
+          {ready.length > 0 && (
+            <div className="mt-4">
+              <div className="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                Will be called{ready.length >= 200 ? " (first 200)" : ""}
+              </div>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                    <tr>
+                      <th className="px-2.5 py-1.5 font-medium">Row</th>
+                      <th className="px-2.5 py-1.5 font-medium">Name</th>
+                      <th className="px-2.5 py-1.5 font-medium">Number</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ready.map((r, i) => (
+                      <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="px-2.5 py-1.5 text-slate-500 dark:text-slate-400">{r.row ?? "—"}</td>
+                        <td className="px-2.5 py-1.5 text-slate-700 dark:text-slate-200">{r.name}</td>
+                        <td className="px-2.5 py-1.5 font-mono text-slate-700 dark:text-slate-200">{r.phone}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -164,6 +213,7 @@ export function BatchPreviewModal({
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

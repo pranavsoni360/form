@@ -52,7 +52,7 @@ router = APIRouter()
 # user 33 to the production host, which has no such user, and every fetch came
 # back "no return found". One source of truth for the host, always paired with
 # the credentials that belong to it.
-from lrs.providers.vg_docverify import _BASE_URL  # noqa: E402
+from lrs.providers.vg_docverify import _BASE_URL, _TLS_VERIFY  # noqa: E402
 
 _VGK_BASE = f"{_BASE_URL}/VGKVerify.asmx"
 # ITR gets its OWN timeout, much longer than the 30s shared VG default.
@@ -288,7 +288,9 @@ async def generate_itr(body: ItrGenerateRequest, request: Request) -> dict:
     })
 
     try:
-        async with httpx.AsyncClient(timeout=_ITR_TIMEOUT) as client:
+        # Same TLS switch as the rest of the VG surface (VG_DOCVERIFY_TLS_VERIFY):
+        # this call goes to the same host, so it has to survive the same broken cert.
+        async with httpx.AsyncClient(timeout=_ITR_TIMEOUT, verify=_TLS_VERIFY) as client:
             resp = await client.post(f"{_VGK_BASE}/ITR_Advance", json={"obj": [obj]})
         resp.raise_for_status()
         data = _parse_lenient_json(resp.text)

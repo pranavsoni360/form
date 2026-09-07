@@ -34,7 +34,6 @@ import {
   maskPhone,
   statusVariant,
 } from "@/components/ops/CallDetailDialog";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -43,7 +42,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { API_URL } from "@/lib/api";
@@ -289,7 +287,6 @@ export default function OpsOverviewPage() {
           onOpen={(id) => setOpenCallId(id)}
         />
         <ActiveCallsPreview activeCount={activeCallsCount} />
-        <DesignReference />
       </div>
 
       <CallDetailDialog
@@ -329,8 +326,8 @@ function InterestCategoriesRow({ loans }: { loans?: DashboardStats["loan_interes
       <CardContent>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <InterestPill label="Education" count={edu} icon={GraduationCap} tone="info" />
-          <InterestPill label="Business" count={biz} icon={Briefcase} tone="success" />
-          <InterestPill label="Personal" count={per} icon={UserIcon} tone="warning" />
+          <InterestPill label="Business" count={biz} icon={Briefcase} tone="info" />
+          <InterestPill label="Personal" count={per} icon={UserIcon} tone="info" />
         </div>
       </CardContent>
     </Card>
@@ -338,21 +335,17 @@ function InterestCategoriesRow({ loans }: { loans?: DashboardStats["loan_interes
 }
 
 function InterestPill({
-  label, count, icon: Icon, tone,
+  label, count, icon: Icon,
 }: {
   label: string;
   count: number;
   icon: React.ComponentType<{ className?: string }>;
-  tone: "info" | "success" | "warning";
+  tone?: "info";
 }) {
-  const bg =
-    tone === "info" ? "bg-info/10 text-info ring-info/20" :
-    tone === "success" ? "bg-success/10 text-success ring-success/20" :
-    "bg-warning/10 text-[hsl(var(--warning))] ring-warning/20";
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
       <div className="flex items-center gap-2.5">
-        <span className={cn("badge-icon ring-1", bg)}>
+        <span className="badge-icon ring-1 bg-info/10 text-info ring-info/20">
           <Icon className="h-4 w-4" />
         </span>
         <div>
@@ -611,71 +604,3 @@ function ActiveCallsPreview({ activeCount }: { activeCount: number }) {
   );
 }
 
-function DesignReference() {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="badge-icon bg-primary/10 text-primary ring-primary/20">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div>
-            <CardTitle className="text-base">Design language</CardTitle>
-            <CardDescription className="text-xs">
-              Finix aesthetic · Sen font · cream + dark navy + admin purple
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div>
-          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Status pills
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <StatusPill tone="success" label="Connected" />
-            <StatusPill tone="info" label="Dialing" />
-            <StatusPill tone="warning" label="Cooldown 2m 14s" />
-            <StatusPill tone="danger" label="Circuit open" />
-            <StatusPill tone="neutral" label="Pending" />
-            <StatusPill tone="success" label="Healthy" dot={false} />
-          </div>
-        </div>
-        <Separator />
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              CTAs
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button className="btn-solid">
-                <PlusCircle className="h-4 w-4" />
-                Dark navy
-              </button>
-              <button className="btn-gradient">
-                <PlusCircle className="h-4 w-4" />
-                Blue gradient
-              </button>
-              <Button variant="outline">Outline</Button>
-              <Button variant="ghost">Ghost</Button>
-            </div>
-          </div>
-          <div>
-            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Badges
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="default">Default</Badge>
-              <Badge variant="secondary">Secondary</Badge>
-              <Badge variant="success">Success</Badge>
-              <Badge variant="warning">Warning</Badge>
-              <Badge variant="destructive">Destructive</Badge>
-              <Badge variant="info">Info</Badge>
-              <Badge variant="outline">Outline</Badge>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}

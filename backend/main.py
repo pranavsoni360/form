@@ -3915,7 +3915,11 @@ async def _aa_post(endpoint: str, obj: dict) -> dict:
     """
     from lrs.providers.vg_docverify import _parse_lenient_json as _aa_parse
     url = f"{_aa_base_url()}/{endpoint}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # AcAggregator is on the same VG host as the rest, so it honours the same
+    # VG_DOCVERIFY_TLS_VERIFY switch. Every other VG call in this module already
+    # passes verify=False unconditionally; this one is gated instead.
+    from lrs.providers.vg_docverify import _TLS_VERIFY as _vg_tls
+    async with httpx.AsyncClient(timeout=30.0, verify=_vg_tls) as client:
         resp = await client.post(url, json={"obj": obj})
     resp.raise_for_status()
     return _aa_parse(resp.text)

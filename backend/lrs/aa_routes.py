@@ -31,8 +31,21 @@ from lrs.providers.vg_docverify import _parse_lenient_json
 logger = logging.getLogger("lrs-aa-routes")
 router = APIRouter()
 
-_BASE_URL = os.getenv("VG_DOCVERIFY_BASE_URL", "https://vpays.in/VGDocverify").rstrip("/")
-_AA_BASE = f"{_BASE_URL}/AcAggregator.asmx"
+# AcAggregator does NOT exist on vpays.in — verified 2026-09-07:
+#   GET https://vpays.in/VGDocverify/VGKVerify.asmx    -> 200 (service page)
+#   GET https://vpays.in/VGDocverify/AcAggregator.asmx -> 404 "resource cannot be found"
+# so the old `vpays.in` default guaranteed a 404 for every officer-side AA call
+# on any environment that did not set VG_DOCVERIFY_BASE_URL explicitly. It only
+# ever worked because QA sets that variable.
+#
+# main.py::_aa_base_url() already resolves this correctly, deriving the AA host
+# from VG_API_BASE (where VGKVerify actually lives) rather than assuming vpays.
+# Reuse it instead of keeping a second, wrong default in this module — the same
+# duplicate-default mistake that sent UAT credentials to the production host in
+# the ITR flow.
+def _aa_base() -> str:
+    from main import _aa_base_url
+    return _aa_base_url()
 _CALLBACK_URL = os.getenv(
     "AA_CALLBACK_URL",
     "http://galaxypay.in:9002/VGDocverify/VGIL_TxnCallback.aspx",
@@ -46,7 +59,7 @@ async def _aa_call(endpoint: str, obj: dict) -> dict:
 
     VG appends {"d": null} after the JSON body — _parse_lenient_json handles that.
     """
-    url = f"{_AA_BASE}/{endpoint}"
+    url = f"{_aa_base()}/{endpoint}"
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(url, json={"obj": obj})
         resp.raise_for_status()

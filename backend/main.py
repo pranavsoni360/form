@@ -4064,7 +4064,24 @@ async def aa_statement_initiate(request: Request):
         raise HTTPException(status_code=502, detail=f"Could not reach statement service: {e}")
 
     if result.get("status") != "success":
-        raise HTTPException(status_code=502, detail=f"Statement service error: {result}")
+        # Do not hand the vendor's raw JSON to an applicant. It leaks our
+        # integration internals and reads as a crash; they cannot act on
+        # "AccessDenied / Client is not permitted to access this URL" — that is
+        # OUR account's permission on VG's side, not anything they did.
+        _res = result.get("result") if isinstance(result, dict) else None
+        _code = str((_res or {}).get("code") or "")
+        _msg = str((_res or {}).get("msg") or "")
+        logger.error(
+            "AA Generateurl rejected app=%s code=%s msg=%s institution=%s",
+            application_id, _code, _msg, institution_id,
+        )
+        if _code == "AccessDenied" or "not permitted" in _msg.lower():
+            detail = ("Automatic bank-statement upload is not enabled for this "
+                      "bank yet. Please upload your statement PDF instead.")
+        else:
+            detail = ("The statement service could not start the upload. "
+                      "Please try again, or upload your statement PDF instead.")
+        raise HTTPException(status_code=502, detail=detail)
 
     request_id = str(result["request_id"])
     await db_pool.execute(

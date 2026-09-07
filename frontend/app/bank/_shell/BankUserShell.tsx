@@ -85,6 +85,14 @@ export function BankUserShell({
   const roleLabel = me?.role === "bank_supervisor" ? "Supervisor" : "Officer";
 
   // Default action: sign out. A screen can override with its own primary action.
+  // `logout()` is async: it posts to /api/auth/logout and clears local auth
+  // only after that resolves. Navigating without awaiting it could leave the
+  // token in storage, so the login page could bounce straight back in.
+  const doLogout = async () => {
+    await logout("bank");
+    router.replace("/bank/login");
+  };
+
   const logoutAction: SidebarAction = {
     title: "Sign out",
     subtitle: me?.bank_name || undefined,
@@ -103,14 +111,12 @@ export function BankUserShell({
         tenant: me?.bank_code || me?.bank_name || "—",
         role: roleLabel,
       }}
-      identityFooter={
-        <SessionTimer
-          onLogout={() => {
-            logout("bank");
-            router.replace("/bank/login");
-          }}
-        />
-      }
+      identityFooter={<SessionTimer onLogout={doLogout} />}
+      // The UserMenu's "Sign out" needs this too. FinixShell defaults onLogout
+      // to a no-op, so omitting it made the menu item render, highlight and
+      // close — while doing nothing at all. Only SessionTimer was wired, so
+      // sign-out worked on idle timeout but never when clicked.
+      onLogout={doLogout}
       action={action ?? logoutAction}
       headerRight={<BankNotificationBell auditHref="/bank/audit" />}
     >

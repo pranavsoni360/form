@@ -3964,8 +3964,16 @@ async def aa_institutions(session_token: str = ""):
 
     try:
         data = await _aa_post("InstitutionList", {"type": "Statement"})
-    except httpx.HTTPError as e:
-        logger.warning("AA InstitutionList failed: %s", e)
+    except Exception as e:
+        # Deliberately broad. This originally caught only httpx.HTTPError, so a
+        # TLS verification failure, an unparseable body or any other fault
+        # escaped as an unhandled 500 and logged NOTHING under this message —
+        # which made the live failure undiagnosable: the customer saw "could not
+        # load the bank list" while `journalctl | grep InstitutionList` was
+        # empty. The exception TYPE is logged because that is the single most
+        # useful fact when this next fails.
+        logger.warning("AA InstitutionList failed [%s]: %s url=%s",
+                       type(e).__name__, e, _aa_base_url())
         # Serve a stale list rather than an empty picker: an out-of-date bank
         # name is far better than a customer who cannot proceed at all.
         if _AA_INSTITUTIONS_CACHE["rows"]:

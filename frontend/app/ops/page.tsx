@@ -3,6 +3,7 @@
 import * as React from "react";
 import { opsFetch } from "@/lib/ops-fetch";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -104,17 +105,24 @@ interface RecentCall {
 /* ───────────────────────────── Page ──────────────────────────────────── */
 
 export default function OpsOverviewPage() {
-  // REST snapshot — today's volume + lead counts
+  const searchParams = useSearchParams();
+  const today = new Date().toISOString().split("T")[0];
+  const selectedDate = searchParams?.get("date") ?? null;
+  // Only treat as a non-today selection when it's genuinely a different date
+  const dateFilter = selectedDate && selectedDate !== today ? selectedDate : null;
+
+  // REST snapshot — today's (or selected date's) volume + lead counts
   const stats = useQuery<DashboardStats>({
-    queryKey: ["dashboard-stats"],
+    queryKey: ["dashboard-stats", dateFilter],
     queryFn: async () => {
-      const res = await opsFetch(`${API_URL}/api/agent/dashboard-stats`, {
-        credentials: "include",
-      });
+      const url = new URL(`${API_URL}/api/agent/dashboard-stats`);
+      if (dateFilter) url.searchParams.set("date", dateFilter);
+      const res = await opsFetch(url.toString(), { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    refetchInterval: 30_000,
+    // Don't auto-refresh when viewing a historical date — the data won't change
+    refetchInterval: dateFilter ? false : 30_000,
   });
 
   // Recent calls (top 10) — same endpoint old /agent home tab used
@@ -266,7 +274,7 @@ export default function OpsOverviewPage() {
       subtitle="Live calls · queue depth · worker health · recent errors"
     >
       <div className="space-y-7">
-        <HeaderActions connState={connState} />
+        <HeaderActions connState={connState} dateFilter={dateFilter} />
         <KpiSectionLabel label="Today's call funnel" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FUNNEL_KPIS.map((k) => (
@@ -462,23 +470,40 @@ function LeadDot({ q }: { q: string }) {
 
 /* ────────────────────────────────────────────────────────────────────── */
 
-function HeaderActions({ connState }: { connState: string }) {
+function HeaderActions({ connState, dateFilter }: { connState: string; dateFilter: string | null }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
-        <StatusPill
-          tone={connState === "open" ? "success" : connState === "connecting" ? "warning" : "danger"}
-          label={
-            connState === "open"
-              ? "Backend healthy"
-              : connState === "connecting"
-              ? "Connecting…"
-              : connState === "error"
-              ? "Realtime stream down"
-              : "Not connected"
-          }
-        />
-        <StatusPill tone="info" label="SSE pipeline" dot={false} />
+        {dateFilter ? (
+          /* Historical date mode — show which date is being viewed */
+          <span
+            className="inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[12px] font-medium"
+            style={{
+              background: "var(--fx-accent-tint, oklch(0.46 0.22 254 / 0.08))",
+              color: "var(--fx-accent, #2563EB)",
+              border: "1px solid var(--fx-accent, #2563EB)",
+              opacity: 0.9,
+            }}
+          >
+            Viewing {new Date(dateFilter + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} — click the date in the header to change
+          </span>
+        ) : (
+          <>
+            <StatusPill
+              tone={connState === "open" ? "success" : connState === "connecting" ? "warning" : "danger"}
+              label={
+                connState === "open"
+                  ? "Backend healthy"
+                  : connState === "connecting"
+                  ? "Connecting…"
+                  : connState === "error"
+                  ? "Realtime stream down"
+                  : "Not connected"
+              }
+            />
+            <StatusPill tone="info" label="SSE pipeline" dot={false} />
+          </>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <Link

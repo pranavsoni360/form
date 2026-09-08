@@ -24,7 +24,9 @@ export function AppShell({
           className="flex min-h-screen md:min-h-[calc(100vh-24px)] flex-col md:rounded-[18px]"
           style={{ background: "var(--fx-surface)" }}
         >
-          <TopBar />
+          <React.Suspense fallback={null}>
+            <TopBar />
+          </React.Suspense>
           <main className="flex flex-1 flex-col gap-3 px-3 pb-4 pt-4 sm:px-4 md:gap-4 md:px-[18px] md:pt-5">
             <div key={pathname} className="fx-page-enter flex flex-1 flex-col gap-3 md:gap-4">
               <div>

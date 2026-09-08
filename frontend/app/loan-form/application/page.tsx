@@ -1,5 +1,5 @@
 ﻿'use client';
-import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock, WifiOff } from 'lucide-react';
+import { Lock, CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Eye, EyeOff, X, ExternalLink, User, Home, MapPin, Building2, Tag, ShoppingBag, CreditCard, Banknote, Users, RotateCcw, Clock, WifiOff, Trash2 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { FinixLogo } from '@/components/shared/FinixLogo';
 
@@ -2492,6 +2492,15 @@ export default function LoanApplication() {
                           className="px-4 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap"
                           style={{ background: 'var(--fx-surface2)', color: 'var(--fx-accent)', border: '1px solid var(--fx-accent)' }}>
                           Generate
+                        </button>
+                      )}
+                      {formData[doc.key] && (doc.journey === 'upload' || doc.journey === 'parse') && (
+                        <button type="button"
+                          onClick={() => onChange(doc.key, '')}
+                          title="Remove document"
+                          className="p-2 rounded-lg transition"
+                          style={{ color: 'var(--fx-red)', background: 'var(--fx-red-tint)', border: '1px solid color-mix(in oklch, var(--fx-red) 30%, transparent)' }}>
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       )}
                       <label className="cursor-pointer">

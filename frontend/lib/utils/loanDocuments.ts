@@ -167,16 +167,6 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     extensions: PDF,
     hint: "Optional. Upload the PDF, or generate it from the income-tax portal.",
   },
-  {
-    key: "quotation_url",
-    label: "Dealer Quotation",
-    required: true,
-    journey: "upload",
-    accept: ".jpg,.jpeg,.png,.pdf",
-    extensions: BOTH,
-    hint: "The quotation from the dealer for the item you are financing.",
-    consumerDurableOnly: true,
-  },
 ];
 
 /** The documents that apply to this application. */

@@ -121,12 +121,17 @@ _DEVICE_ID = os.getenv("VG_DOCVERIFY_DEVICE_ID", "lrs-backend")
 _TIMEOUT = float(os.getenv("VG_DOCVERIFY_TIMEOUT", "30"))
 
 # TLS verification for VG calls. Defaults to ON — production must always verify.
-# Set VG_DOCVERIFY_TLS_VERIFY=false only for an environment whose VG host has a
-# broken certificate: VG's UAT host (galaxypay.in:9005) let its Let's Encrypt
-# certificate expire on 2026-09-04, which fails every call on this path at the
-# handshake. main.py's own VG calls already pass verify=False, so they kept
-# working and the expiry went unnoticed here. Remove the override from the QA
-# env as soon as VG renews.
+#
+# RESOLVED 2026-09-08: VG renewed the galaxypay.in:9005 certificate (Let's
+# Encrypt, now valid to 2026-12-07). Verified with verification ENABLED —
+# InstitutionList and ITR_Advance both return 200, and plain `curl` without -k
+# succeeds. VG_DOCVERIFY_TLS_VERIFY should now be UNSET everywhere; if it is
+# still false in an env file, remove it rather than leaving a permanent bypass
+# that would silently accept the next expiry too.
+#
+# History: the previous certificate expired 2026-09-04 and failed every call on
+# this path at the handshake. It went unnoticed because main.py's own VG calls
+# pass verify=False and kept working.
 _TLS_VERIFY = os.getenv("VG_DOCVERIFY_TLS_VERIFY", "true").strip().lower() not in ("0", "false", "no")
 if not _TLS_VERIFY:
     logger.warning("VG Docverify: TLS verification DISABLED via VG_DOCVERIFY_TLS_VERIFY")

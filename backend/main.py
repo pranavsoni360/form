@@ -4031,9 +4031,19 @@ async def aa_statement_initiate(request: Request):
     # The customer picks their bank; Digitap needs its id to choose the right
     # PDF template. Falls back to the previous hardcoded default only so an old
     # client that does not send one keeps working.
-    institution_id = str(data.get("institution_id") or "").strip() or os.getenv("AA_DEFAULT_INSTITUTION_ID", "16")
-    if not institution_id.isdigit():
-        raise HTTPException(status_code=400, detail="institution_id must be numeric")
+    # The AA journey identifies the applicant by their bank-registered mobile
+    # number, not by a chosen institution — they pick the bank inside the AA
+    # consent screen. Falls back to the number on the application, which is the
+    # one they verified by OTP to reach this form.
+    mobile_num = str(data.get("mobile_num") or "").strip()
+    if not mobile_num:
+        mobile_num = str((row or {}).get("phone") or "").strip()
+    mobile_num = "".join(ch for ch in mobile_num if ch.isdigit())[-10:]
+    if len(mobile_num) != 10:
+        raise HTTPException(
+            status_code=400,
+            detail="A 10-digit mobile number is needed to start the bank connection.",
+        )
 
     return_url = f"{FORM_BASE_URL}/loan-form/application?aa_complete=1"
     callback_url = os.getenv(
@@ -4050,16 +4060,31 @@ async def aa_statement_initiate(request: Request):
         return {"url": return_url, "request_id": mock_req_id, "mock": True}
 
     try:
-        result = await _aa_post("Generateurl", {
+        # destination=accountaggregator, NOT statementupload.
+        #
+        # Verified against the live endpoint 2026-09-07: statementupload returns
+        # 403 AccessDenied for this account on every institution_id, while
+        # accountaggregator returns a real Digitap URL on all three hosts. The
+        # vendor's own spec (ACAGGRATOR.txt) documents both, and the AA variant
+        # is the one we are provisioned for.
+        #
+        # The two take DIFFERENT parameters. AA is consent-based: the applicant
+        # authenticates with their bank through the AA network using their
+        # registered MOBILE NUMBER, so there is no institution_id, no
+        # acceptance_policy and no month range — the FI date window is passed as
+        # aa_fi_startdate/enddate instead.
+        aa_obj = {
             "txn_completed_cburl": callback_url,
-            "start_month": start_month,
-            "end_month": end_month,
-            "institution_id": institution_id,
-            "destination": "statementupload",
+            "destination": "accountaggregator",
             "return_url": return_url,
-            "acceptance_policy": "atLeastOneTransactionInRange",
-            "relaxation_days": "0",
-        })
+            "mobile_num": mobile_num,
+            "aa_vendor": os.getenv("AA_VENDOR", "anumati"),
+            "aa_fetch_type": "ONETIME",
+            "aa_fi_types": "DEPOSIT",
+            "aa_fi_startdate": f"{start_month}-01",
+            "aa_fi_enddate": f"{end_month}-01",
+        }
+        result = await _aa_post("Generateurl", aa_obj)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not reach statement service: {e}")
 

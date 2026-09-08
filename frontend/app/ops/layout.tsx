@@ -72,5 +72,9 @@ export default function OpsLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <ErrorBoundary>{children}</ErrorBoundary>;
+  return (
+    <ErrorBoundary>
+      <React.Suspense fallback={null}>{children}</React.Suspense>
+    </ErrorBoundary>
+  );
 }

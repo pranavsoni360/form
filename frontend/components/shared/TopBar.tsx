@@ -1,7 +1,7 @@
 ﻿"use client";
 
-import { usePathname, useRouter } from "next/navigation";
-import { AlertTriangle, Bell, CheckCircle2, Eye, EyeOff, Info, KeyRound, LogOut, Moon, Sun, X } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Eye, EyeOff, KeyRound, LogOut, Moon, Sun, X } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -433,22 +433,52 @@ function UserPill() {
   );
 }
 
-function useTodayLabel() {
-  const [label, setLabel] = React.useState("");
-  React.useEffect(() => {
-    const d = new Date();
-    const day = d.getDate();
-    const month = d.toLocaleDateString("en-GB", { month: "short" });
-    const year = d.getFullYear();
-    setLabel(`Today, ${day} ${month} ${year}`);
-  }, []);
-  return label;
+function todayIso() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function formatDatePill(iso: string): string {
+  // "YYYY-MM-DD" → "7 Sept 2026"
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 export function TopBar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const crumbs = derivedCrumbs(pathname || "/ops");
-  const todayLabel = useTodayLabel();
+  const dateInputRef = React.useRef<HTMLInputElement>(null);
+
+  const isOpsDashboard = pathname === "/ops";
+  const selectedDate = isOpsDashboard ? (searchParams?.get("date") ?? null) : null;
+  const today = todayIso();
+
+  const pillLabel = React.useMemo(() => {
+    if (!selectedDate || selectedDate === today) {
+      const d = new Date();
+      return `Today, ${d.getDate()} ${d.toLocaleDateString("en-GB", { month: "short" })} ${d.getFullYear()}`;
+    }
+    return formatDatePill(selectedDate);
+  }, [selectedDate, today]);
+
+  const openPicker = () => {
+    if (!dateInputRef.current) return;
+    try { (dateInputRef.current as any).showPicker(); }
+    catch { dateInputRef.current.click(); }
+  };
+
+  const handleDateChange = (val: string) => {
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    if (!val || val === today) params.delete("date");
+    else params.set("date", val);
+    const qs = params.toString();
+    router.push(`/ops${qs ? `?${qs}` : ""}`);
+  };
 
   return (
     <header
@@ -458,20 +488,49 @@ export function TopBar() {
       {/* Mobile hamburger */}
       <MobileNav />
 
-      {/* Date pill */}
-      {todayLabel && (
-        <div
-          className="hidden lg:flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[12px] flex-shrink-0"
-          style={{ border: "1px solid var(--fx-border)", color: "var(--fx-text2)" }}
+      {/* Date pill — static on non-dashboard pages, clickable calendar on /ops */}
+      <div
+        className="hidden lg:flex items-center gap-1 rounded-[8px] flex-shrink-0 overflow-hidden"
+        style={{ border: "1px solid var(--fx-border)" }}
+      >
+        <button
+          onClick={isOpsDashboard ? openPicker : undefined}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] transition-colors"
+          style={{
+            color: "var(--fx-text2)",
+            cursor: isOpsDashboard ? "pointer" : "default",
+            background: selectedDate && selectedDate !== today ? "var(--fx-accent-tint, oklch(0.46 0.22 254 / 0.08))" : "transparent",
+          }}
+          aria-label={isOpsDashboard ? "Pick a date to view" : undefined}
         >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="flex-shrink-0" style={{ color: "var(--fx-text3)" }}>
-            <rect x="1" y="2" width="14" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M1 6h14" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M5 1v2M11 1v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          {todayLabel}
-        </div>
-      )}
+          <CalendarDays className="h-3 w-3 flex-shrink-0" style={{ color: "var(--fx-text3)" }} />
+          <span style={{ color: selectedDate && selectedDate !== today ? "var(--fx-accent)" : "var(--fx-text2)" }}>
+            {pillLabel}
+          </span>
+        </button>
+        {/* Clear button — only when a non-today date is selected */}
+        {isOpsDashboard && selectedDate && selectedDate !== today && (
+          <button
+            onClick={() => handleDateChange("")}
+            aria-label="Reset to today"
+            className="flex items-center justify-center px-2 py-1.5 transition-colors hover:bg-muted"
+            style={{ color: "var(--fx-text3)", borderLeft: "1px solid var(--fx-border)" }}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+        {/* Hidden native date input */}
+        {isOpsDashboard && (
+          <input
+            ref={dateInputRef}
+            type="date"
+            className="absolute w-0 h-0 opacity-0 pointer-events-none"
+            max={today}
+            value={selectedDate ?? today}
+            onChange={(e) => handleDateChange(e.target.value)}
+          />
+        )}
+      </div>
 
       {/* Breadcrumb — "VGIL / ops / page" */}
       <nav className="flex min-w-0 items-center gap-1.5" aria-label="Breadcrumb">

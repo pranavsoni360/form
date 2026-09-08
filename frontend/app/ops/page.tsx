@@ -3,6 +3,7 @@
 import * as React from "react";
 import { opsFetch } from "@/lib/ops-fetch";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -34,7 +35,6 @@ import {
   maskPhone,
   statusVariant,
 } from "@/components/ops/CallDetailDialog";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -43,7 +43,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { API_URL } from "@/lib/api";
@@ -106,17 +105,24 @@ interface RecentCall {
 /* ───────────────────────────── Page ──────────────────────────────────── */
 
 export default function OpsOverviewPage() {
-  // REST snapshot — today's volume + lead counts
+  const searchParams = useSearchParams();
+  const today = new Date().toISOString().split("T")[0];
+  const selectedDate = searchParams?.get("date") ?? null;
+  // Only treat as a non-today selection when it's genuinely a different date
+  const dateFilter = selectedDate && selectedDate !== today ? selectedDate : null;
+
+  // REST snapshot — today's (or selected date's) volume + lead counts
   const stats = useQuery<DashboardStats>({
-    queryKey: ["dashboard-stats"],
+    queryKey: ["dashboard-stats", dateFilter],
     queryFn: async () => {
-      const res = await opsFetch(`${API_URL}/api/agent/dashboard-stats`, {
-        credentials: "include",
-      });
+      const url = new URL(`${API_URL}/api/agent/dashboard-stats`);
+      if (dateFilter) url.searchParams.set("date", dateFilter);
+      const res = await opsFetch(url.toString(), { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    refetchInterval: 30_000,
+    // Don't auto-refresh when viewing a historical date — the data won't change
+    refetchInterval: dateFilter ? false : 30_000,
   });
 
   // Recent calls (top 10) — same endpoint old /agent home tab used
@@ -268,7 +274,7 @@ export default function OpsOverviewPage() {
       subtitle="Live calls · queue depth · worker health · recent errors"
     >
       <div className="space-y-7">
-        <HeaderActions connState={connState} />
+        <HeaderActions connState={connState} dateFilter={dateFilter} />
         <KpiSectionLabel label="Today's call funnel" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FUNNEL_KPIS.map((k) => (
@@ -289,7 +295,6 @@ export default function OpsOverviewPage() {
           onOpen={(id) => setOpenCallId(id)}
         />
         <ActiveCallsPreview activeCount={activeCallsCount} />
-        <DesignReference />
       </div>
 
       <CallDetailDialog
@@ -329,8 +334,8 @@ function InterestCategoriesRow({ loans }: { loans?: DashboardStats["loan_interes
       <CardContent>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <InterestPill label="Education" count={edu} icon={GraduationCap} tone="info" />
-          <InterestPill label="Business" count={biz} icon={Briefcase} tone="success" />
-          <InterestPill label="Personal" count={per} icon={UserIcon} tone="warning" />
+          <InterestPill label="Business" count={biz} icon={Briefcase} tone="info" />
+          <InterestPill label="Personal" count={per} icon={UserIcon} tone="info" />
         </div>
       </CardContent>
     </Card>
@@ -338,21 +343,17 @@ function InterestCategoriesRow({ loans }: { loans?: DashboardStats["loan_interes
 }
 
 function InterestPill({
-  label, count, icon: Icon, tone,
+  label, count, icon: Icon,
 }: {
   label: string;
   count: number;
   icon: React.ComponentType<{ className?: string }>;
-  tone: "info" | "success" | "warning";
+  tone?: "info";
 }) {
-  const bg =
-    tone === "info" ? "bg-info/10 text-info ring-info/20" :
-    tone === "success" ? "bg-success/10 text-success ring-success/20" :
-    "bg-warning/10 text-[hsl(var(--warning))] ring-warning/20";
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
       <div className="flex items-center gap-2.5">
-        <span className={cn("badge-icon ring-1", bg)}>
+        <span className="badge-icon ring-1 bg-info/10 text-info ring-info/20">
           <Icon className="h-4 w-4" />
         </span>
         <div>
@@ -469,23 +470,40 @@ function LeadDot({ q }: { q: string }) {
 
 /* ────────────────────────────────────────────────────────────────────── */
 
-function HeaderActions({ connState }: { connState: string }) {
+function HeaderActions({ connState, dateFilter }: { connState: string; dateFilter: string | null }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
-        <StatusPill
-          tone={connState === "open" ? "success" : connState === "connecting" ? "warning" : "danger"}
-          label={
-            connState === "open"
-              ? "Backend healthy"
-              : connState === "connecting"
-              ? "Connecting…"
-              : connState === "error"
-              ? "Realtime stream down"
-              : "Not connected"
-          }
-        />
-        <StatusPill tone="info" label="SSE pipeline" dot={false} />
+        {dateFilter ? (
+          /* Historical date mode — show which date is being viewed */
+          <span
+            className="inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[12px] font-medium"
+            style={{
+              background: "var(--fx-accent-tint, oklch(0.46 0.22 254 / 0.08))",
+              color: "var(--fx-accent, #2563EB)",
+              border: "1px solid var(--fx-accent, #2563EB)",
+              opacity: 0.9,
+            }}
+          >
+            Viewing {new Date(dateFilter + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} — click the date in the header to change
+          </span>
+        ) : (
+          <>
+            <StatusPill
+              tone={connState === "open" ? "success" : connState === "connecting" ? "warning" : "danger"}
+              label={
+                connState === "open"
+                  ? "Backend healthy"
+                  : connState === "connecting"
+                  ? "Connecting…"
+                  : connState === "error"
+                  ? "Realtime stream down"
+                  : "Not connected"
+              }
+            />
+            <StatusPill tone="info" label="SSE pipeline" dot={false} />
+          </>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <Link
@@ -611,71 +629,3 @@ function ActiveCallsPreview({ activeCount }: { activeCount: number }) {
   );
 }
 
-function DesignReference() {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="badge-icon bg-primary/10 text-primary ring-primary/20">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div>
-            <CardTitle className="text-base">Design language</CardTitle>
-            <CardDescription className="text-xs">
-              Finix aesthetic · Sen font · cream + dark navy + admin purple
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div>
-          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Status pills
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <StatusPill tone="success" label="Connected" />
-            <StatusPill tone="info" label="Dialing" />
-            <StatusPill tone="warning" label="Cooldown 2m 14s" />
-            <StatusPill tone="danger" label="Circuit open" />
-            <StatusPill tone="neutral" label="Pending" />
-            <StatusPill tone="success" label="Healthy" dot={false} />
-          </div>
-        </div>
-        <Separator />
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              CTAs
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button className="btn-solid">
-                <PlusCircle className="h-4 w-4" />
-                Dark navy
-              </button>
-              <button className="btn-gradient">
-                <PlusCircle className="h-4 w-4" />
-                Blue gradient
-              </button>
-              <Button variant="outline">Outline</Button>
-              <Button variant="ghost">Ghost</Button>
-            </div>
-          </div>
-          <div>
-            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Badges
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="default">Default</Badge>
-              <Badge variant="secondary">Secondary</Badge>
-              <Badge variant="success">Success</Badge>
-              <Badge variant="warning">Warning</Badge>
-              <Badge variant="destructive">Destructive</Badge>
-              <Badge variant="info">Info</Badge>
-              <Badge variant="outline">Outline</Badge>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}

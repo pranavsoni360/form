@@ -200,6 +200,11 @@ export default function LoanApplication() {
   // way they can judge whether they have time before it expires.
   const [secondsLeft, setSecondsLeft] = useState<number>(Math.floor(SESSION_TIMEOUT_MS / 1000));
 
+  useEffect(() => {
+    if (currentStep === 2) loadAaBanks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep]);
+
   // Count up while an ITR fetch is in flight.
   useEffect(() => {
     if (!itrBusy) { setItrElapsed(0); return; }
@@ -310,8 +315,26 @@ export default function LoanApplication() {
 
   const [digilockerStep, setDigilockerStep] = useState<'idle' | 'linking' | 'waiting' | 'fetching' | 'done'>('idle');
   const [aaUploadState, setAaUploadState] = useState<'idle' | 'initiating' | 'polling' | 'complete' | 'failed'>('idle');
+  // Bank choice for the statementupload journey — Digitap shows a direct upload
+  // page for THAT bank's statement format. Optional: if statementupload is
+  // unavailable the backend falls back to the AA consent flow, where the
+  // applicant picks their bank inside Digitap's own screen instead.
+  const [aaBanks, setAaBanks] = useState<{ id: number; name: string }[]>([]);
+  const [aaBankId, setAaBankId] = useState<string>('');
+  const [aaBanksLoading, setAaBanksLoading] = useState(false);
   const [aaUploadError, setAaUploadError] = useState('');
 
+
+  const loadAaBanks = async () => {
+    if (aaBanks.length || aaBanksLoading) return;
+    setAaBanksLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/aa-institutions?session_token=${getSession() || ''}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setAaBanks(data.institutions || []);
+    } catch { /* the picker is optional — AA fallback still works without it */ }
+    finally { setAaBanksLoading(false); }
+  };
 
   const handleAAStatementInitiate = async () => {
     // Guard rather than silently defaulting: sending the wrong bank produces a
@@ -323,7 +346,7 @@ export default function LoanApplication() {
       const res = await fetch(`${API_URL}/api/aa-statement-initiate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_token: session }),
+        body: JSON.stringify({ session_token: session, institution_id: aaBankId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Could not generate upload link');
@@ -2313,11 +2336,31 @@ export default function LoanApplication() {
                           choice — and the institution_id it produced belongs to
                           the statementupload journey, which this account is not
                           permitted to use. */}
-                      {doc.journey === 'vendor' && state !== 'done' && !aaUploadError && (
-                        <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>
-                          You&apos;ll pick your bank and approve access on the next screen.
-                          Use the mobile number registered with that bank.
-                        </p>
+                      {doc.journey === 'vendor' && state !== 'done' && (
+                        <div className="mt-2">
+                          <label className="block text-xs font-medium mb-1"
+                            style={{ color: 'var(--fx-text2)', fontFamily: 'var(--font-body)' }}>
+                            Your bank
+                          </label>
+                          <select
+                            value={aaBankId}
+                            onChange={(e) => { setAaBankId(e.target.value); setAaUploadError(''); }}
+                            disabled={aaBanksLoading || aaUploadState === 'initiating' || aaUploadState === 'polling'}
+                            className={inp('')}
+                            style={{ maxWidth: '340px' }}>
+                            <option value="">
+                              {aaBanksLoading ? 'Loading banks…' : 'Select your bank (optional)'}
+                            </option>
+                            {aaBanks.map(b => (
+                              <option key={b.id} value={String(b.id)}>{b.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs mt-1" style={{ color: 'var(--fx-text3)' }}>
+                            Pick your bank to upload its statement directly. Leave blank to
+                            connect through Account Aggregator instead, where you choose the
+                            bank on the next screen.
+                          </p>
+                        </div>
                       )}
                       {/* A journey that WOULD be automatic but is not wired yet.
                           Stated plainly rather than dressed up as a choice. */}

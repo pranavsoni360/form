@@ -26,10 +26,10 @@ GOOD_INPUTS = {
 
 
 def test_credit_bureau_pillar_exact_math():
-    """credit_score is disabled (VG returns no bureau score), so the remaining
-    params rescale over weight 17: (100*7 + 80*4 + 100*3 + 100*2 + 100*1)/17 = 95.29"""
+    """credit_score enabled (FCIREXScore, weight 18). With score=780 → band 750-799 → 80.
+    (18×80 + 7×100 + 4×80 + 3×100 + 2×100 + 1×100) / 35 = 87.43"""
     r = engine.score(GOOD_INPUTS)
-    assert r.pillar_scores["credit_bureau"]["score"] == pytest.approx(95.29, abs=0.02)
+    assert r.pillar_scores["credit_bureau"]["score"] == pytest.approx(87.43, abs=0.02)
 
 
 def test_full_applicant_scores_high_and_complete():

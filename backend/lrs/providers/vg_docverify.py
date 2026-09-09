@@ -511,12 +511,16 @@ def _yyyymmdd_to_date(v: Any) -> _dt.date | None:
 def _derive_bureau_from_cais(report: dict) -> dict[str, Any]:
     """Derive the credit_bureau pillar inputs from an Experian/CIBIL CAIS report.
 
-    VG's ExperianReport carries NO bureau score — only account details — so every
-    scorecard input is derived from CAIS_Account. `credit_score` is intentionally
-    NOT set (that parameter is disabled/absent and the pillar re-weights).
+    VG's ExperianReport returns FCIREXScore in SCORE.FCIREXScore (range 300-900)
+    alongside CAIS account details. Both are extracted and fed to the scorecard.
     Verified against a real vpays.in response (report V2.4).
     """
     out: dict[str, Any] = {}
+
+    # Bureau score — present in FCIREXScore field (300-900 scale)
+    fcirex = _num((report.get("SCORE") or {}).get("FCIREXScore"))
+    _set(out, "credit_score", fcirex)
+
     cais = report.get("CAIS_Account") or {}
     summary = (cais.get("CAIS_Summary") or {}).get("Credit_Account") or {}
     balances = (cais.get("CAIS_Summary") or {}).get("Total_Outstanding_Balance") or {}
@@ -561,6 +565,10 @@ def _derive_bureau_from_cais(report: dict) -> dict[str, Any]:
     total_emi = sum(_num(a.get("Scheduled_Monthly_Payment_Amount")) or 0 for a in accounts)
     if total_emi > 0:
         _set(out, "total_existing_emi", round(total_emi, 2))
+
+    # hard inquiries (credit-only CAPS, 180-day window — closest available to 12m)
+    caps_180 = _num(((report.get("CAPS") or {}).get("CAPS_Summary") or {}).get("CAPSLast180Days"))
+    _set(out, "hard_inquiries_12m", caps_180)
 
     # public records / derogatory: worst flag across summary + accounts
     out["public_record_type"] = _cais_public_record_type(summary, accounts)

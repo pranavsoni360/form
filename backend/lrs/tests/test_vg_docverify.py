@@ -4,13 +4,14 @@ These verify the adapters honour the Provider contract and degrade gracefully
 (return {} instead of raising) when there's nothing to fetch — so a misconfigured
 or data-less applicant never breaks scoring.
 """
+import datetime as _dt
 import pytest
 
 from lrs.providers import get_providers
 from lrs.providers.base import FetchContext, Provider
 from lrs.providers.vg_docverify import (
     ExperianBureauProvider, ITRIncomeProvider, PanKycProvider,
-    _age_from_dob, _split_name, get_vg_providers,
+    _age_from_dob, _fmt_date, _split_name, get_vg_providers,
 )
 
 
@@ -73,3 +74,31 @@ def test_name_split():
 def test_age_from_dob():
     assert _age_from_dob("1990-01-01") >= 30
     assert _age_from_dob(None) is None
+
+
+def test_fmt_date_emits_iso_not_ambiguous_day_first():
+    """VG's .NET gateway parses dates MONTH-first.
+
+    Sending dd/mm/yyyy made it reject any DOB with day > 12 ("String was not
+    recognized as a valid DateTime", statusCode 999) and — worse — silently
+    read day <= 12 as the wrong date, so the bureau was queried for a DOB the
+    applicant does not have. ISO 8601 is unambiguous in either culture.
+    """
+    assert _fmt_date(_dt.date(2003, 5, 22)) == "2003-05-22"
+
+
+def test_fmt_date_does_not_swap_day_and_month():
+    """The silent half of the bug: 6 May must never serialise as 5 June."""
+    assert _fmt_date(_dt.date(2003, 5, 6)) == "2003-05-06"
+
+
+def test_fmt_date_accepts_datetime_and_drops_time():
+    assert _fmt_date(_dt.datetime(1990, 12, 31, 14, 30)) == "1990-12-31"
+
+
+def test_fmt_date_passes_through_strings_and_blanks():
+    """Unchanged behaviour: a value already stringified is sent as-is, and a
+    missing DOB becomes an empty string rather than 'None'."""
+    assert _fmt_date("2003-05-22") == "2003-05-22"
+    assert _fmt_date(None) == ""
+    assert _fmt_date("") == ""

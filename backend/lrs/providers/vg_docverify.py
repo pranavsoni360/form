@@ -353,10 +353,17 @@ def _split_name(full: str | None) -> tuple[str, str]:
 
 
 def _fmt_date(v: Any) -> str:
-    """Format a DB date/datetime (or string) for the API. TODO: confirm the
-    vendor's expected date format (assumed dd/mm/yyyy here)."""
+    """Format a DB date/datetime (or string) for the API as ISO 8601.
+
+    CONFIRMED against galaxypay:9005 and vpays.in: VG's .NET gateway parses
+    dates MONTH-first. The previous dd/mm/yyyy output made it reject any DOB
+    with day > 12 ("String was not recognized as a valid DateTime",
+    statusCode 999) and — worse — silently read day <= 12 as the wrong date,
+    so the bureau was queried for a DOB the applicant does not have and the
+    miss scored as a clean "no record". ISO is unambiguous in either culture.
+    """
     if isinstance(v, (_dt.date, _dt.datetime)):
-        return v.strftime("%d/%m/%Y")
+        return v.strftime("%Y-%m-%d")
     return str(v or "")
 
 

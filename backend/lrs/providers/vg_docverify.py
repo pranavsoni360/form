@@ -367,6 +367,34 @@ def _fmt_date(v: Any) -> str:
     return str(v or "")
 
 
+def _fmt_phone(v: Any) -> str:
+    """Bare 10-digit national number for the API.
+
+    The DB stores E.164 (+91XXXXXXXXXX) and VG's JSON parser rejects the '+'
+    outright: "Unexpected character encountered while parsing value: +. Path
+    'phoneNumber'". Strip to digits and keep the last 10 so a bare number, a
+    91-prefixed one and the E.164 form all serialise the same.
+    """
+    digits = _re.sub(r"\D", "", str(v or ""))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _pincode(app: dict | None) -> str:
+    """The applicant's pincode, from whichever column actually holds it.
+
+    The legacy `pincode` column is NULL on every application — the form writes
+    current_pincode (and permanent_pincode). Reading `pincode` alone sent the
+    literal string "None", and an unusable pincode makes the gateway fail with
+    "Error reading JObject from JsonReader".
+    """
+    app = app or {}
+    for key in ("pincode", "current_pincode", "permanent_pincode"):
+        v = app.get(key)
+        if v not in (None, ""):
+            return str(v)
+    return ""
+
+
 def _age_from_dob(v: Any) -> int | None:
     dob = None
     if isinstance(v, _dt.datetime):
@@ -407,12 +435,12 @@ class VGDocverifyClient:
         return await _post_soap(
             _PROTEAN, _EXPERIAN_METHOD, _EXPERIAN_ELEM, ctx,
             {
-                "phoneNumber": ctx.phone or "",
+                "phoneNumber": _fmt_phone(ctx.phone),
                 "pan": ctx.pan or "",
                 "firstName": first,
                 "lastName": last,
                 "dateOfBirth": _fmt_date((ctx.app or {}).get("date_of_birth")),
-                "pincode": str((ctx.app or {}).get("pincode", "")),
+                "pincode": _pincode(ctx.app),
             },
             api_code="ExperianReport",
         )

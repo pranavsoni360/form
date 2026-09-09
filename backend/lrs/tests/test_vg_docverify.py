@@ -4,6 +4,7 @@ These verify the adapters honour the Provider contract and degrade gracefully
 (return {} instead of raising) when there's nothing to fetch — so a misconfigured
 or data-less applicant never breaks scoring.
 """
+import asyncio
 import datetime as _dt
 import pytest
 
@@ -102,3 +103,94 @@ def test_fmt_date_passes_through_strings_and_blanks():
     assert _fmt_date("2003-05-22") == "2003-05-22"
     assert _fmt_date(None) == ""
     assert _fmt_date("") == ""
+
+
+# --- the ExperianReport payload: fields VG rejects if malformed ---------------
+#
+# These assert on what actually goes on the wire, not on a helper's return
+# value, because the bugs they cover were wiring bugs: the helper was fine but
+# the payload read the wrong column, or passed a value through unnormalised.
+
+def _capture_experian_payload(monkeypatch, app):
+    """Call experian_report and return the fields dict it would POST."""
+    from lrs.providers import vg_docverify as _vg
+    seen = {}
+
+    async def _fake_post_soap(url, method, inner_element, ctx, fields, api_code=None):
+        seen.update(fields)
+        return None
+
+    monkeypatch.setattr(_vg, "_post_soap", _fake_post_soap)
+    ctx = FetchContext(pan=app.get("pan_number"), aadhaar=None,
+                       phone=app.get("phone"), app=app)
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        _vg._client.experian_report(ctx))
+    return seen
+
+
+def test_experian_strips_country_code_from_phone(monkeypatch):
+    """VG's JSON parser rejects the '+' outright:
+       "Unexpected character encountered while parsing value: +. Path
+       'phoneNumber'".
+    The DB stores E.164 (+91XXXXXXXXXX) for 40 of 43 QA applications, so the
+    bureau call must send the bare national number.
+    """
+    got = _capture_experian_payload(monkeypatch, {
+        "customer_name": "ZZ Probe", "phone": "+918459948956",
+        "date_of_birth": _dt.date(2003, 5, 22), "current_pincode": "442203",
+    })
+    assert got["phoneNumber"] == "8459948956"
+
+
+def test_experian_accepts_a_plain_ten_digit_phone_unchanged(monkeypatch):
+    got = _capture_experian_payload(monkeypatch, {
+        "customer_name": "ZZ Probe", "phone": "9999999999",
+        "date_of_birth": _dt.date(2003, 5, 22), "current_pincode": "442203",
+    })
+    assert got["phoneNumber"] == "9999999999"
+
+
+def test_experian_sends_empty_phone_when_absent(monkeypatch):
+    """No phone must stay empty rather than becoming 'None'."""
+    got = _capture_experian_payload(monkeypatch, {
+        "customer_name": "ZZ Probe", "phone": None,
+        "date_of_birth": _dt.date(2003, 5, 22), "current_pincode": "442203",
+    })
+    assert got["phoneNumber"] == ""
+
+
+def test_experian_falls_back_to_current_pincode(monkeypatch):
+    """An empty pincode makes the gateway fail with
+       "Error reading JObject from JsonReader".
+    loan_applications.pincode is NULL on all 43 QA applications -- the form
+    writes current_pincode -- so the fallback is what makes the call viable.
+    """
+    got = _capture_experian_payload(monkeypatch, {
+        "customer_name": "ZZ Probe", "phone": "9999999999",
+        "date_of_birth": _dt.date(2003, 5, 22),
+        "pincode": None, "current_pincode": "442203",
+    })
+    assert got["pincode"] == "442203"
+
+
+def test_experian_prefers_pincode_then_current_then_permanent(monkeypatch):
+    base = {"customer_name": "ZZ Probe", "phone": "9999999999",
+            "date_of_birth": _dt.date(2003, 5, 22)}
+    got = _capture_experian_payload(monkeypatch, {
+        **base, "pincode": "111111", "current_pincode": "222222",
+        "permanent_pincode": "333333"})
+    assert got["pincode"] == "111111"
+
+    got = _capture_experian_payload(monkeypatch, {
+        **base, "pincode": None, "current_pincode": None,
+        "permanent_pincode": "333333"})
+    assert got["pincode"] == "333333"
+
+
+def test_experian_sends_dob_as_iso(monkeypatch):
+    """Locks the _fmt_date wiring, not just the helper."""
+    got = _capture_experian_payload(monkeypatch, {
+        "customer_name": "ZZ Probe", "phone": "9999999999",
+        "date_of_birth": _dt.date(2003, 5, 22), "current_pincode": "442203",
+    })
+    assert got["dateOfBirth"] == "2003-05-22"

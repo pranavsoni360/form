@@ -3902,8 +3902,13 @@ async def download_aadhaar(request: Request):
 # derived from VG_API_BASE by swapping VGKVerify.asmx → AcAggregator.asmx.
 
 def _aa_base_url() -> str:
-    # AcAggregator lives on the same host/port as VGKVerify (VG_API_BASE), not
-    # on VG_DOCVERIFY_BASE_URL (vpays.in) which only hosts VGKVerify.asmx.
+    # AA_BASE_URL overrides the derived URL — needed on production because
+    # vpays.in returns 404 for AcAggregator.asmx; the service lives only on
+    # galaxypay.in. Set AA_BASE_URL=http://galaxypay.in:9002/VGDocverify/AcAggregator.asmx
+    # (or the 10.200.10.43 equivalent) in the production .env.
+    override = os.getenv("AA_BASE_URL", "").rstrip("/")
+    if override:
+        return override
     return VG_API_BASE.replace("VGKVerify.asmx", "AcAggregator.asmx")
 
 

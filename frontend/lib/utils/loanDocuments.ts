@@ -125,11 +125,13 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "bank_statements_url",
     label: "Bank Statements (Last 6 months)",
     required: true,
-    journey: "parse",
+    // Collected via Digitap statementupload: applicant selects their bank,
+    // clicks the button, and uploads their PDF on Digitap's hosted page.
+    journey: "vendor",
     accept: ".pdf",
     extensions: PDF,
-    hint: "Upload your bank statement PDF (last 6 months) — it will be analysed automatically.",
-    journeyNote: "Uploaded PDF will be analysed to assess your cash flow",
+    hint: "Select your bank and upload your last 6 months statement via Digitap.",
+    journeyNote: "Analysed automatically to assess your cash flow",
   },
   {
     key: "salary_slips_url",

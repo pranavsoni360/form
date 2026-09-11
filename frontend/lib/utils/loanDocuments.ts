@@ -125,14 +125,11 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "bank_statements_url",
     label: "Bank Statements (Last 6 months)",
     required: true,
-    // Collected via VG Account Aggregator: the customer is redirected to the
-    // VG upload portal and returns; we receive the analysed report, not a raw
-    // file. The row renders an AA initiation button, not a file picker.
-    journey: "vendor",
+    journey: "parse",
     accept: ".pdf",
     extensions: PDF,
-    hint: "Upload securely via Account Aggregator — last 6 months are fetched automatically.",
-    journeyNote: "Analysed automatically to assess your cash flow",
+    hint: "Upload your bank statement PDF (last 6 months) — it will be analysed automatically.",
+    journeyNote: "Uploaded PDF will be analysed to assess your cash flow",
   },
   {
     key: "salary_slips_url",

@@ -125,12 +125,14 @@ export const LOAN_DOCUMENTS: LoanDocSpec[] = [
     key: "bank_statements_url",
     label: "Bank Statements (Last 6 months)",
     required: true,
-    // Collected via Digitap statementupload: applicant selects their bank,
-    // clicks the button, and uploads their PDF on Digitap's hosted page.
+    // Two ways in, both always offered. The vendor button tries Digitap
+    // statementupload and falls back to the Account Aggregator consent journey
+    // (statementupload is not provisioned for this account); the file picker
+    // takes the PDF directly without leaving the form.
     journey: "vendor",
     accept: ".pdf",
     extensions: PDF,
-    hint: "Select your bank and upload your last 6 months statement via Digitap.",
+    hint: "Connect via Account Aggregator, or upload your last 6 months statement PDF directly.",
     journeyNote: "Analysed automatically to assess your cash flow",
   },
   {

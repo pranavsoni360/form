@@ -2387,15 +2387,18 @@ export default function LoanApplication() {
                         <p className="text-xs mt-0.5" style={{ color: 'var(--fx-text3)' }}>Processing your bank statement…</p>
                       )}
                       {doc.journey === 'vendor' && aaUploadError && (
+                        <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}><AlertTriangle className="w-3 h-3" />{aaUploadError}</p>
+                      )}
+                      {doc.journey === 'vendor' && !formData[doc.key] && (
                         <>
-                          <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--fx-red)' }}><AlertTriangle className="w-3 h-3" />{aaUploadError}</p>
-                          {/* The error tells the customer to upload a PDF instead,
-                              so there has to BE somewhere to upload it. A `vendor`
-                              row renders only the AA button, so when that journey
-                              fails the applicant was told to do something the page
-                              gave them no way to do — a dead end on a REQUIRED
-                              document. This appears only after a failure, so the
-                              happy path still leads with Account Aggregator. */}
+                          {/* The direct PDF upload sits ALONGSIDE the AA button,
+                              not only after AA has failed. statementupload is not
+                              provisioned for this account, so the vendor journey
+                              can only reach the applicant through the off-site
+                              consent fallback — and on a REQUIRED document they
+                              must always have a way through without leaving the
+                              form. Same rule ITR follows: the fetch never
+                              replaces the upload. */}
                           <label className="inline-flex items-center gap-1.5 text-xs mt-1.5 cursor-pointer underline underline-offset-2"
                             style={{ color: 'var(--fx-accent)' }}>
                             <input type="file" accept=".pdf" className="hidden" disabled={!!uploading[doc.key]}
@@ -2441,10 +2444,10 @@ export default function LoanApplication() {
                           </span>
                         ) : (
                           <p className="text-xs flex items-center gap-1" style={{ color: 'var(--fx-green)' }}><CheckCircle2 className="w-3 h-3" />
-                            {doc.journey === 'parse' ? 'Uploaded — will be analysed' : doc.journey === 'vendor' ? 'Verified via Account Aggregator' : 'Uploaded'}
+                            {formData[doc.key] === 'verified_via_aa' ? 'Verified via Account Aggregator' : doc.journey === 'parse' || doc.journey === 'vendor' ? 'Uploaded — will be analysed' : 'Uploaded'}
                           </p>
                         )}
-                        {doc.journey !== 'vendor' && <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: fileUrl(formData[doc.key]), label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>}
+                        {formData[doc.key] !== 'verified_via_aa' && <button onClick={() => { setPreviewDisclaimer(true); setPreviewDoc({ url: fileUrl(formData[doc.key]), label: doc.label }); }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"><Eye className="w-4 h-4" /></button>}
                       </div>
                     )}
                     </div>

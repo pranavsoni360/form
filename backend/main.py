@@ -4068,25 +4068,69 @@ async def aa_statement_initiate(request: Request):
         )
         return {"url": return_url, "request_id": mock_req_id, "mock": True}
 
-    if not institution_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Please select your bank before uploading your statement.",
-        )
-
     try:
-        upload_obj = {
-            "txn_completed_cburl": callback_url,
-            "start_month": start_month,
-            "end_month": end_month,
-            "institution_id": institution_id,
-            "destination": "statementupload",
-            "return_url": return_url,
-            "acceptance_policy": "atLeastOneTransactionInRange",
-            "relaxation_days": "0",
-        }
-        result = await _aa_post("Generateurl", upload_obj)
-        used_journey = "statementupload"
+        # TWO journeys, tried in order of preference.
+        #
+        # They take DIFFERENT parameters. AA is consent-based: the applicant
+        # authenticates with their bank through the AA network using their
+        # registered MOBILE NUMBER, so there is no institution_id, no
+        # acceptance_policy and no month range — the FI date window is passed as
+        # aa_fi_startdate/enddate instead.
+        #
+        # statementupload is what we actually want: the applicant picks their
+        # bank here, and Digitap shows them a direct upload page for that bank's
+        # statement. It is currently 403 AccessDenied for this account on every
+        # host — a VG-side permission, unrelated to the certificate (it fails
+        # identically on plain-HTTP 10.200.10.43). Verified 2026-09-08.
+        #
+        # accountaggregator is the consent journey and works today, but the
+        # applicant chooses their bank inside Digitap's own screen, so the bank
+        # they picked here is ignored.
+        #
+        # Trying upload FIRST means the moment VG enable the destination, the
+        # intended journey starts working with no code change and no redeploy.
+        # Until then the fallback keeps the row usable.
+        result = None
+        used_journey = None
+        if institution_id:
+            upload_obj = {
+                "txn_completed_cburl": callback_url,
+                "start_month": start_month,
+                "end_month": end_month,
+                "institution_id": institution_id,
+                "destination": "statementupload",
+                "return_url": return_url,
+                "acceptance_policy": "atLeastOneTransactionInRange",
+                "relaxation_days": "0",
+            }
+            try:
+                candidate = await _aa_post("Generateurl", upload_obj)
+            except Exception as e:
+                logger.warning("AA statementupload transport failure: %s", type(e).__name__)
+                candidate = None
+            if candidate and candidate.get("status") == "success":
+                result, used_journey = candidate, "statementupload"
+            else:
+                _c = (candidate or {}).get("result") or {}
+                logger.info(
+                    "AA statementupload unavailable (code=%s) — falling back to "
+                    "accountaggregator for app=%s", _c.get("code"), application_id,
+                )
+
+        if result is None:
+            aa_obj = {
+                "txn_completed_cburl": callback_url,
+                "destination": "accountaggregator",
+                "return_url": return_url,
+                "mobile_num": mobile_num,
+                "aa_vendor": os.getenv("AA_VENDOR", "anumati"),
+                "aa_fetch_type": "ONETIME",
+                "aa_fi_types": "DEPOSIT",
+                "aa_fi_startdate": f"{start_month}-01",
+                "aa_fi_enddate": f"{end_month}-01",
+            }
+            result = await _aa_post("Generateurl", aa_obj)
+            used_journey = "accountaggregator"
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not reach statement service: {e}")
 

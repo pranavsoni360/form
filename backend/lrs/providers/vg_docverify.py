@@ -696,7 +696,23 @@ class AcAggregatorBankStmtProvider:
     pillar = "bank_statement"
 
     async def fetch(self, ctx: FetchContext) -> dict[str, Any]:
-        return dict((ctx.app or {}).get("aa_lrs_inputs") or {})
+        # asyncpg hands a JSONB column back as a STR unless a codec is
+        # registered, and none is — so this arrives as JSON text, not a dict.
+        # dict() on a string raises "dictionary update sequence element #0 has
+        # length 1; 2 is required", which took the whole LRS run down with it.
+        # It stayed hidden while aa_lrs_inputs was NULL everywhere (dict({}) is
+        # fine), so the FIRST completed AA journey was the first failure.
+        raw = (ctx.app or {}).get("aa_lrs_inputs")
+        if isinstance(raw, (str, bytes)):
+            try:
+                raw = _json.loads(raw)
+            except ValueError:
+                logger.warning("aa_lrs_inputs is not valid JSON — banking "
+                               "behaviour will re-weight out")
+                return {}
+        if not isinstance(raw, dict):
+            return {}
+        return dict(raw)
 
 
 def get_vg_providers() -> list:

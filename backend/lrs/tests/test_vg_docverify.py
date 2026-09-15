@@ -194,3 +194,41 @@ def test_experian_sends_dob_as_iso(monkeypatch):
         "date_of_birth": _dt.date(2003, 5, 22), "current_pincode": "442203",
     })
     assert got["dateOfBirth"] == "2003-05-22"
+
+
+# --- the banking-behaviour provider reading aa_lrs_inputs --------------------
+#
+# asyncpg returns a JSONB column as a STR unless a codec is registered, and no
+# codec is. The provider did dict(value), which raises
+# "dictionary update sequence element #0 has length 1; 2 is required" on a
+# string. It stayed hidden while aa_lrs_inputs was NULL for every application --
+# dict(None or {}) is fine -- so the very first completed Account Aggregator
+# journey broke scoring outright. Verified live on QA, txn da12231d.
+
+async def test_bankstmt_parses_aa_inputs_delivered_as_a_json_string():
+    from lrs.providers.vg_docverify import AcAggregatorBankStmtProvider
+    raw = '{"net_monthly_income": 375292.9, "otp_ratio_pct": 100.0, "penalty_count": 0}'
+    got = await AcAggregatorBankStmtProvider().fetch(_ctx(app={"aa_lrs_inputs": raw}))
+    assert got == {"net_monthly_income": 375292.9, "otp_ratio_pct": 100.0, "penalty_count": 0}
+
+
+async def test_bankstmt_still_accepts_an_already_parsed_dict():
+    """A codec, a test fixture or a future migration may hand back a real dict."""
+    from lrs.providers.vg_docverify import AcAggregatorBankStmtProvider
+    got = await AcAggregatorBankStmtProvider().fetch(
+        _ctx(app={"aa_lrs_inputs": {"net_cash_flow": -86.0}}))
+    assert got == {"net_cash_flow": -86.0}
+
+
+async def test_bankstmt_returns_empty_when_no_statement_collected():
+    """No AA journey yet: the pillar must re-weight, not raise."""
+    from lrs.providers.vg_docverify import AcAggregatorBankStmtProvider
+    assert await AcAggregatorBankStmtProvider().fetch(_ctx(app={})) == {}
+    assert await AcAggregatorBankStmtProvider().fetch(_ctx(app={"aa_lrs_inputs": None})) == {}
+
+
+async def test_bankstmt_returns_empty_on_unparseable_json():
+    """Corrupt column must not take the whole assessment down with it."""
+    from lrs.providers.vg_docverify import AcAggregatorBankStmtProvider
+    assert await AcAggregatorBankStmtProvider().fetch(
+        _ctx(app={"aa_lrs_inputs": "not json at all"})) == {}

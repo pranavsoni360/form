@@ -140,6 +140,25 @@ function PillarParamTable({ pillar }: { pillar: any }) {
   );
 }
 
+/** Structured content helpers for InfoTip — keep tooltips scannable. */
+function TipTitle({ children }: { children: React.ReactNode }) {
+  return <div className="mb-1.5 text-[11px] font-semibold text-white">{children}</div>;
+}
+function TipFormula({ children }: { children: React.ReactNode }) {
+  return <div className="mb-1.5 rounded bg-gray-700 px-2 py-1 font-mono text-[11px] text-emerald-300">{children}</div>;
+}
+function TipText({ children }: { children: React.ReactNode }) {
+  return <div className="text-[12px] leading-relaxed text-slate-300">{children}</div>;
+}
+function TipRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between text-[11px]">
+      <span className="text-slate-400">{label}</span>
+      <span className="text-slate-200 font-medium">{value}</span>
+    </div>
+  );
+}
+
 function InfoTip({ tip }: { tip: React.ReactNode }) {
   const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
   const ref = React.useRef<HTMLSpanElement>(null);
@@ -159,8 +178,8 @@ function InfoTip({ tip }: { tip: React.ReactNode }) {
       </span>
       {pos && typeof document !== "undefined" && ReactDOM.createPortal(
         <div
-          style={{ position: "fixed", left: pos.x, top: pos.y - 8, transform: "translate(-50%, -100%)", zIndex: 9999 }}
-          className="w-64 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed text-white shadow-2xl pointer-events-none"
+          style={{ position: "fixed", left: pos.x, top: pos.y - 10, transform: "translate(-50%, -100%)", zIndex: 9999 }}
+          className="w-72 rounded-xl bg-gray-900 border border-gray-700 px-4 py-3 shadow-2xl pointer-events-none"
         >
           {tip}
           <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
@@ -369,13 +388,15 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
             <span className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${ds.badge}`}>{ds.label}</span>
             <span className="text-sm text-gray-500 dark:text-gray-400">{data.rating}</span>
             <InfoTip tip={
-              <span>
-                <span className="block font-semibold mb-1">Decision thresholds</span>
-                <span className="block">Score ≥ 70 → Approve</span>
-                <span className="block">Score ≥ 50 → Refer (manual review)</span>
-                <span className="block">Score &lt; 50 → Reject</span>
-                <span className="block mt-1 text-slate-400">Credit bureau missing → auto-refer even if score qualifies for Approve (thin-file guard).</span>
-              </span>
+              <>
+                <TipTitle>How the decision is made</TipTitle>
+                <div className="space-y-1 mb-1.5">
+                  <TipRow label="Score ≥ 70" value="Approve" />
+                  <TipRow label="Score 50 – 69" value="Refer (manual review)" />
+                  <TipRow label="Score < 50" value="Reject" />
+                </div>
+                <TipText>If credit bureau data is missing, the system always routes to Refer — even when the score is above 70 — because the most important risk signal is absent.</TipText>
+              </>
             } />
           </div>
           <p className="mt-1 text-xs text-gray-400">
@@ -397,11 +418,11 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
           <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
             Recommended
             <InfoTip tip={
-              <span>
-                <span className="block font-semibold mb-1">Recommended Amount</span>
-                <span className="block font-mono">= min(requested, FOIR capacity, ₹1,00,000)</span>
-                <span className="block mt-1 text-slate-400">Capped at the product max (₹1L) and at what the borrower&apos;s income can support. Must be ≥ ₹20,000 (product min).</span>
-              </span>
+              <>
+                <TipTitle>Recommended Amount</TipTitle>
+                <TipFormula>min(requested, income capacity, ₹1,00,000)</TipFormula>
+                <TipText>The lowest of: what the applicant asked for, what their income can afford to repay, and the product ceiling (₹1L). Must be at least ₹20,000.</TipText>
+              </>
             } />
           </div>
           <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(data.recommended_amount || 0)}</div>
@@ -412,11 +433,11 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
           <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
             Tenure
             <InfoTip tip={
-              <span>
-                <span className="block font-semibold mb-1">Recommended Tenure</span>
-                <span className="block font-mono">= min(requested tenure, 36 months)</span>
-                <span className="block mt-1 text-slate-400">Clamped to the product maximum (36 months). Options: 12, 24, 36 months.</span>
-              </span>
+              <>
+                <TipTitle>Recommended Tenure</TipTitle>
+                <TipFormula>min(requested tenure, 36 months)</TipFormula>
+                <TipText>Capped at the product maximum of 36 months. Available options are 12, 24, and 36 months.</TipText>
+              </>
             } />
           </div>
           <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{data.recommended_tenure_m || 0} mo</div>
@@ -427,11 +448,16 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
           <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
             EMI
             <InfoTip tip={
-              <span>
-                <span className="block font-semibold mb-1">Monthly EMI (reducing balance)</span>
-                <span className="block font-mono">EMI = P × r / (1 − (1+r)^−n)</span>
-                <span className="block mt-1 text-slate-400">P = principal · r = annual rate ÷ 1200 (monthly rate) · n = tenure in months</span>
-              </span>
+              <>
+                <TipTitle>Monthly EMI</TipTitle>
+                <TipFormula>P × r / (1 − (1+r)^−n)</TipFormula>
+                <TipText>Reducing-balance method — interest is charged only on the outstanding principal each month, so the interest portion shrinks over time.</TipText>
+                <div className="mt-1.5 space-y-0.5">
+                  <TipRow label="P" value="Loan principal" />
+                  <TipRow label="r" value="Annual rate ÷ 1200" />
+                  <TipRow label="n" value="Tenure in months" />
+                </div>
+              </>
             } />
           </div>
           <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(headlineEmi || 0)}</div>
@@ -442,17 +468,18 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
           <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
             Interest
             <InfoTip tip={
-              <span>
-                <span className="block font-semibold mb-1">Annual Interest Rate</span>
-                <span className="block font-mono">= base (16%) + risk premium + tenure premium</span>
-                <span className="block mt-1">Risk premiums by band:</span>
-                <span className="block text-slate-300">85–100 Excellent: +0%</span>
-                <span className="block text-slate-300">70–84 Very Good: +2%</span>
-                <span className="block text-slate-300">55–69 Good: +4%</span>
-                <span className="block text-slate-300">40–54 Fair: +6%</span>
-                <span className="block text-slate-300">0–39 Poor: +9%</span>
-                <span className="block mt-1">Tenure premiums: 12m +0%, 24m +0.5%, 36m +1%</span>
-              </span>
+              <>
+                <TipTitle>Annual Interest Rate</TipTitle>
+                <TipFormula>16% (base) + risk premium + tenure premium</TipFormula>
+                <div className="mb-1.5 space-y-0.5">
+                  <TipRow label="Excellent (85–100)" value="+0%" />
+                  <TipRow label="Very Good (70–84)" value="+2%" />
+                  <TipRow label="Good (55–69)" value="+4%" />
+                  <TipRow label="Fair (40–54)" value="+6%" />
+                  <TipRow label="Poor (0–39)" value="+9%" />
+                </div>
+                <TipText>Tenure premium: 12m +0% · 24m +0.5% · 36m +1%</TipText>
+              </>
             } />
           </div>
           <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{headlineRoi}%</div>
@@ -466,23 +493,26 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
               Loan Offer
               <InfoTip tip={
-                <span>
-                  <span className="block font-semibold mb-1">Loan Offer Table</span>
-                  <span className="block">One row per tenure option (12 / 24 / 36 months). Interest = base 16% + risk premium + tenure premium. Amount = min(requested, FOIR capacity). EMI = reducing-balance formula.</span>
-                </span>
+                <>
+                  <TipTitle>Loan Offer Table</TipTitle>
+                  <TipText>Shows the approved amount, interest rate, and monthly EMI for each tenure option. Longer tenure = lower EMI but slightly higher rate.</TipText>
+                </>
               } />
             </div>
             <div className="text-right">
               <div className="flex items-center justify-end gap-1 text-[10px] uppercase tracking-wider text-slate-400">
                 Eligible up to
                 <InfoTip tip={
-                  <span>
-                    <span className="block font-semibold mb-1">Max Eligible Amount</span>
-                    <span className="block font-mono">= max FOIR capacity across all tenure options</span>
-                    <span className="block mt-1 text-slate-400">FOIR capacity = affordable EMI × annuity factor at that tenure. Capped at ₹1,00,000 (product max).</span>
-                    <span className="block mt-1">Affordable EMI = (net income × FOIR) − existing EMIs</span>
-                    <span className="block mt-1">FOIR slabs: income ≤ ₹25k → 40%, ≤ ₹50k → 50%, above → 55%</span>
-                  </span>
+                  <>
+                    <TipTitle>Eligible Up To</TipTitle>
+                    <TipText>The highest loan amount the applicant can repay across any tenure, based on their income. Capped at ₹1,00,000.</TipText>
+                    <div className="mt-1.5 space-y-0.5">
+                      <TipRow label="Income ≤ ₹25,000" value="40% for EMIs" />
+                      <TipRow label="Income ≤ ₹50,000" value="50% for EMIs" />
+                      <TipRow label="Income > ₹50,000" value="55% for EMIs" />
+                    </div>
+                    <TipText>Existing EMIs are deducted before calculating repayment capacity.</TipText>
+                  </>
                 } />
               </div>
               <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
@@ -499,11 +529,15 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
                     <span className="inline-flex items-center justify-end gap-1">
                       Interest
                       <InfoTip tip={
-                        <span>
-                          <span className="block font-semibold mb-1">Interest Rate per Tenure</span>
-                          <span className="block font-mono">= 16% + risk premium + tenure premium</span>
-                          <span className="block mt-1 text-slate-300">12m: +0.0% · 24m: +0.5% · 36m: +1.0%</span>
-                        </span>
+                        <>
+                          <TipTitle>Interest Rate</TipTitle>
+                          <TipFormula>16% base + risk band premium + tenure premium</TipFormula>
+                          <div className="space-y-0.5">
+                            <TipRow label="12 months" value="+0.0%" />
+                            <TipRow label="24 months" value="+0.5%" />
+                            <TipRow label="36 months" value="+1.0%" />
+                          </div>
+                        </>
                       } />
                     </span>
                   </th>
@@ -511,10 +545,10 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
                     <span className="inline-flex items-center justify-end gap-1">
                       Loan Amount
                       <InfoTip tip={
-                        <span>
-                          <span className="block font-semibold mb-1">Recommended Loan Amount</span>
-                          <span className="block font-mono">= min(requested, FOIR capacity at this tenure, ₹1L)</span>
-                        </span>
+                        <>
+                          <TipTitle>Loan Amount</TipTitle>
+                          <TipText>The lower of what the applicant requested and what their income can support at this tenure. Always within ₹20k – ₹1L.</TipText>
+                        </>
                       } />
                     </span>
                   </th>
@@ -522,11 +556,11 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
                     <span className="inline-flex items-center justify-end gap-1">
                       Monthly EMI
                       <InfoTip tip={
-                        <span>
-                          <span className="block font-semibold mb-1">EMI (reducing balance)</span>
-                          <span className="block font-mono">P × r / (1 − (1+r)^−n)</span>
-                          <span className="block mt-1 text-slate-400">r = interest rate ÷ 1200</span>
-                        </span>
+                        <>
+                          <TipTitle>Monthly EMI</TipTitle>
+                          <TipFormula>P × r / (1 − (1+r)^−n)</TipFormula>
+                          <TipText>Reducing-balance: interest is charged only on the remaining principal, so each month the interest share shrinks and the principal repaid grows.</TipText>
+                        </>
                       } />
                     </span>
                   </th>
@@ -550,15 +584,16 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
               <>
                 {` FOIR ${Math.round(data.offer_options.foir_used * 100)}% of net income.`}
                 <InfoTip tip={
-                  <span>
-                    <span className="block font-semibold mb-1">FOIR (Fixed Obligation to Income Ratio)</span>
-                    <span className="block">Max share of net monthly income that can go to EMIs (existing + new).</span>
-                    <span className="block mt-1">Slabs used:</span>
-                    <span className="block text-slate-300">Income ≤ ₹25,000 → 40%</span>
-                    <span className="block text-slate-300">Income ≤ ₹50,000 → 50%</span>
-                    <span className="block text-slate-300">Income &gt; ₹50,000 → 55%</span>
-                    <span className="block mt-1 font-mono">Affordable EMI = (net income × FOIR) − existing EMIs</span>
-                  </span>
+                  <>
+                    <TipTitle>FOIR — Fixed Obligation to Income Ratio</TipTitle>
+                    <TipText>The maximum share of net monthly income allowed to go towards EMIs (all existing loans + this new one).</TipText>
+                    <div className="mt-1.5 space-y-0.5">
+                      <TipRow label="Income ≤ ₹25,000" value="40% allowed" />
+                      <TipRow label="Income ≤ ₹50,000" value="50% allowed" />
+                      <TipRow label="Income > ₹50,000" value="55% allowed" />
+                    </div>
+                    <TipFormula>Max new EMI = (income × FOIR) − existing EMIs</TipFormula>
+                  </>
                 } />
               </>
             )}

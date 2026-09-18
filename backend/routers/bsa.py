@@ -45,16 +45,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bsa", tags=["bank-statement-analysis"])
 
 
-def _main():
-    import sys
-    return sys.modules["__main__"] if "__main__" in sys.modules else sys.modules["main"]
-
-
 def _db():
-    pool = getattr(_main(), "db_pool", None)
-    if pool is None:
+    # Always import main directly — avoids the sys.modules["__main__"] trap where
+    # uvicorn's own runner is "__main__" and has no db_pool attribute.
+    import main as _m
+    if _m.db_pool is None:
         raise HTTPException(503, "database pool not ready")
-    return pool
+    return _m.db_pool
 
 
 def _now() -> datetime:

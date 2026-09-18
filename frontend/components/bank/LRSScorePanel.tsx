@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import * as ReactDOM from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp, CheckCircle2, ChevronDown, Download, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -140,21 +141,33 @@ function PillarParamTable({ pillar }: { pillar: any }) {
 }
 
 function InfoTip({ tip }: { tip: React.ReactNode }) {
-  const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+  const ref = React.useRef<HTMLSpanElement>(null);
+
+  const show = () => {
+    if (ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setPos({ x: r.left + r.width / 2, y: r.top });
+    }
+  };
+  const hide = () => setPos(null);
+
   return (
-    <span
-      className="relative inline-flex items-center"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-    >
-      <Info className="h-3 w-3 cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" />
-      {open && (
-        <span className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed text-white shadow-xl pointer-events-none">
+    <>
+      <span ref={ref} className="inline-flex items-center" onMouseEnter={show} onMouseLeave={hide}>
+        <Info className="h-3 w-3 cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" />
+      </span>
+      {pos && typeof document !== "undefined" && ReactDOM.createPortal(
+        <div
+          style={{ position: "fixed", left: pos.x, top: pos.y - 8, transform: "translate(-50%, -100%)", zIndex: 9999 }}
+          className="w-64 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed text-white shadow-2xl pointer-events-none"
+        >
           {tip}
           <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
-        </span>
+        </div>,
+        document.body
       )}
-    </span>
+    </>
   );
 }
 

@@ -387,7 +387,7 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
               <span>
                 <span className="block font-semibold mb-1">Recommended Amount</span>
                 <span className="block font-mono">= min(requested, FOIR capacity, ₹1,00,000)</span>
-                <span className="block mt-1 text-slate-400">Capped at the product max (₹1L) and at what the borrower's income can support. Must be ≥ ₹20,000 (product min).</span>
+                <span className="block mt-1 text-slate-400">Capped at the product max (₹1L) and at what the borrower&apos;s income can support. Must be ≥ ₹20,000 (product min).</span>
               </span>
             } />
           </div>

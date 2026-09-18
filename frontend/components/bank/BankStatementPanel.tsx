@@ -258,9 +258,14 @@ export function BankStatementPanel({
                         })}
                       </span>
                     </div>
-                    {aaData.lrs_inputs && Object.keys(aaData.lrs_inputs).length > 0 ? (
+                    {(() => {
+                      const inputs: Record<string, number | string> =
+                        typeof aaData.lrs_inputs === "string"
+                          ? JSON.parse(aaData.lrs_inputs)
+                          : (aaData.lrs_inputs ?? {});
+                      return Object.keys(inputs).length > 0 ? (
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {Object.entries(aaData.lrs_inputs).map(([k, v]) => (
+                        {Object.entries(inputs).map(([k, v]) => (
                           <div key={k} className="flex items-baseline gap-2">
                             <span className="text-[11px] text-fx-text3">
                               {METRIC_LABEL[k] ?? k.replace(/_/g, " ")}
@@ -275,7 +280,8 @@ export function BankStatementPanel({
                       <p className="mt-2 text-[12px]" style={{ color: "var(--fx-amber)" }}>
                         Verified but no scoring inputs were extracted.
                       </p>
-                    )}
+                    );
+                    })()}
                   </div>
                 )}
                 {fetches.map((f) => (

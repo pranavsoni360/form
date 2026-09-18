@@ -543,7 +543,7 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
                       <InfoTip tip={
                         <>
                           <TipTitle>Interest Rate</TipTitle>
-                          <TipFormula>16% base + risk band premium + tenure premium</TipFormula>
+                          <TipFormula>{baseRoi}% base + risk band premium + tenure premium</TipFormula>
                           <div className="space-y-0.5">
                             <TipRow label="12 months" value="+0.0%" />
                             <TipRow label="24 months" value="+0.5%" />

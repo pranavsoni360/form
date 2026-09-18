@@ -94,7 +94,19 @@ function expiryLabel(iso?: string | null): string | null {
   return h >= 1 ? `expires in ${h}h` : `expires in ${Math.max(1, Math.round(ms / 60_000))}m`;
 }
 
-export function BankStatementPanel({ applicationId }: { applicationId: string }) {
+interface AaData {
+  completed_at: string;
+  txn_id?: string | null;
+  lrs_inputs?: Record<string, number | string> | null;
+}
+
+export function BankStatementPanel({
+  applicationId,
+  aaData,
+}: {
+  applicationId: string;
+  aaData?: AaData | null;
+}) {
   const [fetches, setFetches] = React.useState<BsaFetch[] | null>(null);
   const [institutions, setInstitutions] = React.useState<BsaInstitution[]>([]);
   const [institutionId, setInstitutionId] = React.useState("");
@@ -225,13 +237,47 @@ export function BankStatementPanel({ applicationId }: { applicationId: string })
             )}
 
             {/* ── the journeys ── */}
-            {fetches.length === 0 ? (
+            {fetches.length === 0 && !aaData?.completed_at ? (
               <EmptyState
                 title="No statement requested yet"
                 description="Request one to score the borrower's cash flow from their real bank statement."
               />
             ) : (
               <div className="space-y-3">
+                {/* AA-completed row — customer verified via Account Aggregator on the loan form.
+                    This data feeds the LRS banking_behaviour pillar directly. */}
+                {aaData?.completed_at && (
+                  <div className="rounded-[10px] p-3" style={{ background: "var(--fx-bg)" }}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill tone="green">completed</Pill>
+                      <span className="text-[13px] text-fx-text">Account Aggregator</span>
+                      <span className="fx-mono text-[11px] text-fx-text3">
+                        customer-verified ·{" "}
+                        {new Date(aaData.completed_at).toLocaleDateString("en-IN", {
+                          day: "numeric", month: "short", year: "numeric",
+                        })}
+                      </span>
+                    </div>
+                    {aaData.lrs_inputs && Object.keys(aaData.lrs_inputs).length > 0 ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {Object.entries(aaData.lrs_inputs).map(([k, v]) => (
+                          <div key={k} className="flex items-baseline gap-2">
+                            <span className="text-[11px] text-fx-text3">
+                              {METRIC_LABEL[k] ?? k.replace(/_/g, " ")}
+                            </span>
+                            <span className="fx-mono ml-auto text-[13px] text-fx-text">
+                              {fmtMetric(k, v as number | string)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-[12px]" style={{ color: "var(--fx-amber)" }}>
+                        Verified but no scoring inputs were extracted.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {fetches.map((f) => (
                   <div key={f.id} className="rounded-[10px] p-3" style={{ background: "var(--fx-bg)" }}>
                     <div className="flex flex-wrap items-center gap-2">

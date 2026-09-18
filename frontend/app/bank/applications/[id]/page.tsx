@@ -373,7 +373,14 @@ export default function ApplicationDetailPage() {
 
               {/* Bank statement analysis — the real source for the cash-flow
                   pillar, which is otherwise scored on mock data. */}
-              <BankStatementPanel applicationId={appId} />
+              <BankStatementPanel
+                applicationId={appId}
+                aaData={app?.aa_completed_at ? {
+                  completed_at: app.aa_completed_at,
+                  txn_id: app.aa_txn_id,
+                  lrs_inputs: app.aa_lrs_inputs,
+                } : null}
+              />
 
               <Card>
                 <CardHeader title="Status timeline" qualifier={`${timeline.length} events`} />
@@ -521,7 +528,14 @@ export default function ApplicationDetailPage() {
             <Card>
               <CardHeader title="Documents" qualifier={`${docsUploaded} of ${docs.length} uploaded`} />
               {docs.map(d => <DocRow key={d.label} label={d.label} url={d.url} />)}
-              <BankStatementPanel applicationId={appId} />
+              <BankStatementPanel
+                applicationId={appId}
+                aaData={app?.aa_completed_at ? {
+                  completed_at: app.aa_completed_at,
+                  txn_id: app.aa_txn_id,
+                  lrs_inputs: app.aa_lrs_inputs,
+                } : null}
+              />
             </Card>
           </div>
         )}

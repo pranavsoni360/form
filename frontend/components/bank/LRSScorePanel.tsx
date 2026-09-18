@@ -378,6 +378,17 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
     (a: any, b: any) => (b.weight ?? 0) - (a.weight ?? 0)
   );
 
+  // Derive interest breakdown for the tooltip — use the 12m option (tenure premium = 0)
+  // to back out the base + risk_premium, then isolate the tenure premium separately.
+  const productKey = data.offer_options?.product_key || "personal_loan";
+  const baseRoiMap: Record<string, number> = { personal_loan: 16.0, consumer_loan: 14.0 };
+  const baseRoi = baseRoiMap[productKey] ?? 16.0;
+  const opt12m = (data.offer_options?.options || []).find((o: any) => o.tenure_months === 12);
+  const riskPremium = opt12m != null ? Math.round((opt12m.interest_rate - baseRoi) * 10) / 10 : null;
+  const tenurePremium = recOpt != null && opt12m != null
+    ? Math.round((recOpt.interest_rate - opt12m.interest_rate) * 10) / 10
+    : null;
+
   return (
     <Card>
       {/* headline */}
@@ -470,15 +481,16 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
             <InfoTip tip={
               <>
                 <TipTitle>Annual Interest Rate</TipTitle>
-                <TipFormula>16% (base) + risk premium + tenure premium</TipFormula>
-                <div className="mb-1.5 space-y-0.5">
-                  <TipRow label="Excellent (85–100)" value="+0%" />
-                  <TipRow label="Very Good (70–84)" value="+2%" />
-                  <TipRow label="Good (55–69)" value="+4%" />
-                  <TipRow label="Fair (40–54)" value="+6%" />
-                  <TipRow label="Poor (0–39)" value="+9%" />
+                <TipFormula>base + risk band premium + tenure premium</TipFormula>
+                <div className="mb-2 space-y-0.5">
+                  <TipRow label={`Base (${productKey === "consumer_loan" ? "Consumer Durable" : "Personal Loan"})`} value={`${baseRoi}%`} />
+                  {riskPremium != null && <TipRow label={`Risk premium (${data.risk_band || "band"})`} value={`+${riskPremium}%`} />}
+                  {tenurePremium != null && <TipRow label={`Tenure premium (${data.recommended_tenure_m}m)`} value={`+${tenurePremium}%`} />}
+                  <div className="border-t border-gray-600 pt-0.5 mt-0.5">
+                    <TipRow label="Final rate" value={`${headlineRoi}%`} />
+                  </div>
                 </div>
-                <TipText>Tenure premium: 12m +0% · 24m +0.5% · 36m +1%</TipText>
+                <TipText>Risk premiums: Excellent +0% · Very Good +2% · Good +4% · Fair +6% · Poor +9%. Tenure premiums: 12m +0% · 24m +0.5% · 36m +1%.</TipText>
               </>
             } />
           </div>

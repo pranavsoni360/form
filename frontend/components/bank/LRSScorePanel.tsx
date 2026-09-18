@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp, CheckCircle2, ChevronDown, Download } from "lucide-react";
+import { Gauge, Loader2, RefreshCw, AlertTriangle, TrendingUp, CheckCircle2, ChevronDown, Download, Info } from "lucide-react";
 import { toast } from "sonner";
 
 import { getLRSScore, rescoreLRS } from "@/lib/api/bank";
@@ -136,6 +136,25 @@ function PillarParamTable({ pillar }: { pillar: any }) {
         </div>
       )}
     </div>
+  );
+}
+
+function InfoTip({ tip }: { tip: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <span
+      className="relative inline-flex items-center"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <Info className="h-3 w-3 cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" />
+      {open && (
+        <span className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed text-white shadow-xl pointer-events-none">
+          {tip}
+          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -336,6 +355,15 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
           <div className="flex items-center gap-2">
             <span className={`rounded-full px-2.5 py-0.5 text-sm font-semibold ${ds.badge}`}>{ds.label}</span>
             <span className="text-sm text-gray-500 dark:text-gray-400">{data.rating}</span>
+            <InfoTip tip={
+              <span>
+                <span className="block font-semibold mb-1">Decision thresholds</span>
+                <span className="block">Score ≥ 70 → Approve</span>
+                <span className="block">Score ≥ 50 → Refer (manual review)</span>
+                <span className="block">Score &lt; 50 → Reject</span>
+                <span className="block mt-1 text-slate-400">Credit bureau missing → auto-refer even if score qualifies for Approve (thin-file guard).</span>
+              </span>
+            } />
           </div>
           <p className="mt-1 text-xs text-gray-400">
             Risk band: {data.risk_band || "—"} · config {data.config_version}
@@ -351,26 +379,99 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
 
       {/* recommended offer */}
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[
-          ["Recommended", formatCurrency(data.recommended_amount || 0)],
-          ["Tenure", `${data.recommended_tenure_m || 0} mo`],
-          ["EMI", formatCurrency(headlineEmi || 0)],
-          ["Interest", `${headlineRoi}%`],
-        ].map(([label, val]) => (
-          <div key={label} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-gray-800/50">
-            <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
-            <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{val}</div>
+        {/* Recommended amount */}
+        <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-gray-800/50">
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
+            Recommended
+            <InfoTip tip={
+              <span>
+                <span className="block font-semibold mb-1">Recommended Amount</span>
+                <span className="block font-mono">= min(requested, FOIR capacity, ₹1,00,000)</span>
+                <span className="block mt-1 text-slate-400">Capped at the product max (₹1L) and at what the borrower's income can support. Must be ≥ ₹20,000 (product min).</span>
+              </span>
+            } />
           </div>
-        ))}
+          <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(data.recommended_amount || 0)}</div>
+        </div>
+
+        {/* Tenure */}
+        <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-gray-800/50">
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
+            Tenure
+            <InfoTip tip={
+              <span>
+                <span className="block font-semibold mb-1">Recommended Tenure</span>
+                <span className="block font-mono">= min(requested tenure, 36 months)</span>
+                <span className="block mt-1 text-slate-400">Clamped to the product maximum (36 months). Options: 12, 24, 36 months.</span>
+              </span>
+            } />
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{data.recommended_tenure_m || 0} mo</div>
+        </div>
+
+        {/* EMI */}
+        <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-gray-800/50">
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
+            EMI
+            <InfoTip tip={
+              <span>
+                <span className="block font-semibold mb-1">Monthly EMI (reducing balance)</span>
+                <span className="block font-mono">EMI = P × r / (1 − (1+r)^−n)</span>
+                <span className="block mt-1 text-slate-400">P = principal · r = annual rate ÷ 1200 (monthly rate) · n = tenure in months</span>
+              </span>
+            } />
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(headlineEmi || 0)}</div>
+        </div>
+
+        {/* Interest */}
+        <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-gray-800/50">
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-400">
+            Interest
+            <InfoTip tip={
+              <span>
+                <span className="block font-semibold mb-1">Annual Interest Rate</span>
+                <span className="block font-mono">= base (16%) + risk premium + tenure premium</span>
+                <span className="block mt-1">Risk premiums by band:</span>
+                <span className="block text-slate-300">85–100 Excellent: +0%</span>
+                <span className="block text-slate-300">70–84 Very Good: +2%</span>
+                <span className="block text-slate-300">55–69 Good: +4%</span>
+                <span className="block text-slate-300">40–54 Fair: +6%</span>
+                <span className="block text-slate-300">0–39 Poor: +9%</span>
+                <span className="block mt-1">Tenure premiums: 12m +0%, 24m +0.5%, 36m +1%</span>
+              </span>
+            } />
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{headlineRoi}%</div>
+        </div>
       </div>
 
       {/* Max eligible + Bajaj-style tenure options */}
       {data.offer_options?.options?.length > 0 && (
         <div className="mt-5 border-t border-slate-100 pt-4 dark:border-gray-700/50">
           <div className="mb-3 flex items-end justify-between">
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loan Offer</div>
+            <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Loan Offer
+              <InfoTip tip={
+                <span>
+                  <span className="block font-semibold mb-1">Loan Offer Table</span>
+                  <span className="block">One row per tenure option (12 / 24 / 36 months). Interest = base 16% + risk premium + tenure premium. Amount = min(requested, FOIR capacity). EMI = reducing-balance formula.</span>
+                </span>
+              } />
+            </div>
             <div className="text-right">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Eligible up to</div>
+              <div className="flex items-center justify-end gap-1 text-[10px] uppercase tracking-wider text-slate-400">
+                Eligible up to
+                <InfoTip tip={
+                  <span>
+                    <span className="block font-semibold mb-1">Max Eligible Amount</span>
+                    <span className="block font-mono">= max FOIR capacity across all tenure options</span>
+                    <span className="block mt-1 text-slate-400">FOIR capacity = affordable EMI × annuity factor at that tenure. Capped at ₹1,00,000 (product max).</span>
+                    <span className="block mt-1">Affordable EMI = (net income × FOIR) − existing EMIs</span>
+                    <span className="block mt-1">FOIR slabs: income ≤ ₹25k → 40%, ≤ ₹50k → 50%, above → 55%</span>
+                  </span>
+                } />
+              </div>
               <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
                 {formatCurrency(data.offer_options.max_eligible_amount ?? data.max_eligible_amount ?? 0)}
               </div>
@@ -381,9 +482,41 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
               <thead>
                 <tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wider text-slate-400 dark:bg-gray-800/50">
                   <th className="px-3 py-2 font-medium">Tenure</th>
-                  <th className="px-3 py-2 text-right font-medium">Interest</th>
-                  <th className="px-3 py-2 text-right font-medium">Loan Amount</th>
-                  <th className="px-3 py-2 text-right font-medium">Monthly EMI</th>
+                  <th className="px-3 py-2 text-right font-medium">
+                    <span className="inline-flex items-center justify-end gap-1">
+                      Interest
+                      <InfoTip tip={
+                        <span>
+                          <span className="block font-semibold mb-1">Interest Rate per Tenure</span>
+                          <span className="block font-mono">= 16% + risk premium + tenure premium</span>
+                          <span className="block mt-1 text-slate-300">12m: +0.0% · 24m: +0.5% · 36m: +1.0%</span>
+                        </span>
+                      } />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium">
+                    <span className="inline-flex items-center justify-end gap-1">
+                      Loan Amount
+                      <InfoTip tip={
+                        <span>
+                          <span className="block font-semibold mb-1">Recommended Loan Amount</span>
+                          <span className="block font-mono">= min(requested, FOIR capacity at this tenure, ₹1L)</span>
+                        </span>
+                      } />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium">
+                    <span className="inline-flex items-center justify-end gap-1">
+                      Monthly EMI
+                      <InfoTip tip={
+                        <span>
+                          <span className="block font-semibold mb-1">EMI (reducing balance)</span>
+                          <span className="block font-mono">P × r / (1 − (1+r)^−n)</span>
+                          <span className="block mt-1 text-slate-400">r = interest rate ÷ 1200</span>
+                        </span>
+                      } />
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-gray-700/50">
@@ -398,9 +531,24 @@ ${(pos || neg) ? `<h2>Why this score</h2>${d.reasons?.summary ? `<p>${esc(d.reas
               </tbody>
             </table>
           </div>
-          <p className="mt-1.5 text-[10px] text-slate-400">
+          <p className="mt-1.5 flex items-center gap-1 text-[10px] text-slate-400">
             Longer tenure → lower EMI, slightly higher interest.
-            {data.offer_options.foir_used != null && ` FOIR ${Math.round(data.offer_options.foir_used * 100)}% of net income.`}
+            {data.offer_options.foir_used != null && (
+              <>
+                {` FOIR ${Math.round(data.offer_options.foir_used * 100)}% of net income.`}
+                <InfoTip tip={
+                  <span>
+                    <span className="block font-semibold mb-1">FOIR (Fixed Obligation to Income Ratio)</span>
+                    <span className="block">Max share of net monthly income that can go to EMIs (existing + new).</span>
+                    <span className="block mt-1">Slabs used:</span>
+                    <span className="block text-slate-300">Income ≤ ₹25,000 → 40%</span>
+                    <span className="block text-slate-300">Income ≤ ₹50,000 → 50%</span>
+                    <span className="block text-slate-300">Income &gt; ₹50,000 → 55%</span>
+                    <span className="block mt-1 font-mono">Affordable EMI = (net income × FOIR) − existing EMIs</span>
+                  </span>
+                } />
+              </>
+            )}
           </p>
         </div>
       )}

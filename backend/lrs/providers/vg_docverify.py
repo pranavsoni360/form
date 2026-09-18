@@ -597,10 +597,9 @@ def _cais_public_record_type(summary: dict, accounts: list) -> str:
 class ExperianBureauProvider:
     """Credit-bureau pillar, backed by VG's ExperianReport (CIBIL CAIS) endpoint.
 
-    The response is an account-level CAIS report with NO bureau score, so all
-    pillar inputs are DERIVED from the accounts (see _derive_bureau_from_cais):
-    payment history, utilization, credit-age, active loans, and derogatory flags.
-    `credit_score` is deliberately not populated — the scorecard re-weights it out.
+    Extracts FCIREXScore (credit_score), payment history, utilization, hard
+    inquiries (CAPS 180-day), credit age, and derogatory flags from the CAIS
+    report. See _derive_bureau_from_cais for the full mapping.
     """
     name = "bureau"
     pillar = "credit_bureau"

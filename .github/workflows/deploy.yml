@@ -30,5 +30,10 @@ jobs:
           command_timeout: 20m
           script: |
             set -e
-            cd /root/vaani_los_form
-            bash scripts/deploy.sh --update
+            # See deploy-qa.yml: Azure blocks root SSH, so connect as vgadmin and
+            # step up with passwordless sudo. /root/vaani_los_form is root-owned.
+            sudo -n bash -c '
+              set -e
+              cd /root/vaani_los_form
+              bash scripts/deploy.sh --update
+            '

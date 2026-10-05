@@ -239,7 +239,7 @@ async def entrypoint(ctx: JobContext):
                 detect_language=False,
                 interim_results=True,
             ),
-            # Fallback chain: Gemini → Groq (llama-3.3) → Groq (llama-3.1)
+            # Fallback chain: Gemini → Groq (gpt-oss-120b) → Groq (gpt-oss-20b)
             # When Gemini returns 503 (overloaded), agent auto-switches
             # to Groq so the call doesn't stall.
             llm=FallbackAdapter(
@@ -265,8 +265,8 @@ async def entrypoint(ctx: JobContext):
                         # of leaving the customer in 30s of dead air.
                         http_options=genai_types.HttpOptions(timeout=10000),
                     ),
-                    groq.LLM(model="llama-3.3-70b-versatile", temperature=0.4),
-                    groq.LLM(model="llama-3.1-8b-instant", temperature=0.4),
+                    groq.LLM(model="openai/gpt-oss-120b", temperature=0.4),
+                    groq.LLM(model="openai/gpt-oss-20b", temperature=0.4),
                 ]
             ),
             # TTS fallback chain: Sarvam bulbul (primary) → Gemini TTS (backup).
